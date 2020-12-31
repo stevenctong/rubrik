@@ -1,0 +1,6 @@
+hostname,exportPoint,shareType,domain,username,password,sla,fileset,newDomain,newUsername,newPassword
+10.3.1.4,Documents,SMB,mountain,stong,abc123,1d-30d-NoArchive,Everything,,,
+fs1.test.com,Images,SMB,test,dk12,,1d-30d-AWS,PicsOnly,,,
+fs1.test.com,User,SMB,,,,1d-30d-AWS,PicsOnly,,,
+filer.test.com,/home,NFS,,,,1d-30d-NoArchive,Everything,,,
+gaia.test.com,/pictures,NFS,,,,1d-30d-Azure,AllExcludeSensitive,,,

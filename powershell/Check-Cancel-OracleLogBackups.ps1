@@ -10,7 +10,7 @@
 Iterates through a list of Oracle databases to look for and cancel stuck Log Backups jobs
 
 .DESCRIPTION
-Iterates through a list of Oracle databases to look for and cancel stuck Log Backup jobs.
+The Check-Cancel-OracleLogBackups script iterates through a list of Oracle databases to look for and cancel stuck Log Backup jobs.
 Stuck jobs are those that are still running > 30 min and at < 13% progress.
 If it finds a stuck job, it will cancel that job and decrease the log backup frequency so the next scheduled job will occur sooner.
 If the last log backup job was successful then it will set the log backup frequency back to the normal frequency.

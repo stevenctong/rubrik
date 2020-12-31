@@ -10,7 +10,7 @@
 Iterates through a list of SQL databases and pauses/unpauses log backups by enabling/disabling Copy Only
 
 .DESCRIPTION
-Iterates through a list of SQL databases and pauses/unpauses log backups by enabling/disabling Copy Only
+The Pause-SQLBackups script iterates through a list of SQL databases and pauses/unpauses log backups by enabling/disabling Copy Only
 Pass the argument (-logAction) to either 'pause' or 'unpause' depending on what you want to do
 An email will be sent out with status details everytime the script is run.
 
