@@ -23,11 +23,10 @@ Date: 12/2/20
 
 For authentication, use an API token (recommended), username/password, or credential file.
 
-To create a credential file:
+To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
-Note: Only the user that created it can use the file for authentication
 
-Fill out the PARAM and VARIABLES section with config details for this script
+Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
 ./Check-Cancel-OracleLogBackups.ps1 -server <Rubrik_server> -token <API_token>
@@ -86,7 +85,7 @@ $SMTPPort = '25'
 $date = Get-Date
 $dateUTC = $date.ToUniversalTime()
 
-$emailSubject = "Rubrik ($server) - Oracle Log Check Script - " + $date.ToString("MM-dd-yyyy HH:MM")
+$emailSubject = "Rubrik ($server) - Oracle Log Check Script - " + $date.ToString("yyyy-MM-dd HH:MM")
 $html = "Script status<br><br>"
 
 # Set to $true to send out email at the end of the script

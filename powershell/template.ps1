@@ -19,14 +19,20 @@ Date:
 
 For authentication, use an API token (recommended), username/password, or credential file.
 
-To create a credential file:
+To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
-Note: Only the user that created it can use the file for authentication
 
-Fill out the PARAM and VARIABLES section with config details for this script
+Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
 
+.EXAMPLE
+./.ps1 -server <Rubrik_server> -token <API_token>
+Use an API token for authentication
+
+.EXAMPLE
+./Get-.ps1 -server <Rubrik_server>
+Checks for credential file and if none found prompts for username/password.
 
 #>
 
@@ -64,7 +70,7 @@ $SMTPPort = '25'
 
 $date = Get-Date
 
-$emailSubject = "Rubrik ($server) - " + $date.ToString("MM-dd-yyyy HH:MM")
+$emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
 $html = "Body<br><br>"
 
 # Set to $true to send out email at the end of the script

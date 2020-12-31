@@ -13,7 +13,7 @@ Assumes the NAS Host has already been added to the cluster.
 .DESCRIPTION
 The Add-RubrikNASShares script reads in a .CSV file containing a list of NAS shares and adds them to the Rubrik cluster.
 This script assumes that the NAS Host has already been added to the Rubrik cluster.
-You can use the same CSV file with the 'Set-RubrikNASSLAs' script to add a new fileset + SLA to the NAS shares.
+You can use the same CSV file with the 'Set-RubrikNASShare' script to add a new fileset + SLA to the NAS shares.
 
 .NOTES
 Written by Steven Tong for community usage
@@ -22,9 +22,8 @@ Date: 7/13/20
 
 For authentication, use an API token (recommended), username/password, or credential file.
 
-To create a credential file:
+To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
-Note: Only the user that created it can use the file for authentication
 
 You must create a CSV file with the following columns:
 - Mandatory columns: hostname, exportPoint, shareType
@@ -38,7 +37,7 @@ You must create a CSV file with the following columns:
 
 See 'rubriknasshares.csv' as an example
 
-Fill out the PARAM and VARIABLES section with config details for this script
+Fill out the PARAM section with config details for this script.
 
 .EXAMPLE
 Add-RubrikNASShares.ps1
@@ -86,6 +85,9 @@ param (
   [string]$csvfile
 )
 
+$curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
+$csvFile = "./shares_added-$curDateTime.csv"
+
 Import-Module Rubrik
 
 # Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
@@ -125,20 +127,8 @@ try
   }
 } catch
 {
-  try
-  {
-    $ERROR[0]
-    $html += $ERROR[0]
-    if ($sendEmail)
-    {
-      Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
-    }
-    Exit
-  } catch
-  {
-    $ERROR[0]
-    Exit
-  }
+  $ERROR[0]
+  Exit
 }
 
 Write-Host ""
@@ -279,8 +269,8 @@ Write-Host "# shares not added: " $($addList | Where-Object Status -eq "NotAdded
 Write-Host "# shares pre-existing: " $($addList | Where-Object Status -eq "PreExisting" | Measure-Object | Select-Object -ExpandProperty Count)
 
 $curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
-$addList | Export-Csv -NoTypeInformation -Path "./shares_added_$($curDateTime).csv"
+$addList | Export-Csv -NoTypeInformation -Path $csvFile
 
-Write-Host "`nResults output to: ./shares_added_$($curDateTime).csv"
+Write-Host "`nResults output to: $csvFile"
 
 $disconnect = Disconnect-Rubrik -Confirm:$false

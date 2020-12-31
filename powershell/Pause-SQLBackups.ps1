@@ -21,11 +21,10 @@ Date: 11/12/20
 
 For authentication, use an API token (recommended), username/password, or credential file.
 
-To create a credential file:
+To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
-Note: Only the user that created it can use the file for authentication
 
-Fill out the PARAM and VARIABLES section with config details for this script
+Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
 ./Pause-SQLBackups.ps1 -server <Rubrik_server> -token <API_token> -logAction pause
