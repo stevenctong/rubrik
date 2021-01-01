@@ -25,8 +25,6 @@ To create a credential file (note: only the user who creates it can use it):
 Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
-
-.EXAMPLE
 ./.ps1 -server <Rubrik_server> -token <API_token>
 Use an API token for authentication
 
@@ -62,19 +60,22 @@ param (
 
 ###### VARIABLES - BEGIN #######
 
+$date = Get-Date
+
 # SMTP configuration
 $emailTo = @('')
 $emailFrom = ''
 $SMTPServer = ''
 $SMTPPort = '25'
 
-$date = Get-Date
-
 $emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
 $html = "Body<br><br>"
 
-# Set to $true to send out email at the end of the script
+# Set to $true to send out email in the script
 $sendEmail = $false
+
+# CSV file info
+$csvFile = "./<name>-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### VARIABLES - END #######
 
@@ -133,7 +134,11 @@ try
   }
 }
 
+# Export some list to CSV file
+# $list | Export-Csv -NoTypeInformation -Path $csvFile
+# Write-Host "`nResults output to: $csvFile"
 
+# Send an email
 if ($sendEmail)
 {
   Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
