@@ -19,7 +19,7 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 11/12/20
 
-For authentication, use an API token (recommended), username/password, or credential file.
+For authentication, use an API token (recommended), username/password, or a credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
@@ -65,7 +65,9 @@ param (
   [string]$logAction = 'unpause'
 )
 
-###### VARIABLES - BEGIN #######
+Import-Module Rubrik
+
+###### VARIABLES - BEGIN ######
 
 # Provide list of database IDs to modify the log backups
 $databases = @('MssqlDatabase:::4598cff6-20af-46fe-9605-474cf37c0145')
@@ -84,11 +86,10 @@ $html = "Set to $logAction log backups<br><br>"
 # Set to $true to send out email at the end of the script
 $sendEmail = $false
 
-###### VARIABLES - END #######
+###### VARIABLES - END ######
 
-Import-Module Rubrik
-
-# Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
+###### RUBRIK AUTHENTICATION - BEGIN ######
+# First try using API token, then username/password if a user is provided, then credential file
 try {
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
@@ -113,6 +114,7 @@ try {
     Exit
   }
 }
+###### RUBRIK AUTHENTICATION - END ######
 
 foreach ($i in $databases)
 {

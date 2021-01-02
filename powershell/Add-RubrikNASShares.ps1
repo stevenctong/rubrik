@@ -44,15 +44,15 @@ Add-RubrikNASShares.ps1
 This will prompt for all input arguments
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -csvfile <csv_filename>
+Add-RubrikNASShares.ps1 -server <rubrik_host> -csvInput <csv_filename>
 Reads in CSV file and adds each share to the associated NAS Host
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -username <user> -password <password> -csvfile <csv_filename>
+Add-RubrikNASShares.ps1 -server <rubrik_host> -username <user> -password <password> -csvInput <csv_filename>
 Reads in CSV file and adds each share to the associated NAS Host
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -api <token> -csvfile <csv_filename>
+Add-RubrikNASShares.ps1 -server <rubrik_host> -api <token> -csvInput <csv_filename>
 Reads in CSV file and adds each share to the associated NAS Host
 
 #>
@@ -82,15 +82,16 @@ param (
 
   # CSV File containing the following: hostname, exportPoint, shareType; optional: domain, username, password
   [Parameter(Mandatory=$true)]
-  [string]$csvfile
+  [string]$csvInput
 )
-
-$curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
-$csvFile = "./shares_added-$curDateTime.csv"
 
 Import-Module Rubrik
 
-# Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
+$curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
+$csvOutput = "./shares_added-$curDateTime.csv"
+
+###### RUBRIK AUTHENTICATION - BEGIN ######
+# First try using API token, then username/password if a user is provided, then credential file
 try {
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
@@ -109,6 +110,7 @@ try {
   Write-Error "Error connecting to cluster or with authentication."
   Exit
 }
+###### RUBRIK AUTHENTICATION - END ######
 
 Write-Host ""
 
@@ -121,11 +123,11 @@ $rubrikHosts = Get-RubrikHost -PrimaryClusterID $rubrikLocalId
 $rubrikShares = Get-RubrikNASShare -PrimaryClusterID $rubrikLocalId
 
 # Import CSV file which contains shares to add
-$shareList = Import-Csv $csvfile
+$shareList = Import-Csv $csvInput
 
 # Build list of unique domain\users
 $shareCredList = $shareList | Sort-Object -Property 'domain', 'username' -Unique |
-Select-Object 'domain', 'username', 'password'
+  Select-Object 'domain', 'username', 'password'
 
 # List of credentials to use
 $credList = @()
@@ -248,8 +250,8 @@ Write-Host "# shares not added: " $($addList | Where-Object Status -eq "NotAdded
 Write-Host "# shares pre-existing: " $($addList | Where-Object Status -eq "PreExisting" | Measure-Object | Select-Object -ExpandProperty Count)
 
 $curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
-$addList | Export-Csv -NoTypeInformation -Path $csvFile
+$addList | Export-Csv -NoTypeInformation -Path $csvOutput
 
-Write-Host "`nResults output to: $csvFile"
+Write-Host "`nResults output to: $csvOutput"
 
 $disconnect = Disconnect-Rubrik -Confirm:$false

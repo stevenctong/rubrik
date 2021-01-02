@@ -17,7 +17,7 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date:
 
-For authentication, use an API token (recommended), username/password, or credential file.
+For authentication, use an API token (recommended), username/password, or a credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
@@ -58,7 +58,9 @@ param (
   [string]$rubrikCred = 'rubrik_cred.xml'
 )
 
-###### VARIABLES - BEGIN #######
+Import-Module Rubrik
+
+###### VARIABLES - BEGIN ######
 
 $date = Get-Date
 
@@ -75,13 +77,12 @@ $html = "Body<br><br>"
 $sendEmail = $false
 
 # CSV file info
-$csvFile = "./<name>-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutput = "./<name>-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### VARIABLES - END #######
 
-Import-Module Rubrik
-
-# Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
+###### RUBRIK AUTHENTICATION - BEGIN ######
+# First try using API token, then username/password if a user is provided, then credential file
 try {
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
@@ -106,10 +107,37 @@ try {
     Exit
   }
 }
+###### RUBRIK AUTHENTICATION - END ######
 
-# Export some list to CSV file
-# $list | Export-Csv -NoTypeInformation -Path $csvFile
-# Write-Host "`nResults output to: $csvFile"
+
+
+##### RUBRIK AUTHENTICATION #####
+
+# Option 1) Use an API token for authentication
+# $token = ''
+
+# Option 2) Use a credential file for authentication
+# To create a credential file (note: only the user who creates it can use it):
+# Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+# $credential  = Import-Clixml -Path ./rubrik_cred.xml
+
+# Option 3) Use a username and password for authentication
+# $user = ''
+# $password = '' | ConvertTo-SecureString -AsPlainText -Force
+
+# Connect to Rubrik cluster
+# Connect-Rubrik -Server $server
+# Connect-Rubrik -Server $server -Credential $credential
+# Connect-Rubrik -Server $server -Token $token
+# Connect-Rubrik -Server $server -Username $user -Password $password
+
+##### RUBRIK AUTHENTICATION #####
+
+
+
+# Export some list to a CSV file
+# $list | Export-Csv -NoTypeInformation -Path $csvOutput
+# Write-Host "`nResults output to: $csvOutput"
 
 # Send an email
 if ($sendEmail)

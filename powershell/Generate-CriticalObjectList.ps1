@@ -17,23 +17,35 @@ $compareDays = 3
 $dateComparison = (Get-Date).AddDays(-$compareDays)
 
 # Whether to include objects that do not have any snapshot date
-$includeBlankLatest = $true
+$includeNoLatest = $true
 
-# To create a credential file (note: only the user who creates it can use it):
-# Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
-
-# Import Credential file
-$credential  = Import-Clixml -Path ./rubrik_cred.xml
-
-# Set Rubrik cluster URL/IP address
-$server = 'amer1-rbk01.rubrikdemo.com'
+# Rubrik cluster hostname or IP address
+$server = ''
 
 $curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
-$csvFile = "./critical_objects-$curDateTime-$server.csv"
+$csvOutput = "./critical_objects-$curDateTime-$server.csv"
 
-# Connect to Rubrik cluster
-Connect-Rubrik -Server $server -Credential $credential
+##### RUBRIK AUTHENTICATION #####
+
+# Option 1) Use an API token for authentication
+# $token = ''
+
+# Option 2) Use a credential file for authentication
+# To create a credential file (note: only the user who creates it can use it):
+# Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+# $credential  = Import-Clixml -Path ./rubrik_cred.xml
+
+# Option 3) Use username and password for authentication
+# $user = ''
+# $password = '' | ConvertTo-SecureString -AsPlainText -Force
+
+# Connect to Rubrik cluster - if no API token or credential is imported it will prompt for username/password
+Connect-Rubrik -Server $server
+# Connect-Rubrik -Server $server -Credential $credential
 # Connect-Rubrik -Server $server -Token $token
+# Connect-Rubrik -Server $server -Username $user -Password $password
+
+##### RUBRIK AUTHENTICATION #####
 
 # Get report ID of the "SLA Compliance Summary" report
 $reportID = Get-RubrikReport -Name "SLA Compliance Summary" -Type "Canned" | Select-Object id
@@ -62,7 +74,7 @@ foreach ($i in $slaReport) {
     $i
     $criticalObjects += $i
   }
-  elseif ($i.'Latest Local Snapshot' -eq '' -and $includeBlankLatest -eq $true)
+  elseif ($i.'Latest Local Snapshot' -eq '' -and $includeNoLatest -eq $true)
   {
     $i
     $criticalObjects += $i
@@ -76,8 +88,8 @@ $criticalObjects = $criticalObjects | Sort-Object -Property 'Latest Local Snapsh
 $curdate = Get-Date -Format "yyyy-MM-dd_HHmm"
 
 # Exports the critical object list as a CSV
-$criticalObjects | Export-Csv -NoTypeInformation -Path $csvFile
-Write-Host "`nResults output to: $csvFile"
+$criticalObjects | Export-Csv -NoTypeInformation -Path $csvOutput
+Write-Host "`nResults output to: $csvOutput"
 
 Disconnect-Rubrik -Confirm:$false
 

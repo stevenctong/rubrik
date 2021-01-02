@@ -18,7 +18,7 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 9/29/20
 
-For authentication, use an API token (recommended), username/password, or credential file.
+For authentication, use an API token (recommended), username/password, or a credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
@@ -65,7 +65,8 @@ param (
 
 Import-Module Rubrik
 
-# Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
+###### RUBRIK AUTHENTICATION - BEGIN ######
+# First try using API token, then username/password if a user is provided, then credential file
 try {
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
@@ -84,6 +85,7 @@ try {
   Write-Error "Error connecting to cluster or with authentication."
   Exit
 }
+###### RUBRIK AUTHENTICATION - END ######
 
 # Get VM details and exit if no VM found
 $vmInfo = Get-RubrikVM $vm | Select-Object "name", "id"

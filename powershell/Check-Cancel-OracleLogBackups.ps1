@@ -21,7 +21,7 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 12/2/20
 
-For authentication, use an API token (recommended), username/password, or credential file.
+For authentication, use an API token (recommended), username/password, or a credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
@@ -65,7 +65,9 @@ param (
   [string]$rubrikCred = 'rubrik_cred.xml'
 )
 
-###### VARIABLES - BEGIN #######
+Import-Module Rubrik
+
+###### VARIABLES - BEGIN ######
 
 # Provide comma separted list of database names
 # $oracleDB = @('db1','db2','db3')
@@ -91,11 +93,10 @@ $html = "Script status<br><br>"
 # Set to $true to send out email at the end of the script
 $sendEmail = $false
 
-###### VARIABLES - END #######
+###### VARIABLES - END ######
 
-Import-Module Rubrik
-
-# Rubrik authentication - first try using API token, then username/password if a user is provided, then credential file
+###### RUBRIK AUTHENTICATION - BEGIN ######
+# First try using API token, then username/password if a user is provided, then credential file
 try {
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
@@ -120,6 +121,7 @@ try {
     Exit
   }
 }
+###### RUBRIK AUTHENTICATION - END ######
 
 # Iterate through list of DBs
 foreach ($dbname in $oracleDB)
