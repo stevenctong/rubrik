@@ -11,7 +11,7 @@ Generates a filterable list of objects and snapshots under Snapshot Management a
 Have the script delete the snapshots or export the snapshots to a CSV file that you can edit and re-import for deletion.
 
 .DESCRIPTION
-The Manage-UnmanagedObjects script generates a list of objects and snapshots under Snapshot Management.
+The Get-Delete-SnapshotManagement.ps1 script generates a list of objects and snapshots under Snapshot Management.
 The list can be filtered by snapshots older than a certain date, object type, or object status.
 The list will be exported to a CSV file.
 You can have the script delete the snapshots by setting $delete to $true.
@@ -30,17 +30,17 @@ To create a credential file (note: only the user who creates it can use it):
 Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
-./Manage-UnmanagedObjects.ps1 -server <Rubrik_server> -token <API_token>
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -token <API_token>
 Use an API token for authentication.
 Generates a list of snapshots based on the config in the VARIABLES section and export the list to a CSV file.
 
 .EXAMPLE
-./Manage-UnmanagedObjects.ps1 -server <Rubrik_server> -delete $true
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -delete $true
 Checks for credential file and if none found prompts for username/password.
 Generates a list of snapshots based on the config in the VARIABLES section, deletes the snapshots, and exports the list to a CSV file.
 
 .EXAMPLE
-./Manage-UnmanagedObjects.ps1 -server <Rubrik_server> -csvDelete './rubrik_snapshot_list-2020-12-01_2220.csv'
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -csvDelete './rubrik_snapshot_list-2020-12-01_2220.csv'
 Reads in the file './rubrik_snapshot_list-2020-12-01_2220.csv' and deletes the snapshots in there.
 
 #>
@@ -72,7 +72,7 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$delete = $false,
 
-  # Provide a CSV and delete the snapshots listed within
+  # CSV file with snapshots to delete
   [Parameter(Mandatory=$false)]
   [string]$csvDelete = ''
 )
@@ -83,11 +83,9 @@ param (
 # Use '1' for later cluster versions (v5.1+)
 $apiVer = 'internal'
 
-$date = Get-Date
-
 # Get snapshots before this date. Set to '' if you want all snapshots without filtering by date.
-# $beforeDate = (Get-Date -Year 2020 -Month 06 -Day 05)
-$beforeDate = ''
+$beforeDate = (Get-Date -Year 2020 -Month 09 -Day 01)
+# $beforeDate = ''    # Set to '' if you want all snapshots
 
 # Object Type to filter by:
 # VirtualMachine, MssqlDatabase, LinuxFileset, WindowsFileset, ShareFileset, NutanixVirtualMachine,
@@ -100,6 +98,7 @@ $objectType = ''
 $objectStatus = ''
 
 # CSV file info
+$date = Get-Date
 $csvFile = "./rubrik_snapshot_list-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### VARIABLES - END #######
