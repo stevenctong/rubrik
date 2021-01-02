@@ -29,7 +29,7 @@ Fill out the PARAM and VARIABLES section with config details for this script.
 Use an API token for authentication
 
 .EXAMPLE
-./Get-.ps1 -server <Rubrik_server>
+./.ps1 -server <Rubrik_server>
 Checks for credential file and if none found prompts for username/password.
 
 #>

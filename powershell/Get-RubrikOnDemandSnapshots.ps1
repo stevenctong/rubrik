@@ -136,7 +136,7 @@ if ($days -gt 0)
 # Change $time to format we can pass to Rubrik API as a filter
 $timeStr = $time.ToString("yyyy-MM-ddThh:mm:ss")
 
-# Get all objects under Snapshot Management area (On Demans, Relics, Unmanaged Objects)
+# Get all objects under Snapshot Management area (On Demands, Relics, Unmanaged Objects)
 $allSnapshotManagement = Get-RubrikUnmanagedObject
 
 # Holds list of On Demand Snapshots
