@@ -7,11 +7,14 @@
 
 <#
 .SYNOPSIS
-Reads a .CSV file and assigns a fileset+SLA to a NAS share.
+Reads a .CSV file and assigns a fileset and SLA to a NAS share.
 
 .DESCRIPTION
-The Set-RubrikNASShareSLA script reads a .CSV file containing a list of NAS shares associated with a NAS Host, Fileset, and SLA.
-The script assign the fileset+SLA to the NAS share.
+The Set-RubrikNASShareSLA script reads a .CSV file containing a list of NAS shares, filesets, and SLAs.
+The script assumes a fileset template for the appropriate share type (SMB or NFS) is already configured on the cluster.
+The script adds a fileset template to the NAS share if it has not been added yet.
+If the share fileset already exists it will just attempt to update the SLA.
+It may take a minute or two to add the share fileset and assign the SLA for each share.
 
 .NOTES
 Written by Steven Tong for community usage
@@ -25,12 +28,8 @@ Create a CSV file with the following columns:
 - hostname - NAS Host that contains the share
 - exportPoint - The share name
 - shareType - 'SMB' or 'NFS'
-
-** Optional columns: domain, username, password
-** For SMB, if these entries are provided they override the credentials stored at the NAS Host level
-** These are the credentials Rubrik uses to mount the share when taking a backup
-- domain, username - The domain and user to use
-- password - The password to use. If a domain/user is specified but password is left blank the script will prompt for one
+- fileset - Fileset template to add for the share
+- sla - SLA to update the share fileset with
 
 See 'rubriknasshares.csv' as an example
 
@@ -42,12 +41,23 @@ To create a credential file (note: only the user who creates it can use it):
 Fill out the PARAM section with config details for this script.
 
 .EXAMPLE
-Set-RubrikNASShare.ps1
-This will prompt for all variables
+./Set-RubrikNASShareSLA.ps1
+This will prompt for all input arguments
 
 .EXAMPLE
-Set-RubrikNASShare.ps1 -server <rubrik_host> -csvInput <csv_filename>
-Reads in CSV file and adds each share to a host and then assigns a Fileset + SLA to the share
+./Set-RubrikNASShareSLA.ps1 -server <rubrik_host> -api <token> -csvInput <csv_filename>
+Use an API token for authentication.
+Reads in the CSV file and assigns a fileset and SLA to a NAS share.
+
+.EXAMPLE
+./Set-RubrikNASShareSLA.ps1 -server <rubrik_host> -csvInput <csv_filename>
+Checks for credential file and if none found prompts for username/password.DESCRIPTION
+Reads in the CSV file and assigns a fileset and SLA to a NAS share.
+
+.EXAMPLE
+./Set-RubrikNASShareSLA.ps1 -server <rubrik_host> -username <user> -password <password> -csvInput <csv_filename>
+Use the provided username/password for authentication.
+Reads in the CSV file and assigns a fileset and SLA to a NAS share.
 
 #>
 
@@ -74,7 +84,7 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$rubrikCred = 'rubrik_cred.xml',
 
-  # CSV File containing the following: hostname, exportPoint, shareType; optional: domain, username, password
+  # CSV File containing the following: hostname, exportPoint, shareType, sla, fileset
   [Parameter(Mandatory=$true)]
   [string]$csvInput
 )
@@ -108,7 +118,7 @@ try {
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
-# List to keep track of which shares were added successfully or not
+# List to keep track of which shares were updated successfully or not
 $updateList = @()
 
 # Get info from Rubrik cluster and filter by local cluster ID
@@ -119,18 +129,21 @@ $rubrikFilesetTemplates = Get-RubrikFilesetTemplate -PrimaryClusterID $rubrikLoc
 $rubrikFilesets = Get-RubrikFileset -PrimaryClusterID $rubrikLocalId
 $rubrikSLAs = Get-RubrikSLA -PrimaryClusterID $rubrikLocalId
 
-# Import CSV file which contains shares to add
+# Import CSV file which contains shares to update
 $shareList = Import-Csv $csvInput
 
 # Iterate through share list
 foreach ($i in $shareList)
 {
+  # Keep track of if updating the current share was successful or not
   $status = ''
 
+  # Check if the share, sla, and fileset exists on current Rubrik cluster
   $share = $rubrikShares | Where-Object { $_.hostname -eq $i.hostname -and $_.exportPoint -eq $i.exportPoint }
   $sla = $rubrikSLAs | Where-Object "Name" -eq $i.sla
   $fileset = $rubrikFilesetTemplates | Where-Object { $_.name -eq $i.fileset -and $_.shareType -eq $i.ShareType }
 
+  # If the share, sla, or fileset does not exist, then ERROR
   if ($share -eq $null)
   {
     Write-Warning "Error updating share: '$($i.exportPoint)' on host: '$($i.hostname)' - Share not found"
@@ -146,11 +159,12 @@ foreach ($i in $shareList)
     Write-Warning "Error updating share: '$($i.exportPoint)' on host: '$($i.hostname) - Fileset not found: '$($i.fileset)'"
     $status = 'ErrorFilesetNotFound'
   }
+  # Else if all share, sla, and fileset exist, try updating the share
   else
   {
     $hostFileset = $rubrikFilesets | Where-Object { $_.hostname -eq $i.hostname -and $_.name -eq $i.fileset}
 
-    # If the share doesn't have the fileset then add the fileset to the share
+    # If the share doesn't have a fileset then add a fileset template to the share
     if ($hostFileset -eq $null)
     {
       try {
@@ -163,8 +177,9 @@ foreach ($i in $shareList)
       catch {
         Write-Warning "For share: '$($i.exportPoint)' on host: '$($i.hostname) - Error adding fileset: '$($i.fileset)'"
       }
-    }
+    } # If no share fileset then add to the share
 
+    # Try updating the SLA to the share
     try {
       $bodyJson = [PSCustomObject] @{
         configuredSlaDomainId = $sla.id
@@ -188,7 +203,7 @@ foreach ($i in $shareList)
         $status = $status + 'ErrorUpdatingSLA'
       }
     }
-  } # else try to add host fileset and update SLA
+  } # Else try to updating the share
 
   $updateList += [PSCustomObject] @{
     status = $status
@@ -198,7 +213,7 @@ foreach ($i in $shareList)
     sla = $i.sla
     fileset = $i.fileset
   }
-} # foreach in $shareList
+} # Foreach in $shareList
 
 Write-Host ""
 Write-Host "# shares ErrorShareNotFound: " $(($updateList | Where-Object Status -eq "ErrorShareNotFound" | Measure-Object | Select-Object -ExpandProperty Count))

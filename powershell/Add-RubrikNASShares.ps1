@@ -54,13 +54,13 @@ Use an API token for authentication.
 Reads in the CSV file and adds each share to the cluster.
 
 .EXAMPLE
-A./dd-RubrikNASShares.ps1 -server <rubrik_host> -csvInput <csv_filename>
+./Add-RubrikNASShares.ps1 -server <rubrik_host> -csvInput <csv_filename>
 Checks for credential file and if none found prompts for username/password.DESCRIPTION
 Reads in the CSV file and adds each share to the cluster.
 
 .EXAMPLE
 ./Add-RubrikNASShares.ps1 -server <rubrik_host> -username <user> -password <password> -csvInput <csv_filename>
-Use the provided username/password for authentication.DESCRIPTION
+Use the provided username/password for authentication.
 Reads in the CSV file and adds each share to the cluster.
 
 #>
