@@ -134,6 +134,12 @@ try {
 ##### RUBRIK AUTHENTICATION #####
 
 
+# $bodyJson = [PSCustomObject] @{
+#   arg = ''
+# }
+
+# $req = Invoke-RubrikRESTCall -Method 'Patch' -Api '1' -Body $bodyJson -Endpoint "vmware/vm)"
+
 
 # Export some list to a CSV file
 # $list | Export-Csv -NoTypeInformation -Path $csvOutput

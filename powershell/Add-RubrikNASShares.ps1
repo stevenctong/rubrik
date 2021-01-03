@@ -11,49 +11,57 @@ Reads a .CSV file and adds the NAS shares to the Rubrik cluster.
 Assumes the NAS Host has already been added to the cluster.
 
 .DESCRIPTION
-The Add-RubrikNASShares script reads in a .CSV file containing a list of NAS shares and adds them to the Rubrik cluster.
+The Add-RubrikNASShares script reads a .CSV file containing a list of NAS shares and adds them to the Rubrik cluster.
 This script assumes that the NAS Host has already been added to the Rubrik cluster.
-You can use the same CSV file with the 'Set-RubrikNASShare' script to add a new fileset + SLA to the NAS shares.
+After you add the shares you can use the 'Set-RubrikNASShareSLA' script to assign a fileset+SLA to the newly added share.
+It may take few minutes after running this script for the share to appear.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 7/13/20
+Updated: 1/2/21
+
+Create a CSV file with the following columns:
+
+** Mandatory columns: hostname, exportPoint, shareType
+- hostname - NAS Host that contains the share
+- exportPoint - The share name
+- shareType - 'SMB' or 'NFS'
+
+** Optional columns: domain, username, password
+** For SMB, if these entries are provided they override the credentials stored at the NAS Host level
+** These are the credentials Rubrik uses to mount the share when taking a backup
+- domain, username - The domain and user to use
+- password - The password to use. If a domain/user is specified but password is left blank the script will prompt for one
+
+See 'rubriknasshares.csv' as an example
 
 For authentication, use an API token (recommended), username/password, or credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
 
-You must create a CSV file with the following columns:
-- Mandatory columns: hostname, exportPoint, shareType
-** hostname - NAS Host that contains the share
-** exportPoint - sharename
-** shareType - 'SMB' or 'NFS'
-
-- Optional columns: domain, username, password
-** If a username (and domain) is provided the script will set the credential at the share level
-** If no password is provided for the username (and domain) the script will prompt for a password
-
-See 'rubriknasshares.csv' as an example
-
 Fill out the PARAM section with config details for this script.
 
 .EXAMPLE
-Add-RubrikNASShares.ps1
+./Add-RubrikNASShares.ps1
 This will prompt for all input arguments
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -csvInput <csv_filename>
-Reads in CSV file and adds each share to the associated NAS Host
+./Add-RubrikNASShares.ps1 -server <rubrik_host> -api <token> -csvInput <csv_filename>
+Use an API token for authentication.
+Reads in the CSV file and adds each share to the cluster.
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -username <user> -password <password> -csvInput <csv_filename>
-Reads in CSV file and adds each share to the associated NAS Host
+A./dd-RubrikNASShares.ps1 -server <rubrik_host> -csvInput <csv_filename>
+Checks for credential file and if none found prompts for username/password.DESCRIPTION
+Reads in the CSV file and adds each share to the cluster.
 
 .EXAMPLE
-Add-RubrikNASShares.ps1 -server <rubrik_host> -api <token> -csvInput <csv_filename>
-Reads in CSV file and adds each share to the associated NAS Host
+./Add-RubrikNASShares.ps1 -server <rubrik_host> -username <user> -password <password> -csvInput <csv_filename>
+Use the provided username/password for authentication.DESCRIPTION
+Reads in the CSV file and adds each share to the cluster.
 
 #>
 
@@ -87,8 +95,8 @@ param (
 
 Import-Module Rubrik
 
-$curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
-$csvOutput = "./shares_added-$curDateTime.csv"
+$date = Get-Date
+$csvOutput = "./rubrik_shares_added-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 # First try using API token, then username/password if a user is provided, then credential file
@@ -132,9 +140,9 @@ $shareCredList = $shareList | Sort-Object -Property 'domain', 'username' -Unique
 # List of credentials to use
 $credList = @()
 
-# Loop through unique domain\users to prompt for password or encrypt password to use later
+# Iterate through unique domain\users to prompt for password or encrypt password if provided to use during share add
 foreach ($i in $shareCredList) {
-  # If no password is in CSV, prompt password and store into $credList
+  # If no password is in CSV, prompt for password and store into $credList
   if (![string]::IsNullOrEmpty($i.username) -and [string]::IsNullOrEmpty($i.password)) {
     Write-Host "Please supply password for domain: '$($i.domain)', user: '$($i.username)'"
     # Join domain\user if domain is specified
@@ -144,7 +152,6 @@ foreach ($i in $shareCredList) {
     else {
       $cred = Get-Credential -Username "$($i.domain)\$($i.username)"
     }
-
     $credList += [PSCustomObject] @{
       domain = $i.domain
       username = $i.username
@@ -162,13 +169,14 @@ foreach ($i in $shareCredList) {
 }
 
 # Iterate through share list
-foreach ($i in $shareList) {
-
+foreach ($i in $shareList)
+{
   # Get the Host ID of associated share
   $hostID = $rubrikHosts | Where-Object "Name" -eq $i.hostname | Select-Object -ExpandProperty "ID"
 
   # Skip if NAS Host does not exist - script assumes Host pre-exists
-  if ($hostID -eq $null) {
+  if ($hostID -eq $null)
+  {
     Write-Warning "Error adding share: '$($i.exportPoint)' - host not found: '$($i.hostname)'"
 
     $addList += [PSCustomObject] @{
@@ -179,7 +187,8 @@ foreach ($i in $shareList) {
     }
   }
   # If NAS Host exists - continue
-  else {
+  else
+  {
     # See if share already exists on cluster
     $shareID = $rubrikShares | Where-Object {$_.hostname -eq $i.hostname -and $_.exportPoint -eq $i.exportPoint -and $_.shareType -eq $i.ShareType} | Select-Object -ExpandProperty 'id'
 
@@ -203,10 +212,12 @@ foreach ($i in $shareList) {
           $shareCred = New-Object System.Management.Automation.PSCredential($shareUser, $userCred.password)
 
           # Add NAS share to Rubrik with share credential
+          Write-Host "Trying to add share: '$($i.exportPoint)' on host: '$($i.hostname)'"
           $req = New-RubrikNASShare -HostID $hostID -ShareType $i.shareType -ExportPoint $i.exportPoint -Credential $shareCred
         }
         else {
           # Add NAS share without share credential
+          Write-Host "Trying to add share: '$($i.exportPoint)' on host: '$($i.hostname)'"
           $req = New-RubrikNASShare -HostID $hostID -ShareType $i.shareType -ExportPoint $i.exportPoint
         }
         Write-Host "Added share: '$($i.exportPoint)' on host: '$($i.hostname)'" -ForegroundColor Green
@@ -230,8 +241,9 @@ foreach ($i in $shareList) {
         }
       }
     }
-    # If share exists, skip adding share
-    else {
+    # Else share exists so skip adding share
+    else
+    {
       Write-Warning "Skipping adding share: '$($i.exportPoint)' on host: '$($i.hostname)' - share already exists"
 
       $addList += [PSCustomObject] @{
@@ -241,15 +253,14 @@ foreach ($i in $shareList) {
         shareType = $i.shareType
       }
     }
-  } # else to try adding share
-} # foreach
+  } # else NAS Hosts exists so try adding share
+} # foreach in $shareList
 
 Write-Host ""
 Write-Host "# shares added: " $($addList | Where-Object Status -eq "Added" | Measure-Object | Select-Object -ExpandProperty Count)
 Write-Host "# shares not added: " $($addList | Where-Object Status -eq "NotAdded" | Measure-Object | Select-Object -ExpandProperty Count)
 Write-Host "# shares pre-existing: " $($addList | Where-Object Status -eq "PreExisting" | Measure-Object | Select-Object -ExpandProperty Count)
 
-$curDateTime = Get-Date -Format "yyyy-MM-dd_HHmm"
 $addList | Export-Csv -NoTypeInformation -Path $csvOutput
 
 Write-Host "`nResults output to: $csvOutput"
