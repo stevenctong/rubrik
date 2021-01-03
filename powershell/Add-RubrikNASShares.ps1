@@ -33,7 +33,7 @@ Create a CSV file with the following columns:
 ** For SMB, if these entries are provided they override the credentials stored at the NAS Host level
 ** These are the credentials Rubrik uses to mount the share when taking a backup
 - domain, username - The domain and user to use
-- password - The password to use. If a domain/user is specified but password is left blank the script will prompt for one
+- password -  If no password is provided for the user the script will prompt for a password
 
 See 'rubriknasshares.csv' as an example
 
@@ -171,6 +171,9 @@ foreach ($i in $shareCredList) {
 # Iterate through share list
 foreach ($i in $shareList)
 {
+  # Keep track of if updating the current share was successful or not
+  $status = ''
+
   # Get the Host ID of associated share
   $hostID = $rubrikHosts | Where-Object "Name" -eq $i.hostname | Select-Object -ExpandProperty "ID"
 
@@ -178,13 +181,7 @@ foreach ($i in $shareList)
   if ($hostID -eq $null)
   {
     Write-Warning "Error adding share: '$($i.exportPoint)' - host not found: '$($i.hostname)'"
-
-    $addList += [PSCustomObject] @{
-      status = 'NotAdded'
-      hostname = $i.hostname
-      exportPoint = $i.exportPoint
-      shareType = $i.shareType
-    }
+    $status = 'NotAdded'
   }
   # If NAS Host exists - continue
   else
@@ -197,7 +194,7 @@ foreach ($i in $shareList)
 
       $req = $null
       try {
-        # If a username and password is specified for the share then use it
+        # If a username and password is specified for the share then add share using it
         if (![string]::IsNullOrEmpty($i.username)) {
           if ([string]::IsNullOrEmpty($i.domain)) {
             $shareUser = $i.username
@@ -215,45 +212,35 @@ foreach ($i in $shareList)
           Write-Host "Trying to add share: '$($i.exportPoint)' on host: '$($i.hostname)'"
           $req = New-RubrikNASShare -HostID $hostID -ShareType $i.shareType -ExportPoint $i.exportPoint -Credential $shareCred
         }
+        # Add NAS share without share credential
         else {
-          # Add NAS share without share credential
           Write-Host "Trying to add share: '$($i.exportPoint)' on host: '$($i.hostname)'"
           $req = New-RubrikNASShare -HostID $hostID -ShareType $i.shareType -ExportPoint $i.exportPoint
         }
         Write-Host "Added share: '$($i.exportPoint)' on host: '$($i.hostname)'" -ForegroundColor Green
-
-        $addList += [PSCustomObject] @{
-          status = 'Added'
-          hostname = $i.hostname
-          exportPoint = $i.exportPoint
-          shareType = $i.shareType
-        }
+        $status='Added'
       }
       catch {
         Write-Warning "Error adding share: '$($i.exportPoint)' on host: '$($i.hostname)'"
         Write-Warning $Error[0]
-
-        $addList = [PSCustomObject] @{
-          status = 'NotAdded'
-          hostname = $i.hostname
-          exportPoint = $i.exportPoint
-          shareType = $i.shareType
-        }
+        $status = 'NotAdded'
       }
     }
     # Else share exists so skip adding share
     else
     {
       Write-Warning "Skipping adding share: '$($i.exportPoint)' on host: '$($i.hostname)' - share already exists"
-
-      $addList += [PSCustomObject] @{
-        status = 'PreExisting'
-        hostname = $i.hostname
-        exportPoint = $i.exportPoint
-        shareType = $i.shareType
-      }
+      $status = 'PreExisting'
     }
   } # else NAS Hosts exists so try adding share
+
+  $addList += [PSCustomObject] @{
+    status = $status
+    hostname = $i.hostname
+    exportPoint = $i.exportPoint
+    shareType = $i.shareType
+  }
+
 } # foreach in $shareList
 
 Write-Host ""

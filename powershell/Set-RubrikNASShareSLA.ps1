@@ -51,7 +51,7 @@ Reads in the CSV file and assigns a fileset and SLA to a NAS share.
 
 .EXAMPLE
 ./Set-RubrikNASShareSLA.ps1 -server <rubrik_host> -csvInput <csv_filename>
-Checks for credential file and if none found prompts for username/password.DESCRIPTION
+Checks for credential file and if none found prompts for username/password.
 Reads in the CSV file and assigns a fileset and SLA to a NAS share.
 
 .EXAMPLE
