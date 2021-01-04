@@ -187,6 +187,7 @@ foreach ($i in $shareList)
 
       Write-Host "For share: '$($i.exportPoint)' on host: '$($i.hostname) - Trying to update SLA '$($i.sla)' for fileset: '$($i.fileset)'"
       $reqProtect = Invoke-RubrikRESTCall -Method "Patch" -Api $apiVer -Body $bodyJson -Endpoint "fileset/$($hostFileset.id)"
+      # $reqProtect = Protect-RubrikFileset -id $hostFileset.id -sla $i.sla
 
       Write-Host "For share: '$($i.exportPoint)' on host: '$($i.hostname) - Updated SLA '$($i.sla)' for fileset: '$($i.fileset)'" -ForegroundColor Green
       $status = $status + 'UpdatedSLA'
