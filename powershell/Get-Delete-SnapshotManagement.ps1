@@ -86,14 +86,14 @@ Import-Module Rubrik
 $apiVer = 'internal'
 
 # Get snapshots before this date. Set to '' if you want all snapshots without filtering by date.
-$beforeDate = (Get-Date -Year 2020 -Month 09 -Day 01)
-# $beforeDate = ''    # Set to '' if you want all snapshots
+# $beforeDate = (Get-Date -Year 2020 -Month 09 -Day 01)
+$beforeDate = ''    # Set to '' if you want all snapshots
 
 # Object Type to filter by:
 # VirtualMachine, MssqlDatabase, LinuxFileset, WindowsFileset, ShareFileset, NutanixVirtualMachine,
 # HypervVirtualMachine, ManagedVolume, Ec2Instance, StorageArrayVolumeGroup, VcdVapp, LinuxHost,
 # WindowsHost, OracleDatabase, VolumeGroup, AppBlueprint
-$objectType = ''
+$objectType = 'LinuxFileset'
 
 # Object Status to filter by:
 # Protected, Relic, Unprotected, ReplicatedRelic, RemoteUnprotected
@@ -123,7 +123,7 @@ try {
   }
 } catch {
   Write-Error "Error connecting to cluster or with authentication."
-  Exit
+  Exit 1
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
@@ -194,7 +194,8 @@ if ($csvDelete -eq '')
   }  # foreach in $allSnapshotManagement
 
   # Sort and export the $snapshostList
-  $snapshotList = $snapshotList | Sort-Object -Property 'objectName, objectID'
+  $snapshotList = $snapshotList | Sort-Object -Property 'objectName' | Sort-Object -Property 'objectID'
+  # $snapshotList = $snapshotList | Sort-Object -Property 'objectID'
   $snapshotList | Export-Csv -NoTypeInformation -Path $csvFile
   Write-Host "`nResults output to: $csvFile"
 }
@@ -223,15 +224,24 @@ if ($delete -eq $true)
 
       Write-Host "Deleting object: $currentObject, snapshots $deleteArray" -ForegroundColor Green
 
-      $body = [PSCustomObject] @{
-        snapshotIds=$deleteArray
-      }
-
+      # First assign the snapshot to "UNPROTECTED" in order to delete it
       try {
-        Invoke-RubrikRESTCall -Method POST -Api $apiVer -Endpoint "unmanaged_object/$($currentObject)/snapshot/bulk_delete" -Body $body
-      } catch {
-        Write-Host "Error deleting object $currentObject, snapshots $deleteArray" -ForegroundColor Red
+        $assignBody = [PSCustomObject] @{
+          slaDomainId = "UNPROTECTED"
+          snapshotIds = $deleteArray
+        }
+        Invoke-RubrikRESTCall -Method POST -Api $apiVer -Endpoint "unmanaged_object/snapshot/assign_sla" -Body $assignBody
       }
+      catch { Write-Error "Error assigning SLA UNPROTECTED to object $currentObject, snapshots $deleteArray" }
+
+      # Delete the snapshot
+      try
+      {
+        $deleteBody = [PSCustomObject] @{
+          snapshotIds = $deleteArray
+        }
+        Invoke-RubrikRESTCall -Method POST -Api 1 -Endpoint "data_source/$($currentObject)/snapshot/bulk_delete" -Body $deleteBody
+      } catch { Write-Error "Error deleting object $currentObject, snapshots $deleteArray" }
 
       $currentObject = $i.objectID
       $deleteArray = @($i.snapshotID)
@@ -247,15 +257,25 @@ if ($delete -eq $true)
   # Delete the last processed object and associated snapshots
   Write-Host "Deleting object: $currentObject, snapshots $deleteArray" -ForegroundColor Green
 
-  $body = [PSCustomObject] @{
-    snapshotIds=$deleteArray
-  }
-
+  # First assign the snapshot to "UNPROTECTED" in order to delete it
   try {
-    Invoke-RubrikRESTCall -Method POST -Api $apiVer -Endpoint "unmanaged_object/$($currentObject)/snapshot/bulk_delete" -Body $body
-  } catch {
-    Write-Host "Error deleting object $currentObject, snapshots $deleteArray "
+    $assignBody = [PSCustomObject] @{
+      slaDomainId = "UNPROTECTED"
+      snapshotIds = $deleteArray
+    }
+    Invoke-RubrikRESTCall -Method POST -Api $apiVer -Endpoint "unmanaged_object/snapshot/assign_sla" -Body $assignBody
   }
+  catch { Write-Error "Error assigning SLA UNPROTECTED to object $currentObject, snapshots $deleteArray" }
+
+  # Delete the snapshot
+  try
+  {
+    $deleteBody = [PSCustomObject] @{
+      snapshotIds = $deleteArray
+    }
+    Invoke-RubrikRESTCall -Method POST -Api 1 -Endpoint "data_source/$($currentObject)/snapshot/bulk_delete" -Body $deleteBody
+  } catch { Write-Error "Error deleting object $currentObject, snapshots $deleteArray" }
+
 }  # if $delete is $true
 
-Disconnect-Rubrik -Confirm:$false
+$disconnect = Disconnect-Rubrik -Confirm:$false
