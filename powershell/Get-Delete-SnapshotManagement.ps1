@@ -14,8 +14,10 @@ Have the script delete the snapshots or export the snapshots to a CSV file that 
 The Get-Delete-SnapshotManagement.ps1 script generates a list of objects and snapshots under Snapshot Management.
 The list can be filtered by snapshots older than a certain date, object type, or object status.
 The list will be exported to a CSV file.
+
 You can have the script delete the snapshots by setting $delete to $true.
 Or you can edit the CSV to contain the snapshots you want deleted and have the script read the CSV file and delete those snapshots.
+When deleting snapshots the script will first attempt to set the snpashots to SLA "UNPROTECTED" and then delete the snapshots
 
 .NOTES
 Written by Steven Tong for community usage
