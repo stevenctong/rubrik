@@ -102,16 +102,14 @@ try {
     Write-Error "Error connecting to cluster or with authentication."
     $html = "Error connecting to cluster or with authentication."
     if ($sendEmail) { Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort }
-    Exit
-  } catch {
-    Exit
-  }
+    Exit 1
+  } catch { Exit 1 }
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
 
 
-##### RUBRIK AUTHENTICATION #####
+###### RUBRIK AUTHENTICATION - BEGIN ######
 
 # Option 1) Use an API token for authentication
 # $token = ''
@@ -131,7 +129,7 @@ try {
 # Connect-Rubrik -Server $server -Token $token
 # Connect-Rubrik -Server $server -Username $user -Password $password
 
-##### RUBRIK AUTHENTICATION #####
+###### RUBRIK AUTHENTICATION - END ######
 
 
 # $bodyJson = [PSCustomObject] @{
