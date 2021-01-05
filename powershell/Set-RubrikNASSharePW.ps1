@@ -10,7 +10,7 @@
 Reads a .CSV file and updates the credentails the NAS shares.
 
 .DESCRIPTION
-The Update-RubrikNASShares script reads in a .CSV file containing a list of NAS shares updates them with new credentials.
+The Set-RubrikNASSharePW script reads in a .CSV file containing a list of NAS shares updates them with new credentials.
 Shares will fail to be updated if Rubrik cannot mount the share using the new credentials.
 
 .NOTES
