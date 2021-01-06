@@ -108,43 +108,53 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 
-
+# Alternative authentication options
 ###### RUBRIK AUTHENTICATION - BEGIN ######
+
+# Connect to Rubrik cluster - prompt for all arguments
+# Connect-Rubrik
 
 # Option 1) Use an API token for authentication
 # $token = ''
+# Connect-Rubrik -Server $server -Token $token
 
 # Option 2) Use a credential file for authentication
 # To create a credential file (note: only the user who creates it can use it):
 # Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
 # $credential  = Import-Clixml -Path ./rubrik_cred.xml
+# Connect-Rubrik -Server $server -Credential $credential
 
 # Option 3) Use a username and password for authentication
 # $user = ''
 # $password = '' | ConvertTo-SecureString -AsPlainText -Force
-
-# Connect to Rubrik cluster
-# Connect-Rubrik -Server $server
-# Connect-Rubrik -Server $server -Credential $credential
-# Connect-Rubrik -Server $server -Token $token
 # Connect-Rubrik -Server $server -Username $user -Password $password
 
 ###### RUBRIK AUTHENTICATION - END ######
 
 
-# $bodyJson = [PSCustomObject] @{
-#   arg = ''
-# }
-
-# $req = Invoke-RubrikRESTCall -Method 'Patch' -Api '1' -Body $bodyJson -Endpoint "vmware/vm)"
+# Send a REST API call to some endpoint
+$bodyJson = [PSCustomObject] @{
+  arg = ''
+}
+$req = Invoke-RubrikRESTCall -Method 'Patch' -Api '1' -Body $bodyJson -Endpoint "vmware/vm)"
 
 
 # Export some list to a CSV file
-# $list | Export-Csv -NoTypeInformation -Path $csvOutput
-# Write-Host "`nResults output to: $csvOutput"
+$list | Export-Csv -NoTypeInformation -Path $csvOutput
+Write-Host "`nResults output to: $csvOutput"
 
 # Send an email
 if ($sendEmail)
 {
   Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
+}
+
+# Format a timeSpan object to a string when calculating difference between two times
+Function Format-TimeStr($time) {
+  $timeStr = ''
+  if ($time.Days -gt 0) { $timeStr += "$($time.Days) day(s) " }
+  if ($time.Hours -gt 0) { $timeStr += "$($time.Hours) hr " }
+  if ($time.Minutes -gt 0) { $timeStr += "$($time.Minutes) min " }
+  if ($time.Seconds -gt 0) { $timeStr += "$($time.Seconds) sec " }
+  return $timeStr.trim()
 }
