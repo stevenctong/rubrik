@@ -60,7 +60,7 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$rubrikCred = 'rubrik_cred.xml',
 
-  # Snapshot cloest to date to get backup date on (yyyy/mm/dd)
+  # Closest date (UTC) to get backup size for, use (yyyy/mm/dd) format
   [Parameter(Mandatory=$true)]
   [string]$snapDate = ''
 )
