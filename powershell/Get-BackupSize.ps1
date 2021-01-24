@@ -7,10 +7,10 @@
 
 <#
 .SYNOPSIS
-Gets the size of the backup nearest the date provided for VMs and filesets
+Gets the size of the backup nearest the date (UTC) provided for VMs and filesets
 
 .DESCRIPTION
-The Get-BackupSize script gets the size of backup nearest the date provided for VMs and filesets.
+The Get-BackupSize script gets the size of backup nearest the date (UTC) provided for VMs and filesets.
 Outputs the list to a CSV file.
 
 .NOTES
@@ -28,12 +28,12 @@ Fill out the PARAM section with config details for this script.
 .EXAMPLE
 ./Get-BackupSize.ps1 -server <Rubrik_server> -token <API_token> -snapDate 2020/12/10
 Use an API token for authentication
-Get backup size of all VMs and filesets nearest 2020/12/10 (yyyy/mm/dd)
+Get backup size of all VMs and filesets nearest 2020/12/10 (yyyy/mm/dd) UTC
 
 .EXAMPLE
 ./Get-BackupSize.ps1 -server <Rubrik_server> -snapDate 2021/01/05
 Checks for credential file and if none found prompts for username/password.
-Get backup size of all VMs and filesets nearest 2021/01/05 (yyyy/mm/dd)
+Get backup size of all VMs and filesets nearest 2021/01/05 (yyyy/mm/dd) UTC
 
 #>
 
@@ -73,10 +73,12 @@ Function Get-ClosestSnapshot([array]$snapshotList, $snapDate)
 
   foreach ($i in $snapshotList)
   {
-    if ([Math]::abs($($i.date-$snapDate).TotalDays) -lt $compDate)
+    $dateUTC = $(Get-Date $($i.date)).ToUniversalTime()
+
+    if ([Math]::abs($($dateUTC-$snapDate).TotalDays) -lt $compDate)
     {
       $snapshot = $i
-      $compDate = [Math]::abs($($i.date-$snapDate).TotalDays)
+      $compDate = [Math]::abs($($dateUTC-$snapDate).TotalDays)
     }
   }
   return $snapshot
@@ -85,7 +87,7 @@ Function Get-ClosestSnapshot([array]$snapshotList, $snapDate)
 [DateTime]$snapDate = Get-Date($snapDate)
 
 $snapdateString = $snapDate.ToString("yyyy-MM-dd")
-$csvOutput = "./rubrik_backup_sizes_for_snapshot_nearest-$snapdateString.csv"
+$csvOutput = "./rubrik_$($server)_backup_sizes_for_snapshot_nearest-$snapdateString.csv"
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 # First try using API token, then username/password if a user is provided, then credential file
@@ -153,7 +155,7 @@ foreach ($i in $objectList)
       SLA = $objectInfo.effectiveSlaDomainName
       logicalSizeGB = $logicalSizeGB
       snapshotID = $snapshot.id
-      snapshotDate = $snapshot.date
+      snapshotDateUTC = $snapshot.date
     }
 
     $snapshotDetail
