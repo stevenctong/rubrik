@@ -1,0 +1,14 @@
+# https://build.rubrik.com
+# Written by Steven Tong for community usage
+# Date: 1/31/21
+
+# Array of Rubrik clusters and API tokens for script to use
+
+# User 'elkuser' read-only admin on the clusters, default install password
+
+RUBRIKCLUSTERS=('cluster1'
+                'cluster2'
+                )
+RUBRIKTOKENS=('token1'
+              'token2'
+              )
