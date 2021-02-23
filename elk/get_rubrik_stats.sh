@@ -56,12 +56,19 @@ do
     # Get Rubrik cluster storage stats
     if RUBRIKSTORAGE=$(curl -X GET "https://${RUBRIK}/api/internal/stats/system_storage" -H "accept: application/json" -H "${AUTH_HEADER}" -k -1 --fail)
     then
+      # Format json with renamed keys
+      RUBRIKSTORAGE=$(echo $RUBRIKSTORAGE | jq '.rubrikSpaceTotal = .total | .rubrikSpaceUsed = .used |
+        .rubrikSpaceAvailable = .available | .rubrikSpaceSnapshot = .snapshot | .rubrikSpaceLiveMount = .liveMount |
+        .rubrikSpacePendingSnapshot = .pendingSnapshot | .rubrikSpaceCDP = .cdp | .rubrikSpaceMisc = .miscellaneous |
+        del(.total, .used, .available, .snapshot, .liveMount, .pendingSnapshot, .cdp, .miscellaneous)')
+
       # Calculate the Rubrik cluster used % and add to the storage stats json
-      RUBRIKTOTALCAP=$(echo $RUBRIKSTORAGE | jq .total)
-      RUBRIKUSEDCAP=$(echo $RUBRIKSTORAGE | jq .used)
+      RUBRIKTOTALCAP=$(echo $RUBRIKSTORAGE | jq .rubrikSpaceTotal)
+      RUBRIKUSEDCAP=$(echo $RUBRIKSTORAGE | jq .rubrikSpaceUsed)
       RUBRIKUSEDPCT=$(echo "scale=3 ; ${RUBRIKUSEDCAP} / ${RUBRIKTOTALCAP} * 100" | bc)
 
       RUBRIKUSEDPCTTJSON="{\"rubrikUsedPct\":${RUBRIKUSEDPCT}}"
+
       RUBRIKSTORAGE=$(echo $RUBRIKSTORAGE | jq --argjson obj "$RUBRIKUSEDPCTTJSON" '. += $obj')
 
       RUBRIKJSON=$(echo ${RUBRIKJSON} ${RUBRIKSTORAGE} | jq -s add)
@@ -70,6 +77,13 @@ do
     # Get Rubrik dashboard SLA compliance
     if RUBRIKCOMPLIANCE=$(curl -X GET "https://${RUBRIK}/api/v1/report/compliance_summary_sla?snapshot_range=LastSnapshot" -H "accept: application/json" -H "${AUTH_HEADER}" -k -1 --fail)
     then
+      # Format json with renamed keys
+      RUBRIKCOMPLIANCE=$(echo $RUBRIKCOMPLIANCE | jq '.rubrikTotalProtected = .totalProtected |
+        .rubrikInCompliance = .numberOfInComplianceSnapshots | .rubrikOutCompliance = .numberOfOutOfComplianceSnapshots |
+        .rubrikPctInCompliance = .percentOfInComplianceSnapshots | .rubrikPctOutCompliance = .percentOfOutOfComplianceSnapshots |
+        .rubrikComplianceTime = .updatedTime |
+        del(.totalProtected, .numberOfInComplianceSnapshots, .numberOfOutOfComplianceSnapshots, .percentOfInComplianceSnapshots, .percentOfOutOfComplianceSnapshots, .updatedTime)')
+
       RUBRIKJSON=$(echo ${RUBRIKJSON} ${RUBRIKCOMPLIANCE} | jq -s add)
     fi
 
