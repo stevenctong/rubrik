@@ -84,7 +84,7 @@ for ($i = 0; $i -lt $rubrikClusters.count; $i++)
     # Connect-Rubrik -Server $rubrikClusters[$i] -Credential $credential
 
     # If using a username and password:
-    # Connect-Rubrik -Server $server -Username $user -Password $password
+    # Connect-Rubrik -Server $rubrikClusters[$i] -Username $user -Password $password
 
     $clusterInfo = Get-RubrikClusterInfo
     $clusterStorage = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "stats/system_storage"
@@ -134,7 +134,8 @@ for ($i = 0; $i -lt $rubrikClusters.count; $i++)
       rubrikNodesTotal = $totalNodes
     }
 
-    $rubrikMetrics | ConvertTo-Json | Out-File -append "$logpath\rubrik_stats_$($date.ToString("yyyy-MM-dd")).log"
+    # Use -Compress to remove whitespace in the JSON and output to a single line
+    $rubrikMetrics | ConvertTo-Json -Compress | Out-File -append "$logpath\rubrik_stats_$($date.ToString("yyyy-MM-dd")).log"
   } catch {
     Write-Error "Error gathering metrics for $($rubrikClusters[$i])"
     $_
