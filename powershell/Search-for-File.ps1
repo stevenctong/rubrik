@@ -128,60 +128,63 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 
-# $objectList = Get-RubrikVM
-# $objectList += Get-RubrikFileset
-#
-# # For each object, choose the one snapshot closest to $snapDate and add to $snapshotList
-# $snapshotList = @()
-#
-# foreach ($i in $objectList)
-# {
-#   if ($i.id -like 'VirtualMachine*')
-#   {
-#     $objectInfo = Get-RubrikVM -id $i.id
-#     $location = $objectInfo.vcenterName
-#     $type = 'vSphere VM'
-#     $os = $objectInfo.guestOsType
-#   }
-#   elseif ($i.id -like 'Fileset*')
-#   {
-#     $objectInfo = Get-RubrikFileset -id $i.id
-#     $location = $objectInfo.hostName
-#
-#     if ($objectInfo.operatingSystemType -like 'UnixLike') {
-#       $type = 'Linux & Unix Fileset'
-#       $os = 'Linux & Unix'
-#     }
-#     elseif ($objectInfo.operatingSystemType -like 'Windows') {
-#       $type = 'Windows Fileset'
-#       $os = 'Windows'
-#     }
-#     else {
-#       $type = 'NAS Fileset'
-#       $os = 'NAS'
-#     }
-#   }
-#
-#   # For each object, find the snapshot nearest the date given in order to pull size info
-#   if ($objectInfo.snapshotCount -gt 0)
-#   {
-#     $snapshot = Get-ClosestSnapshot $objectInfo.snapshots $snapDate
-#
-#     $snapshotDetail = [PSCustomObject]@{
-#       Name = $objectInfo.name
-#       Location = $location
-#       OS = $os
-#       CalculatedName = $objectInfo.Name + '+' + $location
-#       Type = $type
-#       snapshotID = $snapshot.id
-#       snapshotDateUTC = $snapshot.date
-#     }
-#
-#     $snapshotDetail
-#
-#     $snapshotList += $snapshotDetail
-#   }
-# }
+$objectList = Get-RubrikVM
+$objectList += Get-RubrikFileset
+
+# For each object, choose the one snapshot closest to $snapDate and add to $snapshotList
+$snapshotList = @()
+
+$objectNum = 1
+
+foreach ($i in $objectList)
+{
+  Write-Host "Gathering info on object # (step 1 of 2): $objectNum of $($objectList.count)" -foregroundcolor green
+  $objectNum += 1
+
+  if ($i.id -like 'VirtualMachine*')
+  {
+    $objectInfo = Get-RubrikVM -id $i.id
+    $location = $objectInfo.vcenterName
+    $type = 'vSphere VM'
+    $os = $objectInfo.guestOsType
+  }
+  elseif ($i.id -like 'Fileset*')
+  {
+    $objectInfo = Get-RubrikFileset -id $i.id
+    $location = $objectInfo.hostName
+
+    if ($objectInfo.operatingSystemType -like 'UnixLike') {
+      $type = 'Linux & Unix Fileset'
+      $os = 'Linux & Unix'
+    }
+    elseif ($objectInfo.operatingSystemType -like 'Windows') {
+      $type = 'Windows Fileset'
+      $os = 'Windows'
+    }
+    else {
+      $type = 'NAS Fileset'
+      $os = 'NAS'
+    }
+  }
+
+  # For each object, find the snapshot nearest the date given in order to pull size info
+  if ($objectInfo.snapshotCount -gt 0)
+  {
+    $snapshot = Get-ClosestSnapshot $objectInfo.snapshots $snapDate
+
+    $snapshotDetail = [PSCustomObject]@{
+      Name = $objectInfo.name
+      Location = $location
+      OS = $os
+      CalculatedName = $objectInfo.Name + '+' + $location
+      Type = $type
+      snapshotID = $snapshot.id
+      snapshotDateUTC = $snapshot.date
+    }
+
+    $snapshotList += $snapshotDetail
+  }
+}
 
 # Build list of each filename hit and which object + snapshot it belongs to
 $resultList = @()
@@ -191,7 +194,7 @@ $snapshotNum = 1
 # Iterate through each snapshot and search for $filename
 foreach ($i in $snapshotList)
 {
-  Write-Host "Searching on object #: $snapshotNum of $($snapshotList.count)" -foregroundcolor green
+  Write-Host "Searching on object # (step 2 of 2): $snapshotNum of $($snapshotList.count)" -foregroundcolor green
   $snapshotNum += 1
 
   try
@@ -229,4 +232,4 @@ foreach ($i in $snapshotList)
 
 $resultList | Export-Csv -NoTypeInformation -Path $csvOutput
 
-# Disconnect-Rubrik -Confirm:$false
+Disconnect-Rubrik -Confirm:$false
