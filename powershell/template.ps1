@@ -84,6 +84,7 @@ $csvOutput = "./<name>-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 # First try using API token, then username/password if a user is provided, then credential file
 try {
+  if (!$server) { $server = Read-Host "Rubrik hostname or IP" }
   if ($token) { Connect-Rubrik -Server $server -Token $token }
   else {
     if ($user) {
