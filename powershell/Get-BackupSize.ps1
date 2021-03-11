@@ -143,6 +143,7 @@ foreach ($i in $objectList)
     }
   }
 
+  # For each object, find the snapshot nearest the date given in order to pull size info
   if ($objectInfo.snapshotCount -gt 0)
   {
     $snapshot = Get-ClosestSnapshot $objectInfo.snapshots $snapDate
