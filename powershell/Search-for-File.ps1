@@ -186,9 +186,14 @@ try {
 # Build list of each filename hit and which object + snapshot it belongs to
 $resultList = @()
 
+$snapshotNum = 1
+
 # Iterate through each snapshot and search for $filename
 foreach ($i in $snapshotList)
 {
+  Write-Host "Searching on object #: $snapshotNum of $($snapshotList.count)" -foregroundcolor green
+  $snapshotNum += 1
+
   try
   {
     # Search for the filename in each snapshot
