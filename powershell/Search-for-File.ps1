@@ -68,7 +68,7 @@ param (
 
   # Limit the number of search results per object to #
   [Parameter(Mandatory=$false)]
-  [string]$limit = 25
+  [string]$limit = 200
 )
 
 Import-Module Rubrik
@@ -200,7 +200,7 @@ foreach ($i in $snapshotList)
   try
   {
     # Search for the filename in each snapshot
-    $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($snapshotID)&name=$($filename)&dir=/"
+    $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/"
 
     $searchResult.data
 
