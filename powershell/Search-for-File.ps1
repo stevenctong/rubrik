@@ -68,7 +68,15 @@ param (
 
   # Limit the number of search results per object to #
   [Parameter(Mandatory=$false)]
-  [string]$limit = 200
+  [string]$limit = 200,
+
+  # Minimum size of files in GB to add to the result list
+  [Parameter(Mandatory=$false)]
+  [int]$minSize = 1,
+
+  # Which number in the snpshot array to continue processing from
+  [Parameter(Mandatory=$false)]
+  [int]$startNum = 1
 )
 
 Import-Module Rubrik
@@ -95,7 +103,13 @@ Function Get-ClosestSnapshot([array]$snapshotList, $snapDate)
 $date = Get-Date
 $snapDate = $date.ToUniversalTime()
 
-# CSV file info
+# Import a CSV generated from step 1 (snapshoot list) to search against
+$importSnapshotCSV = ''
+
+# CSV for object list (step 1)
+$csvSnapshotList = "./rubrik_$($server)-snapshot_list.csv"
+
+# CSV for search results
 $csvOutput = "./rubrik_$($server)-search_results-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### VARIABLES - END #######
@@ -128,62 +142,70 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 
-$objectList = Get-RubrikVM
-$objectList += Get-RubrikFileset
-
-# For each object, choose the one snapshot closest to $snapDate and add to $snapshotList
-$snapshotList = @()
-
-$objectNum = 1
-
-foreach ($i in $objectList)
+if (($importSnapshotList -eq '') -or !(Test-Path $importSnapshotCSV))
 {
-  Write-Host "Gathering info on object # (step 1 of 2): $objectNum of $($objectList.count)" -foregroundcolor green
-  $objectNum += 1
+  $objectList = Get-RubrikVM
+  $objectList += Get-RubrikFileset
 
-  if ($i.id -like 'VirtualMachine*')
+  # For each object, choose the one snapshot closest to $snapDate and add to $snapshotList
+  $snapshotList = @()
+
+  $objectNum = 1
+
+  foreach ($i in $objectList)
   {
-    $objectInfo = Get-RubrikVM -id $i.id
-    $location = $objectInfo.vcenterName
-    $type = 'vSphere VM'
-    $os = $objectInfo.guestOsType
+    Write-Host "Gathering info on object # (step 1 of 2): $objectNum of $($objectList.count)" -foregroundcolor green
+    $objectNum += 1
+
+    if ($i.id -like 'VirtualMachine*')
+    {
+      $objectInfo = Get-RubrikVM -id $i.id
+      $location = $objectInfo.vcenterName
+      $type = 'vSphere VM'
+      $os = $objectInfo.guestOsType
+    }
+    elseif ($i.id -like 'Fileset*')
+    {
+      $objectInfo = Get-RubrikFileset -id $i.id
+      $location = $objectInfo.hostName
+
+      if ($objectInfo.operatingSystemType -like 'UnixLike') {
+        $type = 'Linux & Unix Fileset'
+        $os = 'Linux & Unix'
+      }
+      elseif ($objectInfo.operatingSystemType -like 'Windows') {
+        $type = 'Windows Fileset'
+        $os = 'Windows'
+      }
+      else {
+        $type = 'NAS Fileset'
+        $os = 'NAS'
+      }
+    }
+
+    # For each object, find the snapshot nearest the date given in order to pull size info
+    if ($objectInfo.snapshotCount -gt 0)
+    {
+      $snapshot = Get-ClosestSnapshot $objectInfo.snapshots $snapDate
+
+      $snapshotDetail = [PSCustomObject]@{
+        Name = $objectInfo.name
+        Location = $location
+        OS = $os
+        CalculatedName = $objectInfo.Name + '+' + $location
+        Type = $type
+        snapshotID = $snapshot.id
+        snapshotDateUTC = $snapshot.date
+      }
+
+      $snapshotList += $snapshotDetail
+    }
   }
-  elseif ($i.id -like 'Fileset*')
-  {
-    $objectInfo = Get-RubrikFileset -id $i.id
-    $location = $objectInfo.hostName
 
-    if ($objectInfo.operatingSystemType -like 'UnixLike') {
-      $type = 'Linux & Unix Fileset'
-      $os = 'Linux & Unix'
-    }
-    elseif ($objectInfo.operatingSystemType -like 'Windows') {
-      $type = 'Windows Fileset'
-      $os = 'Windows'
-    }
-    else {
-      $type = 'NAS Fileset'
-      $os = 'NAS'
-    }
-  }
-
-  # For each object, find the snapshot nearest the date given in order to pull size info
-  if ($objectInfo.snapshotCount -gt 0)
-  {
-    $snapshot = Get-ClosestSnapshot $objectInfo.snapshots $snapDate
-
-    $snapshotDetail = [PSCustomObject]@{
-      Name = $objectInfo.name
-      Location = $location
-      OS = $os
-      CalculatedName = $objectInfo.Name + '+' + $location
-      Type = $type
-      snapshotID = $snapshot.id
-      snapshotDateUTC = $snapshot.date
-    }
-
-    $snapshotList += $snapshotDetail
-  }
+  # Export out snapshot list (step 1)
+  $snapshotList | Export-Csv -NoTypeInformation -Path $csvSnapshotList
+} else{
+  $snapshotList = Import-Csv -Path $importSnapshotCSV
 }
 
 # Build list of each filename hit and which object + snapshot it belongs to
@@ -194,42 +216,54 @@ $snapshotNum = 1
 # Iterate through each snapshot and search for $filename
 foreach ($i in $snapshotList)
 {
-  Write-Host "Searching on object # (step 2 of 2): $snapshotNum of $($snapshotList.count)" -foregroundcolor green
-  $snapshotNum += 1
-
-  try
+  # Try to get search results only if the current $snapshotNum >= $startNum
+  if ($snapshotNum -ge $startNum)
   {
-    # Search for the filename in each snapshot
-    $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/"
-
-    $searchResult.data
-
-    foreach ($j in $searchResult.data)
+    Write-Host "Searching on object # (step 2 of 2): $snapshotNum of $($snapshotList.count)" -foregroundcolor green
+    try
     {
-      $resultDetail = [PSCustomObject]@{
-        Name = $i.name
-        Location = $i.location
-        Type = $i.type
-        OS = $i.os
-        Dir = $j.dir
-        Filename = $j.filename
-        Size = $j.size
-        SizeGB = $($j.size/1000000000)
-        lastModified = $j.lastModified
-        snapshotID = $i.snapshotID
-        snapshotDateUTC = $i.snapshotDateUTC
-      }
+      # Search for the filename in each snapshot
+      $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/"
 
-      $resultList += $resultDetail
+      $searchResult.data
 
-    } # foreach in $searchResult
+      foreach ($j in $searchResult.data)
+      {
+        # # Store result if it is > $minSize (size in GB)
+        if ($j.size -gt $($minSize*1000000000))
+        {
+          $resultDetail = [PSCustomObject]@{
+            Name = $i.name
+            Location = $i.location
+            Type = $i.type
+            OS = $i.os
+            Dir = $j.dir
+            Filename = $j.filename
+            Size = $j.size
+            SizeGB = $($j.size/1000000000)
+            lastModified = $j.lastModified
+            snapshotID = $i.snapshotID
+            snapshotDateUTC = $i.snapshotDateUTC
+            snapshotNum = $snapshotNum
+          }
 
+          $resultDetail | Export-Csv -NoTypeInformation -Path $csvOutput -Append
+
+          $resultList += $resultDetail
+        }
+      } # foreach in $searchResult
+
+    }
+    catch {
+      Write-Error "Error searching on object: $($i.name)"
+    }
+  } else {
+    Write-Host "Skipping search on object # (step 2 of 2): $snapshotNum of $($snapshotList.count), start #: $startNum" -foregroundcolor yellow
   }
-  catch {
-    Write-Error "Error searching on object: $($i.name)"
-  }
+
+  $snapshotNum += 1
 } # foreach in $snapshotList
 
-$resultList | Export-Csv -NoTypeInformation -Path $csvOutput
+# $resultList | Export-Csv -NoTypeInformation -Path $csvOutput
 
 Disconnect-Rubrik -Confirm:$false
