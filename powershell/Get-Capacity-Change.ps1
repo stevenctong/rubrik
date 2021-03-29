@@ -324,7 +324,7 @@ if ($date -eq $sourceDate -and !(Test-Path -Path $reportFileName))
   # Get the CSV link of the custom Systems Capacity report and download it
   # Keep historical reports in order for the script to compare against
   $reportLink = Get-RubrikReport -Name $rubrikSysCapReportName | Export-RubrikReport
-  Invoke-WebRequest -Uri $reportLink -OutFile ($reportFilename)
+  Invoke-WebRequest -Uri $reportLink -OutFile ($reportFilename) -SkipCertificateCheck
 } else {
   Write-Host "`nCapacity report found: $reportFilename" -foregroundcolor green
 }
@@ -353,7 +353,7 @@ try {
       # Get the CSV link of the custom Systems Capacity report and download it
       # Keep historical reports in order for the script to compare against
       $reportLink = Get-RubrikReport -Name $rubrikCapOverTimeReportName | Export-RubrikReport
-      Invoke-WebRequest -Uri $reportLink -OutFile ($compFilename)
+      Invoke-WebRequest -Uri $reportLink -OutFile ($compFilename) -SkipCertificateCheck
     } else {
       Write-Host "`nCapacity report found: $compFilename" -foregroundcolor green
     }
@@ -379,7 +379,7 @@ $summary = [PSCustomObject] @{
   "Total Local Storage (TB)" = [math]::Round($($reportSource | Measure-Object -Property 'Local Storage (B)' -Sum).sum / 1000000000000, 3)
   "Total Archival Storage (TB)" = [math]::Round($($reportSource | Measure-Object -Property 'Archival Storage (B)' -Sum).sum / 1000000000000, 3)
   "Total Replicated Storage (TB)" = [math]::Round($($reportSource | Measure-Object -Property 'Replicated Storage (B)' -Sum).sum / 1000000000000, 3)
-  "Objects" = $reportSource.count
+  "Objects" = 0
   "VMs" = 0
   "Physical Hosts" = 0
   "NAS" = 0
@@ -405,7 +405,7 @@ foreach ($report in $reportArray)
     "Total Local Storage (TB)" = [math]::Round($($report | Measure-Object -Property 'Local Storage (B)' -Sum).sum / 1000000000000, 3)
     "Total Archival Storage (TB)" = [math]::Round($($report | Measure-Object -Property 'Archival Storage (B)' -Sum).sum / 1000000000000, 3)
     "Total Replicated Storage (TB)" = [math]::Round($($report | Measure-Object -Property 'Replicated Storage (B)' -Sum).sum / 1000000000000, 3)
-    "Objects" = $report.count
+    "Objects" = 0
     "VMs" = 0
     "Physical Hosts" = 0
     "NAS" = 0
@@ -419,18 +419,25 @@ foreach ($report in $reportArray)
     $reportObj | Add-Member -MemberType NoteProperty -Name "CompDates" -Value $i
     $reportObj | Add-Member -MemberType NoteProperty -Name "NameLocation" -Value "$($reportObj.'Object Name')+$($reportObj.Location)"
 
-    if ($reportObj."Object Type" -like "*VM*" -or $reportObj."ObjectType" -like "*vCD*") {
+    # Add to count if it exists and Local Capacity > 0 to ignore anything that isn't really protected
+    if (($reportObj."Object Type" -like "*VM*" -or $reportObj."ObjectType" -like "*vCD*") -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."VMs" += 1
-    } elseif ($reportObj."Object Type" -like "*Linux*" -or $reportObj."Object Type" -like "*Windows*") {
+      $summary."Objects" +=1
+    } elseif (($reportObj."Object Type" -like "*Linux*" -or $reportObj."Object Type" -like "*Windows*") -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."Physical Hosts" += 1
-    } elseif ($reportObj."Object Type" -like "*NAS*") {
+      $summary."Objects" +=1
+    } elseif ($reportObj."Object Type" -like "*NAS*" -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."NAS" += 1
-    } elseif ($reportObj."Object Type" -like "*SQL*") {
+      $summary."Objects" +=1
+    } elseif ($reportObj."Object Type" -like "*SQL*" -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."MS SQL" +=1
-    } elseif ($reportObj."Object Type" -like "*Oracle*") {
+      $summary."Objects" +=1
+    } elseif ($reportObj."Object Type" -like "*Oracle*" -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."Oracle" += 1
-    } elseif ($reportObj."Object Type" -like "*Managed*") {
+      $summary."Objects" +=1
+    } elseif ($reportObj."Object Type" -like "*Managed*" -and $reportObj."Local Storage (B)" -gt 0) {
       $summary."MVs" += 1
+      $summary."Objects" +=1
     }
   } # FOREACH $reportObj in $report
 
@@ -448,19 +455,25 @@ foreach ($i in $reportSource)
   Write-Host "Processing $count of $total - Phase (1 of 2)  [$($i.'NameLocation')]"
   $count += 1
 
-  # Add summary info to the summary array
-  if ($i."Object Type" -like "*VM*" -or $i."ObjectType" -like "*vCD*") {
+  # Add to count if it exists and Local Capacity > 0 to ignore anything that isn't really protected
+  if (($i."Object Type" -like "*VM*" -or $i."ObjectType" -like "*vCD*") -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."VMs" += 1
-  } elseif ($i."Object Type" -like "*Linux*" -or $i."Object Type" -like "*Windows*") {
+    $summaryArray[0]."Objects" += 1
+  } elseif (($i."Object Type" -like "*Linux*" -or $i."Object Type" -like "*Windows*") -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."Physical Hosts" += 1
-  } elseif ($i."Object Type" -like "*NAS*") {
+    $summaryArray[0]."Objects" += 1
+  } elseif ($i."Object Type" -like "*NAS*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."NAS" += 1
-  } elseif ($i."Object Type" -like "*SQL*") {
+    $summaryArray[0]."Objects" += 1
+  } elseif ($i."Object Type" -like "*SQL*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."MS SQL" +=1
-  } elseif ($i."Object Type" -like "*Oracle*") {
+    $summaryArray[0]."Objects" += 1
+  } elseif ($i."Object Type" -like "*Oracle*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."Oracle" += 1
-  } elseif ($i."Object Type" -like "*Managed*") {
+    $summaryArray[0]."Objects" += 1
+  } elseif ($i."Object Type" -like "*Managed*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
     $summaryArray[0]."MVs" += 1
+    $summaryArray[0]."Objects" += 1
   }
 
   # Calculate today's report metrics to GB
