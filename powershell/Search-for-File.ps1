@@ -142,7 +142,7 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 
-if (($importSnapshotList -eq '') -or !(Test-Path $importSnapshotCSV))
+if ($importSnapshotCSV -eq '')
 {
   $objectList = Get-RubrikVM
   $objectList += Get-RubrikFileset
