@@ -58,7 +58,7 @@ param (
 
   # Rubrik cluster hostname or IP address
   [Parameter(Mandatory=$false)]
-  [string]$server = 'amer1-rbk01.rubrikdemo.com',
+  [string]$server = '',
 
   # Use API token for authentication
   [Parameter(Mandatory=$false)]
