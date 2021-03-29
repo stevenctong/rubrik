@@ -63,7 +63,7 @@ then
 fi
 
 # Grabs the info and snapshot list for the Source Fileset ID
-FILESETINFO=$(curl -H $AUTH_HEADER -X GET -H 'Content-Type: application/json' -d '' 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'' -k -1)
+FILESETINFO=$(curl -H $AUTH_HEADER -X GET -H 'Content-Type: application/json' 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'' -k -1)
 
 # The list of snapshot IDs and dates will be stored in an array
 # The oldest snapshot will be the first index in the array (array[1])
