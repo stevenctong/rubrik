@@ -420,22 +420,22 @@ foreach ($report in $reportArray)
     $reportObj | Add-Member -MemberType NoteProperty -Name "NameLocation" -Value "$($reportObj.'Object Name')+$($reportObj.Location)"
 
     # Add to count if it exists and Local Capacity > 0 to ignore anything that isn't really protected
-    if (($reportObj."Object Type" -like "*VM*" -or $reportObj."ObjectType" -like "*vCD*") -and $reportObj."Local Storage (B)" -gt 0) {
+    if (($reportObj."Object Type" -like "*VM*" -or $reportObj."ObjectType" -like "*vCD*") -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."VMs" += 1
       $summary."Objects" +=1
-    } elseif (($reportObj."Object Type" -like "*Linux*" -or $reportObj."Object Type" -like "*Windows*") -and $reportObj."Local Storage (B)" -gt 0) {
+    } elseif (($reportObj."Object Type" -like "*Linux*" -or $reportObj."Object Type" -like "*Windows*") -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."Physical Hosts" += 1
       $summary."Objects" +=1
-    } elseif ($reportObj."Object Type" -like "*NAS*" -and $reportObj."Local Storage (B)" -gt 0) {
+    } elseif ($reportObj."Object Type" -like "*NAS*" -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."NAS" += 1
       $summary."Objects" +=1
-    } elseif ($reportObj."Object Type" -like "*SQL*" -and $reportObj."Local Storage (B)" -gt 0) {
+    } elseif ($reportObj."Object Type" -like "*SQL*" -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."MS SQL" +=1
       $summary."Objects" +=1
-    } elseif ($reportObj."Object Type" -like "*Oracle*" -and $reportObj."Local Storage (B)" -gt 0) {
+    } elseif ($reportObj."Object Type" -like "*Oracle*" -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."Oracle" += 1
       $summary."Objects" +=1
-    } elseif ($reportObj."Object Type" -like "*Managed*" -and $reportObj."Local Storage (B)" -gt 0) {
+    } elseif ($reportObj."Object Type" -like "*Managed*" -and [double]$reportObj."Local Storage (B)" -gt 0) {
       $summary."MVs" += 1
       $summary."Objects" +=1
     }
@@ -456,22 +456,22 @@ foreach ($i in $reportSource)
   $count += 1
 
   # Add to count if it exists and Local Capacity > 0 to ignore anything that isn't really protected
-  if (($i."Object Type" -like "*VM*" -or $i."ObjectType" -like "*vCD*") -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  if (($i."Object Type" -like "*VM*" -or $i."ObjectType" -like "*vCD*") -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."VMs" += 1
     $summaryArray[0]."Objects" += 1
-  } elseif (($i."Object Type" -like "*Linux*" -or $i."Object Type" -like "*Windows*") -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  } elseif (($i."Object Type" -like "*Linux*" -or $i."Object Type" -like "*Windows*") -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."Physical Hosts" += 1
     $summaryArray[0]."Objects" += 1
-  } elseif ($i."Object Type" -like "*NAS*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  } elseif ($i."Object Type" -like "*NAS*" -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."NAS" += 1
     $summaryArray[0]."Objects" += 1
-  } elseif ($i."Object Type" -like "*SQL*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  } elseif ($i."Object Type" -like "*SQL*" -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."MS SQL" +=1
     $summaryArray[0]."Objects" += 1
-  } elseif ($i."Object Type" -like "*Oracle*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  } elseif ($i."Object Type" -like "*Oracle*" -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."Oracle" += 1
     $summaryArray[0]."Objects" += 1
-  } elseif ($i."Object Type" -like "*Managed*" -and $summaryArray[0]."Local Storage (B)" -gt 0) {
+  } elseif ($i."Object Type" -like "*Managed*" -and [double]$i."Local Storage (B)" -gt 0) {
     $summaryArray[0]."MVs" += 1
     $summaryArray[0]."Objects" += 1
   }
