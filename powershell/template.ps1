@@ -111,6 +111,7 @@ try {
 
 # Alternative authentication options
 ###### RUBRIK AUTHENTICATION - BEGIN ######
+# $server = ''
 
 # Connect to Rubrik cluster - prompt for all arguments
 # Connect-Rubrik
