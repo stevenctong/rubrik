@@ -44,7 +44,6 @@ param (
 )
 
 $date = Get-Date
-$csvOutput = "./rubrik-filelist_diff-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 $csv1 = Import-CSV $csvfile1
 $csv2 = Import-CSV $csvfile2
