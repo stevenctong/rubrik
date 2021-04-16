@@ -1,0 +1,50 @@
+{
+    "Sid": "RubrikCloudOnRestricted",
+    "Effect": "Allow",
+    "Action": [
+        "ec2:DeleteVolume",
+        "ec2:DeleteSnapshot",
+        "ec2:DeleteTags",
+        "ec2:DetachVolume",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances"
+    ],
+    "Resource": "*",
+    "Condition": {
+        "ForAnyValue:StringEquals": {
+            "ec2:ResourceTag/rk_instance_class": [
+                "TransientStormInstance",
+                "UserInstantiatedInstance",
+                "PolicyBasedImage",
+                "OnDemandImage",
+                "TestConnectivityInstance",
+                "BootstrappedStormImage",
+                "VolumeGeneratedCloudSnapshot"
+            ]
+        }
+    }
+}
+
+
+
+
+{
+    "Sid": "RubrikCloudOnRestricted",
+    "Effect": "Allow",
+    "Action": [
+        "ec2:DeleteVolume",
+        "ec2:DeleteSnapshot",
+        "ec2:DeleteTags",
+        "ec2:DetachVolume",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:TerminateInstances"
+    ],
+    "Resource": "*",
+    "Condition": {
+        "ForAnyValue:StringLike": {
+            "ec2:ResourceTag/rk_instance_class": "*"
+        }
+    }
+}
