@@ -91,7 +91,7 @@ $date = Get-Date
 $sourceDate = $date
 
 # An array of days to compare $sourceDate against, the # of days back. Eg '-7' for 7 days earlier than Source Date
-$compDates = @('-7', '-30')
+$compDates = @('-7','-14', '-30')
 
 # Cluster name, if you want to use a different alias than $server
 $clusterName = $server
