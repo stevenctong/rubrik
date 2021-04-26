@@ -76,7 +76,11 @@ param (
 
   # Which number in the snpshot array to continue processing from
   [Parameter(Mandatory=$false)]
-  [int]$startNum = 1
+  [int]$startNum = 1,
+
+  # List of VMware VMs to search on
+  [Parameter(Mandatory=$false)]
+  [string]$vmlist = ''
 )
 
 Import-Module Rubrik
@@ -141,11 +145,20 @@ try {
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
+$objectList = @()
 
 if ($importSnapshotCSV -eq '')
 {
-  $objectList = Get-RubrikVM
-  $objectList += Get-RubrikFileset
+  if ($vmlist -ne '')
+  {
+    $objectList = Get-RubrikVM
+    $objectList += Get-RubrikFileset
+  } else
+  {
+    $vmlist.split(",") | foreach {
+      $objectList += Get-RubrikVM -name $_
+    }
+  }
 
   # For each object, choose the one snapshot closest to $snapDate and add to $snapshotList
   $snapshotList = @()
@@ -154,7 +167,7 @@ if ($importSnapshotCSV -eq '')
 
   foreach ($i in $objectList)
   {
-    Write-Host "Gathering info on object # (step 1 of 2): $objectNum of $($objectList.count)" -foregroundcolor green
+    Write-Host "[$objectNum/$($objectList.count)] Building snapshot list for object: $($i.name), $($i.location) (step 1 of 2): " -foregroundcolor green
     $objectNum += 1
 
     if ($i.id -like 'VirtualMachine*')
@@ -200,15 +213,15 @@ if ($importSnapshotCSV -eq '')
 
       $snapshotList += $snapshotDetail
     }
-  }
+  } # foreach ($i in $objectList)
 
   # Export out snapshot list (step 1)
   $snapshotList | Export-Csv -NoTypeInformation -Path $csvSnapshotList
-} else{
+} else {
   $snapshotList = Import-Csv -Path $importSnapshotCSV
 }
 
-# Build list of each filename hit and which object + snapshot it belongs to
+# Build list of each search hit and which object + snapshot it belongs to
 $resultList = @()
 
 $snapshotNum = 1
@@ -219,11 +232,11 @@ foreach ($i in $snapshotList)
   # Try to get search results only if the current $snapshotNum >= $startNum
   if ($snapshotNum -ge $startNum)
   {
-    Write-Host "Searching on object # (step 2 of 2): $snapshotNum of $($snapshotList.count)" -foregroundcolor green
+    Write-Host "[$snapshotNum/$($snapshotList.count)] Searching on object: $($i.name), $($i.location) (step 2 of 2)" -foregroundcolor green
     try
     {
       # Search for the filename in each snapshot
-      $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/"
+      $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/" -verbose
 
       $searchResult.data
 
@@ -262,7 +275,7 @@ foreach ($i in $snapshotList)
   }
 
   $snapshotNum += 1
-} # foreach in $snapshotList
+} # foreach ($i in $snapshotList)
 
 # $resultList | Export-Csv -NoTypeInformation -Path $csvOutput
 
