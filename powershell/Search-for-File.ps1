@@ -149,14 +149,15 @@ $objectList = @()
 
 if ($importSnapshotCSV -eq '')
 {
-  if ($vmlist -ne '')
+  if ($vmlist -eq '')
   {
     $objectList = Get-RubrikVM
     $objectList += Get-RubrikFileset
   } else
   {
     $vmlist.split(",") | foreach {
-      $objectList += Get-RubrikVM -name $_
+      $vm = Get-RubrikVM -name $_
+      if ($vm -ne $null) { $objectList += Get-RubrikVM -name $_ }
     }
   }
 
@@ -167,7 +168,7 @@ if ($importSnapshotCSV -eq '')
 
   foreach ($i in $objectList)
   {
-    Write-Host "[$objectNum/$($objectList.count)] Building snapshot list for object: $($i.name), $($i.location) (step 1 of 2): " -foregroundcolor green
+    Write-Host "[$objectNum/$($objectList.count)] Building snapshot list for object: $($i.name) (step 1 of 2): " -foregroundcolor green
     $objectNum += 1
 
     if ($i.id -like 'VirtualMachine*')
