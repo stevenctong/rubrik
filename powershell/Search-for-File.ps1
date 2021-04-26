@@ -240,6 +240,7 @@ foreach ($i in $snapshotList)
       $searchResult = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "search/snapshot_search?limit=$($limit)&snapshot_id=$($i.snapshotID)&name=$($filename)&dir=/" -verbose
 
       $searchResult.data
+      Write-Host "Total files found in $($i.name), $($i.location): $($searchResult.data.count)" -foregroundcolor green
 
       foreach ($j in $searchResult.data)
       {
