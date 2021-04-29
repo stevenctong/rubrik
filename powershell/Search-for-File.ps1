@@ -80,7 +80,11 @@ param (
 
   # List of VMware VMs to search on
   [Parameter(Mandatory=$false)]
-  [string]$vmlist = ''
+  [string]$vmlist = '',
+
+  # Closest date (UTC) to search, use (yyyy/mm/dd) format
+  [Parameter(Mandatory=$true)]
+  [string]$snapDate = ''
 )
 
 Import-Module Rubrik
@@ -105,7 +109,12 @@ Function Get-ClosestSnapshot([array]$snapshotList, $snapDate)
 ###### VARIABLES - BEGIN ######
 
 $date = Get-Date
-$snapDate = $date.ToUniversalTime()
+
+if ($snapDate -eq '') {
+  $snapDate = $date.ToUniversalTime()
+} else {
+  [DateTime]$snapDate = Get-Date($snapDate)
+}
 
 # Import a CSV generated from step 1 (snapshoot list) to search against
 $importSnapshotCSV = ''
