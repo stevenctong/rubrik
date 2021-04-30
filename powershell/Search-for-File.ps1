@@ -72,7 +72,7 @@ param (
 
   # Minimum size of files in GB to add to the result list
   [Parameter(Mandatory=$false)]
-  [int]$minSize = 1,
+  [int]$minSize = 0,
 
   # Which number in the snpshot array to continue processing from
   [Parameter(Mandatory=$false)]
@@ -111,7 +111,7 @@ Function Get-ClosestSnapshot([array]$snapshotList, $snapDate)
 $date = Get-Date
 
 if ($snapDate -eq '') {
-  $snapDate = $date.ToUniversalTime()
+  [DateTime]$snapDate = $date.ToUniversalTime()
 } else {
   [DateTime]$snapDate = Get-Date($snapDate)
 }
