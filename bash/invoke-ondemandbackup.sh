@@ -13,9 +13,9 @@ USER_PASS=''
 #Configure hostname or IP address of your Rubrik cluster
 RUBRIK=''
 #Fileset ID that you want to trigger on demand backup on
-FILESETID='Fileset:::8ac52f51-eea7-4a71-9974-5b2dcae5f72b'
+FILESETID=''
 #SLA ID you want to associate with the on demand backup
-SLAID='880215ef-fda7-4bd5-8300-225974c643b0'
+SLAID=''
 #Script execute time
 LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
