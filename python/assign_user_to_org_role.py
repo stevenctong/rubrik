@@ -11,21 +11,22 @@
 
 import rubrik_cdm
 import urllib3
-from rubrik_info import *
+# Use to import Rubrik login variables from another file
+# from rubrik_info import *
 
 urllib3.disable_warnings()
 
 # Rubrik cluster login info - use either username/password or API token (recommended)
-# node_ip = ""
-# username = ""
-# password = ""
+node_ip = ""
+username = ""
+password = ""
 # api_token = ""
 
 # Username you want to assign to an organization name and organization role
 # The organization and organization role should already be created
-username = "steven.tong@rubrikdemo.com"
-org_name = "ST - DBAs"
-org_role = "User Admin"
+username = ""
+org_name = ""
+org_role = ""
 
 # Use one of the following to connect to the Rubrik cluster
 rubrik = rubrik_cdm.Connect(node_ip, username, password)
