@@ -53,7 +53,7 @@ else:
 try:
     print("Found domain: {}, ID: {}".format(ldap_name, ldap_id))
 except NameError:
-    print("Unable to find LDAP {}".format(ldap_name))
+    print("Unable to find LDAP: {}".format(ldap_name))
     raise
 
 username_info = rubrik.get('v1', '/principal?auth_domain_id={}&name={}'.format(ldap_id, username_split[0]))
@@ -62,7 +62,7 @@ try:
     user_id = username_info['data'][0]['id']
     print("Found username: {}, ID: {}".format(username, user_id))
 except NameError:
-    print("Unable to find username {}".format(username))
+    print("Unable to find username: {}".format(username))
     raise
 
 # Find organization ID
