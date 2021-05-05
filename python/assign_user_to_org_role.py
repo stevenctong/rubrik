@@ -30,7 +30,7 @@ org_role = ""
 
 # Use one of the following to connect to the Rubrik cluster
 rubrik = rubrik_cdm.Connect(node_ip, username, password)
-# rubrik = rubrik_cdm.Connect(node_ip, api_token)
+# rubrik = rubrik_cdm.Connect(node_ip, api_token=api_token)
 
 # Get LDAP list and Local authorization providers
 ldap_service = rubrik.get('v1', '/ldap_service')
