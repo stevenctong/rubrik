@@ -7,10 +7,8 @@
 
 <#
 .SYNOPSIS
+Lists out all files and folders from a HyperV VM snapshot.
 
-
-# 35bf6eb6-8832-4467-8067-f118d1b78d66
-# aea01930-a01f-444c-a8e0-44e7dcf6e555
 
 .DESCRIPTION
 
@@ -62,13 +60,13 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$hypervvm = '',
 
-  # Closest date (UTC) to get backup size for, use (yyyy/mm/dd) format
+  # Closest date (UTC) to get file list, use (yyyy/mm/dd) format
   [Parameter(Mandatory=$true)]
   [string]$snapDate = '',
 
   # Path to start the list from
   [Parameter(Mandatory=$false)]
-  [string]$startPath = '',
+  [string]$startPath = ''
 )
 
 Import-Module Rubrik
