@@ -2,3 +2,4 @@
 *.xml
 testshares.csv
 login.ps1
+rubrik_info.py*
