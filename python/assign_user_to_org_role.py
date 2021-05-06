@@ -65,29 +65,29 @@ except NameError:
     print("Unable to find username: {}".format(username))
     raise
 
-# Find organization ID
+# Find Organization ID and Organization-level RoleID
 org_info = rubrik.get('internal', '/organization?name={}'.format(org_name))
 org_data = org_info['data']
 for i in org_data:
     if (i['name'] == org_name):
         org_id = i['id']
-        org_roleid = i['roleId']
+        org_level_roleid = i['roleId']
 
 try:
-    print("Found organization: {}, ID: {}, roleID: {}".format(org_name, org_id, org_roleid))
+    print("Found organization: {}, ID: {}, Org roleID: {}".format(org_name, org_id, org_level_roleid))
 except NameError:
     print("Unable to find organization: {}".format(org_name))
     raise
 
-# Find organization role ID
+# Find  RoleID for the Custom Role within an Organization
 org_role_info = rubrik.get('v1', '/role?organization_id={}'.format(org_id))
 org_role_data = org_role_info['data']
 for i in org_role_data:
     if (i['name'] == org_role):
-        org_role_id = i['roleId']
+        org_custom_role_roleid = i['roleId']
 
 try:
-    print("Found org role: {}, ID: {}".format(org_role, org_role_id))
+    print("Found org role: {}, roleID: {}".format(org_role, org_custom_role_roleid))
 except NameError:
     print("Unable to find org role: {}".format(org_role))
     raise
@@ -96,12 +96,12 @@ except NameError:
 grant_auth_json = {}
 grant_auth_json['authorizationSpecifications'] = [ { 'privilege':'ManageAccess', 'resources' : [ user_id ] } ]
 grant_auth_json['roleTemplate'] = 'Organization'
-grant_auth = rubrik.post('internal', '/role/{}/authorization'.format(org_roleid), grant_auth_json)
+grant_auth = rubrik.post('internal', '/role/{}/authorization'.format(org_level_roleid), grant_auth_json)
 
 # Assign user the organization role
 assign_json = {}
 assign_json['principals'] = [ user_id ]
-assign_json['roles'] = [ org_role_id ]
+assign_json['roles'] = [ org_custom_role_roleid ]
 assign_role = rubrik.post('v1', '/principal/role', assign_json)
 
 print("""Assigned user: "{}", to organization: "{}", role: "{}""""".format(username, org_name, org_role))
