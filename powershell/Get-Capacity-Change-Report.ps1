@@ -10,11 +10,11 @@
 Calculates the capacity changes for each object between different dates and generates a HTML and CSV report.
 
 .DESCRIPTION
-The Get-Capacity-Change script calculates the change rates for each object between different dates.
+The Get-Capacity-Change script calculates the Rubrik storage change rates for each object between different dates.
 You can specify a source date (default is today) and one or more days back to compare against.
 
-The script uses custom Rubrik reports that it will create and update to get the required capacity info.
-It stores the Rubrik report CSVs to a location to keep historical information.
+The script automatically creates two custom Rubrik reports to get the required capacity information.
+The Rubrik report CSVs are stored in a directory to keep historical information.
 The script leverages those CSV reports in order to calculate the capacity changes for each object.
 
 A HTML report is created containing the objects with the highest capacity increase for each date that is compared.
@@ -26,30 +26,40 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Thanks to @joshuastenhouse for the HTML formatting
 Date: 3/20/21
+Updated: 8/31/21
 
-For authentication, use an API token (recommended), username/password, or a credential file.
+For authentication, use an API token (recommended if running on a schedule), username/password, or a credential file.
 
 To create a credential file (note: only the user who creates it can use it):
 - Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
 
-Make sure the PARAM and VARIABLES section are configured.
+This script will create two custom reports on your Rubrik cluster:
+- $rubrikSysCapReportName = "System Capacity Report - For Script"
+- $rubrikCapOverTimeReportName = "Capacity over Time Report - For Script"
 
-First run the script with the "-createRubrikReport $true" to create the custom Systme Capacity report.
+The Rubrik report CSVs and the html and CSV report this script generates are stored in the following default directories:
+- $reportBaseFilename = "./rubrikreports/"
+- $htmlOutput = "./htmlreports/"
+- $csvOutput = "./csvreports/"
 
-Update the filenames where you want to store the reports and create directories if required.
+Make sure that those directories exist or update the variables if you wish to use another location.
 
 Note: If an object was present in an older report but deleted from the Source Date it will not show up.
 In this scenario there is probably negative capacity growth. This case might be handled in a future version.
 
+Make sure the PARAM and VARIABLES section are configured as desired.
+
 .EXAMPLE
-./Get-Capacity-Change.ps1 -server <Rubrik_server> -token <API_token> -createRubrikReport $true
+./Get-Capacity-Change.ps1 -server <Rubrik_server>
+The script will prompt for a username and password for the Rubrik cluster
+
+.EXAMPLE
+./Get-Capacity-Change.ps1 -server <Rubrik_server> -token <API_token>
 Use an API token for authentication
-Creates the custom System Capacity report on the Rubrik cluster and exits.
 
 .EXAMPLE
 ./Get-Capacity-Change.ps1 -server <Rubrik_server>
 Checks for credential file and if none found prompts for username/password.
-Runs the script normally - make sure the PARAM and VARIABLES section are configured.
 
 #>
 
@@ -94,6 +104,7 @@ $sourceDate = $date
 $compDates = @('-7','-14', '-30')
 
 # Cluster name, if you want to use a different alias than $server
+if (!$server) { $server = Read-Host "Rubrik hostname or IP" }
 $clusterName = $server
 
 # System Capacity report on Rubrik we will download if today's date equals $sourceDate
@@ -239,17 +250,9 @@ Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $rep
 
 ###### FUNCTIONS - END ######
 
-# Create a new System Capacity report
-if ($createRubrikReport -eq $true)
+# If there is no custom System Capacity report, create it
+if ( -not (Get-RubrikReport -name $rubrikSysCapReportName))
 {
-
-  if (Get-RubrikReport -name $rubrikSysCapReportName)
-  {
-    Write-Error "Report: `"$rubrikSysCapReportName`" already exists - exiting."
-    exit 1
-  }
-
-# System capacity report body for the fields we are interested in
   $reportBodySysCap = @"
   {
     "name":"$rubrikSysCapReportName",
@@ -297,17 +300,7 @@ if ($createRubrikReport -eq $true)
     $updateStatus = Invoke-RubrikRESTCall -Method GET -Api "internal" -Endpoint "report/$($updateReport.id)"
     $updateStatus
   } while ($updateStatus.updateStatus -eq 'Updating')
-
-  exit 0
-} # IF ($create -eq $true)
-
-# If the custom Systems Capacity report doesn't exist then recommend creating it and exit
-if (!(Get-RubrikReport -name $rubrikSysCapReportName))
-{
-  Write-Host "Report: `"$rubrikSysCapReportName`" doesn't exist on Rubrik cluster: $server." -foregroundcolor yellow
-  Write-Host "Run script with `"-createRubrikReport `$true`" to create the report. Exiting."
-  exit 1
-}
+} # If there is no custom System Capcacity report, create it
 
 Write-Host "`nComparing capacities for source date: $($sourceDate.ToString("yyyy-MM-dd"))" -foregroundcolor green
 
