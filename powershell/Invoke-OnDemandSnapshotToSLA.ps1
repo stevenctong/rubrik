@@ -173,24 +173,26 @@ foreach ($SLA in $slaDomains) {
 }
 
 $totalCount = ($objList | Where { $_ -ne $null }).count
+
+# Maintains a count of the current object that we will be taking a snapshot of, up to $totalCount
 $count = 1
 
 Write-Host "`nTotal objects found: $count`n" -foregroundcolor green
 
 # Take on demand snapshot for each object
-foreach ($snap in $objList) {
+foreach ($object in $objList) {
   try
   {
-    if ($snap -ne $null)
+    if ($object -ne $null)
     {
-      $snap | New-RubrikSnapshot -SLA $targetSLAname -Confirm:$false
-      Write-Host "[$count/$totalCount] Taking snapshot of: $($snap.name), $($snap.id)"
-      $html+="Taking a snapshot of: $($snap.name), $($snap.id)<br>"
+      $object | New-RubrikSnapshot -SLA $targetSLAname -Confirm:$false
+      Write-Host "[$count/$totalCount] Taking snapshot of: $($object.name), $($object.id)"
+      $html+="Taking a snapshot of: $($object.name), $($object.id)<br>"
       $count += 1
     }
   } catch {
-    Write-Error "[$count/$totalCount] Error taking snapshot of: $($snap.name), $($snap.id)"
-    $html+="Eror taking snapshot of: $($snap.name), $($snap.id)"
+    Write-Error "[$count/$totalCount] Error taking snapshot of: $($object.name), $($object.id)"
+    $html+="Error taking snapshot of: $($object.name), $($object.id)<br>"
     $count += 1
   }
 }
