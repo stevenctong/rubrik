@@ -16,6 +16,8 @@ RUBRIK=''
 FILESETID=''
 #SLA ID you want to associate with the on demand backup
 SLAID=''
+#Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
+MONITOR=0
 #Script execute time
 LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
@@ -33,4 +35,24 @@ fi
 
 JSON='{"slaId": "'"$SLAID"'"}'
 
-curl -H "$AUTH_HEADER" -X POST -H 'Content-Type: application/json' -d "$JSON" 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'/snapshot' -k
+if [ "$MONITOR" -eq 0 ]
+then
+  curl -H "$AUTH_HEADER" -X POST -H 'Content-Type: application/json' -d "$JSON" 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'/snapshot' -k
+else
+  STATUS=""
+  RESULT=$(curl -H "$AUTH_HEADER" -X POST -H 'Content-Type: application/json' -d "$JSON" 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'/snapshot' -k)
+
+  HREF=$(echo $RESULT | sed -e 's/.*href\"\:\"\(.*\)\"\,.*/\1/')
+  RUBRIKSTATUS=0
+
+  while [ $RUBRIKSTATUS -eq 0 ]
+  do
+    STATUS=$(curl -H "$AUTH_HEADER" -X GET -H 'Content-Type: application/json' "$HREF" -k)
+    RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCESS\|SUCCESSWITHWARNINGS\|FAILURE\|CANCELED' -c)
+
+    echo $STATUS
+    sleep 10
+  done
+
+  echo $STATUS
+fi
