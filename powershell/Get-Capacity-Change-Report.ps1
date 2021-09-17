@@ -251,7 +251,7 @@ Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $rep
 ###### FUNCTIONS - END ######
 
 # If there is no custom System Capacity report, create it
-if ( -not (Get-RubrikReport -name $rubrikSysCapReportName))
+if ( (Get-RubrikReport -name $rubrikSysCapReportName) -eq $null )
 {
   $reportBodySysCap = @"
   {
