@@ -4,21 +4,21 @@
 
 ################################################################################
 ### RUBRIK VARIABLES
-#Configure using an API token for authentication
+# Configure using an API token for authentication
 TOKEN=''
-#Configure using a username:password for authenciation
-#The username:password can be encoded as a base64 string.
-#Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
+# Configure using a username:password for authenciation
+# The username:password can be encoded as a base64 string.
+# Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
 USER_PASS=''
-#Configure hostname or IP address of your Rubrik cluster
+# Configure hostname or IP address of your Rubrik cluster
 RUBRIK=''
-#Fileset ID that you want to trigger on demand backup on
+# Fileset ID that you want to trigger on demand backup on
 FILESETID=''
-#SLA ID you want to associate with the on demand backup
+# SLA ID you want to associate with the on demand backup
 SLAID=''
-#Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
+# Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
 MONITOR=0
-#Script execute time
+# Script execute time
 LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
 ################################################################################
