@@ -1,6 +1,8 @@
 #!/bin/bash
 
+# https://build.rubrik.com
 # This script will take an on demand backup of a fileset
+# For community usage
 
 ################################################################################
 ### RUBRIK VARIABLES
@@ -23,6 +25,7 @@ LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
 ################################################################################
 
+# If an API token is provided, use that. Otherwise, try using the encoded username/password
 if [ "$TOKEN" != "" ]
 then
   AUTH_HEADER='Authorization:bearer '
@@ -30,7 +33,6 @@ then
 else
   AUTH_HEADER='Authorization:basic '
   AUTH_HEADER+=$USER_PASS
-  echo $AUTH_HEADER
 fi
 
 JSON='{"slaId": "'"$SLAID"'"}'
@@ -39,15 +41,22 @@ if [ "$MONITOR" -eq 0 ]
 then
   curl -H "$AUTH_HEADER" -X POST -H 'Content-Type: application/json' -d "$JSON" 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'/snapshot' -k
 else
+  # Reset $STATUS in case it contains other values
   STATUS=""
+
+  # Store the result of our on demand snapshot
   RESULT=$(curl -H "$AUTH_HEADER" -X POST -H 'Content-Type: application/json' -d "$JSON" 'https://'$RUBRIK'/api/v1/fileset/'$FILESETID'/snapshot' -k)
 
+  # Pull out the URL that we use to query status
   HREF=$(echo $RESULT | sed -e 's/.*href\"\:\"\(.*\)\"\,.*/\1/')
   RUBRIKSTATUS=0
 
   while [ $RUBRIKSTATUS -eq 0 ]
   do
+    # Query the URL for the current status of the on demand backup
     STATUS=$(curl -H "$AUTH_HEADER" -X GET -H 'Content-Type: application/json' "$HREF" -k)
+
+    # Check if any of the end states are found, if so, $RUBRIKSTATUS changes and loop exits
     RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCESS\|SUCCESSWITHWARNINGS\|FAILURE\|CANCELED' -c)
 
     echo $STATUS
