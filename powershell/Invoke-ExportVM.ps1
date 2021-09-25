@@ -34,8 +34,9 @@ Use an API token for authentication.
 Checks for credential file and if none found prompts for username/password.
 
 .EXAMPLE
-./Invoke-ExportVM.ps1 -server <Rubrik_server>
+./Invoke-ExportVM.ps1 -server <Rubrik_server> -vmname 'vmstats' -exportcount 3 -livemountdate '09/21/2021 12:00' -datastore 'nfsds1'
 Checks for credential file and if none found prompts for username/password.
+Creates 3 exports of VM 'vmstats' using the snapshot closest to 9/21/21 12:00 onto datastore 'nfsds1'.
 
 #>
 
