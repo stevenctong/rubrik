@@ -98,7 +98,7 @@ $emailSubject = "Rubrik ($server) - Triggering On Demand Backups to SLA $slaTarg
 $html = "<b><Rubrik cluster: $server/b><br>Date: $date<br>Source SLA string: $slaSourceString<br>Target SLA name: $targetSLAname<br><br>"
 
 # Set to $true to send out email in the script
-$sendEmail = $true
+$sendEmail = $false
 
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
@@ -109,7 +109,7 @@ try {
   else {
     if ($user) {
       if ($password) {
-        $password = ConvertTo-SecureString $password -AsPlainText -Force
+        [SecureString]$password = ConvertTo-SecureString $password -AsPlainText -Force
         $credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password
       }
       else { $credential = Get-Credential -Username $user }
@@ -129,7 +129,7 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 # Get a list of all SLAs in Rubrik
-$slaList = Get-RubrikSLA
+$slaList = Get-RubrikSLA -PrimaryClusterID local | Sort-Object 'Name'
 $slaDomains = @()
 
 # Filter SLAs by those with the source SLA string we're looking for
@@ -150,29 +150,29 @@ foreach ($SLA in $slaDomains) {
 
   Write-Host "Getting objects for SLA: `"$SLA`"" -foregroundcolor green
 
-  Write-Host ".....Getting VMWare VMs..."
+  Write-Host ".....Getting VMware VMs"
   $objList += Get-RubrikVM -SLA $SLA -PrimaryClusterID local
 
-  Write-Host ".....Getting HyperV VMs..."
+  Write-Host ".....Getting HyperV VMs"
   $objList += Get-RubrikHyperVVM -SLA $SLA -PrimaryClusterID local
 
-  Write-Host ".....Getting AHV VMs..."
+  Write-Host ".....Getting AHV VMs"
   $objList += Get-RubrikNutanixVM -SLA $SLA -PrimaryClusterID local
 
-  Write-Host ".....Getting Filesets that are not Passthrough..."
+  Write-Host ".....Getting Filesets that are not Passthrough"
   $objList += (Get-RubrikFileset -SLA $SLA -PrimaryClusterID local | Where-Object {$_.isPassthrough -eq $false})
 
-  Write-Host ".....Getting SQL Server Databases..."
+  Write-Host ".....Getting SQL Server Databases"
   $objList += Get-RubrikDatabase -SLA $SLA -PrimaryClusterID local
 
-  Write-Host ".....Getting Oracle Databases..."
+  Write-Host ".....Getting Oracle Databases"
   $objList += Get-RubrikOracleDB -SLA $SLA -PrimaryClusterID local
 
-  Write-Host ".....Getting Volume Groups..."
+  Write-Host ".....Getting Volume Groups"
   $objList += Get-RubrikVolumeGroup -SLA $SLA -PrimaryClusterID local
 }
 
-$totalCount = ($objList | Where { $_ -ne $null }).count
+$totalCount = ($objList | Where { $_.Name -ne $null }).count
 
 # Maintains a count of the current object that we will be taking a snapshot of, up to $totalCount
 $count = 1
@@ -183,7 +183,7 @@ Write-Host "`nTotal objects found: $count`n" -foregroundcolor green
 foreach ($object in $objList) {
   try
   {
-    if ($object -ne $null)
+    if ($object.Name -ne $null)
     {
       $object | New-RubrikSnapshot -SLA $targetSLAname -Confirm:$false
       Write-Host "[$count/$totalCount] Taking snapshot of: $($object.name), $($object.id)"
