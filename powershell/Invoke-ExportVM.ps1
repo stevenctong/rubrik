@@ -34,7 +34,7 @@ Use an API token for authentication.
 Checks for credential file and if none found prompts for username/password.
 
 .EXAMPLE
-./Invoke-ExportVM.ps1 -server <Rubrik_server> -vmname 'vmstats' -exportcount 3 -livemountdate '09/21/2021 12:00' -datastore 'nfsds1'
+./Invoke-ExportVM.ps1 -server <Rubrik_server> -vmname 'vmstats' -exportcount 3 -recoveryDate '09/21/2021 12:00' -datastore 'nfsds1'
 Checks for credential file and if none found prompts for username/password.
 Creates 3 exports of VM 'vmstats' using the snapshot closest to 9/21/21 12:00 onto datastore 'nfsds1'.
 
@@ -73,7 +73,7 @@ param (
 
   # The snapshot nearest this time to export, use "MM/DD/YYYY HH:MM" format
   [Parameter(Mandatory=$false)]
-  [string]$liveMountDate = '09/21/2021 12:00',
+  [string]$recoveryDate = '09/21/2021 12:00',
 
   # Datastore name that you want to export the VM to
   [Parameter(Mandatory=$false)]
@@ -119,7 +119,7 @@ $count = 0
 while ($count -lt $exportCount)
 {
 
-  Get-RubrikVM $vmName | Get-RubrikSnapshot -Date $liveMountDate |
+  Get-RubrikVM $vmName | Get-RubrikSnapshot -Date $recoveryDate |
     Export-RubrikVM -HostId (Get-RubrikVMwareHost -name $esxiHost -PrimaryClusterID local).id -DatastoreId (Get-RubrikVMwareDatastore -name $datastore).id
 
   $count += 1
