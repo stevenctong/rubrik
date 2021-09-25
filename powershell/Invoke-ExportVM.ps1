@@ -71,7 +71,7 @@ param (
   [Parameter(Mandatory=$false)]
   [int32]$exportCount = 1,
 
-  # The snapshot nearest this time to export, use "MM/DD/YYYY HH:MM" format
+  # UTC time for the nearest snapshot to export, use 'MM/DD/YYYY HH:MM' format
   [Parameter(Mandatory=$false)]
   [string]$recoveryDate = '09/21/2021 12:00',
 
