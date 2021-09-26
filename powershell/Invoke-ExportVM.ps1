@@ -67,7 +67,7 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$vmName = '',
 
-  # The number of exports to restore
+  # The number of VM exports to perform
   [Parameter(Mandatory=$false)]
   [int32]$exportCount = 1,
 
@@ -75,11 +75,11 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$recoveryDate = '09/21/2021 12:00',
 
-  # Datastore name that you want to export the VM to
+  # Datastore accessible to the ESXi host to export to - make sure there is enough capacity on the datastore
   [Parameter(Mandatory=$false)]
   [string]$datastore = '',
 
-  # ESXi host to restore the exported VM on
+  # ESXi hostname to export to
   [Parameter(Mandatory=$false)]
   [string]$esxiHost = ''
 )

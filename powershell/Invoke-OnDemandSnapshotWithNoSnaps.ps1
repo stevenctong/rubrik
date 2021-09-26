@@ -131,8 +131,6 @@ foreach ($object in $objList)
 
 Write-Host "`nTotal # of VMs that needs an immediate snapshot: $($snapshotList.count)`n"
 
-$count = 1
-
 # Take on demand snapshot for each VM that needs it
 foreach ($object in $snapshotList) {
   try
@@ -142,13 +140,9 @@ foreach ($object in $snapshotList) {
       $object | New-RubrikSnapshot -SLA $targetSLA -Confirm:$false
       Write-Host "[$count/$totalCount] Taking snapshot of: $($object.name), $($object.id)"
       $html+="Taking a snapshot of: $($object.name), $($object.id)<br>"
-
-      $count += 1
     }
   } catch {
     Write-Error "[$count/$totalCount] Error taking snapshot of: $($object.name), $($object.id)"
     $html+="Error taking snapshot of: $($object.name), $($object.id)<br>"
-
-    $count += 1
   }
 }
