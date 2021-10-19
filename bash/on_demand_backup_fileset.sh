@@ -65,3 +65,4 @@ else
 
   echo $STATUS
 fi
+exit 0
