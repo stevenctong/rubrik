@@ -3,7 +3,7 @@
 Format the result of an iPerf JSON results file.
 
 .DESCRIPTION
-The Format-iPerfResults.ps1 script formats the results of an iPerf results file.
+The Parse-iPerfResults.ps1 script formats the results of an iPerf results file.
 With iPerf you can output the results to JSON using the "-J" flag.
 Output all results with "-J" to a concatenated file.
 
@@ -16,11 +16,11 @@ GitHub: stevenctong
 Date: 10/15/21
 
 .EXAMPLE
-./Format-iPerfResults.ps1 -file <input_filename.json>
+./Parse-iPerfResults.ps1 -file <input_filename.json>
 Takes <filename> as the input and outputs it to a file with the same name but as .csv.
 
 .EXAMPLE
-./Format-iPerfResults.ps1 -file <input_filename.json> -output <CSV_output_filename.csv>
+./Parse-iPerfResults.ps1 -file <input_filename.json> -output <CSV_output_filename.csv>
 Takes <filename> as the input and outputs it to <output> filename.
 #>
 
