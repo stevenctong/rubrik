@@ -16,6 +16,7 @@ Date: 10/20/21
 
 vCenter stats collection should be configured for at least Level 2, duration 5 min, saved for 5 days.
 If there is not enough space in vCenter to save it for 5 days then run this script multiple times to collect the data.
+Make sure that the data gathering covers the busiest days for the VMs.
 To configure stats collection, click on your vCenter -> Configure -> General -> Edit
 
 This script will attempt to gather 5 min stats for the last few days for a list of VMs.
