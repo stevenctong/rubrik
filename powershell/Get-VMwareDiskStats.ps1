@@ -6,7 +6,7 @@
 Pulls VMware VM disk stats for Rubrik sizing.
 
 .DESCRIPTION
-The Get-VMwareStats.ps1 script pulls VM disk stats for Rubrik sizing.
+The Get-VMwareDiskStats.ps1 script pulls VM disk stats for Rubrik sizing.
 Requires PowerCLI and a vCenter read-only user.
 
 .NOTES
@@ -31,22 +31,22 @@ If you are using Windows Powershell (not Core) you can also store your credentia
 - New-VICredentialStoreItem
 
 .EXAMPLE
-./Get-VMwareStats.ps1
+./Get-VMwareDiskStats.ps1
 Prompts for vCenter info and gets stats for all VMs.
 
-./Get-VMwareStats.ps1 -server <vcenter_server>
+./Get-VMwareDiskStats.ps1 -server <vcenter_server>
 Prompts for vCenter username & password and gets stats on all VMs.
 
-./Get-VMwareStats.ps1 -server <vcenter_server> -username <username> -password <password>
+./Get-VMwareDiskStats.ps1 -server <vcenter_server> -username <username> -password <password>
 Pass your vCenter credentials as parameters.
 
-./Get-VMwareStats.ps1 -outputVMfile <vmlist.csv>
+./Get-VMwareDiskStats.ps1 -outputVMfile <vmlist.csv>
 Outputs a list of VMs from vCenter and exits script.
 
-./Get-VMwareStats.ps1 -importVMfile <vmlist.csv>
+./Get-VMwareDiskStats.ps1 -importVMfile <vmlist.csv>
 Imports a list of VMs to gather stats on. VMs should be under a "Name" column.
 
-./Get-VMwareStats.ps1 -days #
+./Get-VMwareDiskStats.ps1 -days #
 Specify how many days back to gather stats for, default 5 days.
 
 #>
