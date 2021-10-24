@@ -2,8 +2,6 @@
 import requests
 
 rubrik_host = ''
-username = ''
-api_token = ''
 
 base_url = 'https://{}/api/'.format(rubrik_host)
 
@@ -35,7 +33,8 @@ def get_mssql_db_id(sql_host, sql_instance, sql_db):
     resp = requests.get(url, headers=headers, verify=False)
 
     for db in resp.json()['data']:
-        if (db['rootProperties']['rootName'] == sql_host and db['instanceName'] == sql_instance):
+        if (db['rootProperties']['rootName'] == sql_host and
+                db['instanceName'] == sql_instance):
             sql_id = db['id']
 
     return sql_id
@@ -61,16 +60,19 @@ def get_mssql_instance_id(sql_host, sql_instance):
     return instance_id
 
 
-def invoke_mssql_live_mount(source_db_id, target_instance_id, recovery_date, live_mount_name):
+def invoke_mssql_live_mount(source_db_id, target_instance_id,
+                            recovery_date, live_mount_name):
     """
     Invokes a SQL Live Mount and returns the result of the request.
 
     :source_db_id: Source SQL DB ID to Live Mount from
     :target_instance_id: Target DB instance to Live Mount to
-    :recovery_date: Recovery date & time to Live Mount from, use "YYYY-MM-DD HH:MM:SS" format
+    :recovery_date: Recovery date & time, use "YYYY-MM-DD HH:MM:SS" format
+    :live_mount_name: Name of DB Live Mount
     """
 
-    format_date = '{}T{}.000Z'.format(recovery_date.split()[0], recovery_date.split()[1])
+    format_date = '{}T{}.000Z'.format(recovery_date.split()[0],
+                                      recovery_date.split()[1])
 
     endpoint = 'v1/mssql/db/{}/mount'.format(source_db_id)
     filters = ''
@@ -78,7 +80,6 @@ def invoke_mssql_live_mount(source_db_id, target_instance_id, recovery_date, liv
 
     payload = {
         'recoveryPoint': {
-            # "timestampMs": 1630609433000
             'date': format_date
         },
         'mountedDatabaseName': live_mount_name,
@@ -104,13 +105,20 @@ def invoke_mssql_live_mount(source_db_id, target_instance_id, recovery_date, liv
     return status
 
 
-def get_task_status(href):
+def get_final_task_status(href):
     """
-    Returns the current task status.
+    Loop until task finishes and return status
 
     :href: Link to the status URL
     """
 
     resp = requests.get(href, headers=headers, verify=False)
+
+    while (resp.json()['status'] != 'SUCCESS' or
+           resp.json()['status'] != 'SUCCESSWITHWARNINGS' or
+           resp.json()['status'] != 'FAILURE' or
+           resp.json()['status'] != 'CANCELED'):
+
+        resp = requests.get(href, headers=headers, verify=False)
 
     return resp.json()
