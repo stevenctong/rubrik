@@ -2,7 +2,6 @@
 
 # https://build.rubrik.com
 # https://www.rubrik.com/blog/get-started-rubrik-powershell-module/
-# https://github.com/rubrikinc/rubrik-sdk-for-powershell
 # https://github.com/rubrikinc/rubrik-scripts-for-powershell
 
 <#
@@ -10,56 +9,56 @@
 Calculates the capacity changes for each object between different dates and generates a HTML and CSV report.
 
 .DESCRIPTION
-The Get-Capacity-Change script calculates the Rubrik storage change rates for each object between different dates.
-You can specify a source date (default is today) and one or more days back to compare against.
+The Get-CapacityChangeReport script calculates the Rubrik storage change rates for each object between different dates.
+By default all comparisons will be done against today which is the source date.
+You can change the source date and also specify multiple comparison dates which are -x days ago.
 
-The script automatically creates two custom Rubrik reports to get the required capacity information.
 The Rubrik report CSVs are stored in a directory to keep historical information.
 The script leverages those CSV reports in order to calculate the capacity changes for each object.
 
-A HTML report is created containing the objects with the highest capacity increase for each date that is compared.
-A CSV report containing all the comparison calculations is also created.
-You can send the HTML and CSV report through email.
+A HTML report is created summarizing the capacity of the cluster on each date and the top objects with the greatest growth.
+A CSV report containing all the capacity details for every object is also created.
+The HTML report and CSV as an attachment can be sent over email.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Thanks to @joshuastenhouse for the HTML formatting
 Date: 3/20/21
-Updated: 8/31/21
+Updated: 10/24/21
 
-For authentication, use an API token (recommended if running on a schedule), username/password, or a credential file.
-
-To create a credential file (note: only the user who creates it can use it):
-- Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+For authentication, use one of the following methods:
+$token - an API token tied to a user account; keep in mind that tokens have an expiration date
+$credential - credential file that can be created using: Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+$user and $password - plaintext username and password
 
 This script will create two custom reports on your Rubrik cluster:
-- $rubrikSysCapReportName = "System Capacity Report - For Script"
-- $rubrikCapOverTimeReportName = "Capacity over Time Report - For Script"
+1) $rubrikSysCapReportName = "System Capacity Report - For Script"
+2) $rubrikCapOverTimeReportName = "Capacity over Time Report - For Script"
 
 The Rubrik report CSVs and the html and CSV report this script generates are stored in the following default directories:
-- $reportBaseFilename = "./rubrikreports/"
-- $htmlOutput = "./htmlreports/"
-- $csvOutput = "./csvreports/"
+1) $reportBaseFilename = "./rubrikreports/"
+2) $htmlOutput = "./htmlreports/"
+3) $csvOutput = "./csvreports/"
 
 Make sure that those directories exist or update the variables if you wish to use another location.
 
 Note: If an object was present in an older report but deleted from the Source Date it will not show up.
 In this scenario there is probably negative capacity growth. This case might be handled in a future version.
 
-Make sure the PARAM and VARIABLES section are configured as desired.
+Update the the PARAM and VARIABLES section as desired.
 
 .EXAMPLE
-./Get-Capacity-Change.ps1 -server <Rubrik_server>
+./Get-CapacityChangeReport.ps1 -server <Rubrik_server>
 The script will prompt for a username and password for the Rubrik cluster
+
+.EXAMPLE
+./Get-Capacity-Change.ps1 -server <Rubrik_server> -rubrikCred "./rubrikCredFile.xml"
+Use a credential file for authentication
 
 .EXAMPLE
 ./Get-Capacity-Change.ps1 -server <Rubrik_server> -token <API_token>
 Use an API token for authentication
-
-.EXAMPLE
-./Get-Capacity-Change.ps1 -server <Rubrik_server>
-Checks for credential file and if none found prompts for username/password.
 
 #>
 
@@ -93,54 +92,6 @@ param (
 
 Import-Module Rubrik
 
-###### VARIABLES - BEGIN ######
-
-$date = Get-Date
-
-# "Source" date from which comparisons will be made, default is today's $date
-$sourceDate = $date
-
-# An array of days to compare $sourceDate against, the # of days back. Eg '-7' for 7 days earlier than Source Date
-$compDates = @('-7','-14', '-30')
-
-# Cluster name, if you want to use a different alias than $server
-if (!$server) { $server = Read-Host "Rubrik hostname or IP" }
-$clusterName = $server
-
-# System Capacity report on Rubrik we will download if today's date equals $sourceDate
-$rubrikSysCapReportName = "System Capacity Report - For Script"
-
-# Capacity over Time report  on Rubrik we will update and download for requests that don't have a System Capacity report available
-$rubrikCapOverTimeReportName = "Capacity over Time Report - For Script"
-
-# Filename for the custom System Capacity report CSV
-# The date must be appended to this filename (-yyyy-MM-dd)
-# The reports we will use for comparisons will also need to follow this format
-$reportBaseFilename = "./rubrikreports/rubrik_system_capacity_report-$clusterName"
-$reportFilename = $reportBaseFilename + "-" + $sourceDate.ToString("yyyy-MM-dd") + ".csv"
-
-# HTML output for the summaries and top capacity change charts
-$htmlOutput = "./htmlreports/rubrik_capacity_change_report-" + $clusterName + "-" + $date.ToString("yyyy-MM-dd_HHmm") + ".html"
-
-# CSV output for the detailed capacity change numbers
-$csvOutput = "./csvreports/rubrik_capacity_change_report-" + $clusterName + "-" + $date.ToString("yyyy-MM-dd_HHmm") + ".csv"
-
-# Number of top results to return for each date comparison
-$topNum = 20
-
-# SMTP configuration
-$emailTo = @('')
-$emailFrom = ''
-$SMTPServer = ''
-$SMTPPort = '25'
-
-$emailSubject = "Rubrik ($clusterName) - Capacity Change Report for: " + $sourceDate.ToString("yyyy-MM-dd")
-
-# Set to $true to send out email in the script
-$sendEmail = $false
-
-###### VARIABLES - END #######
-
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 # First try using API token, then username/password if a user is provided, then credential file
 try {
@@ -168,16 +119,66 @@ try {
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
+###### VARIABLES - BEGIN ######
+$date = Get-Date
+
+# "Source" date from which comparisons will be made, default is today's $date
+$sourceDate = $date
+
+# An array of days to compare $sourceDate against, the # of days back. Eg '-7' for 7 days earlier than Source Date
+$compDates = @('-7','-14', '-30')
+
+# Cluster name, set it to a value if you want to use some other name
+$clusterName = (Invoke-RubrikRESTCall -Method GET -Api "1" -Endpoint "cluster/me").name
+
+# Custom Report created on Rubrik cluster for "System Capacity"
+$rubrikSysCapReportName = "System Capacity Report - For Script"
+
+# Custom Report created on Rubrik cluster for "Capacity over Time"
+$rubrikCapOverTimeReportName = "Capacity over Time Report - For Script"
+
+# Filename for the custom capacity reports we will be downloading from the cluster
+# The date must be appended to this filename (-yyyy-MM-dd)
+# The reports we will use for comparisons ($compFilename) will also follow this format
+# Change the directory path as needed
+$reportBaseFilename = "./rubrikreports/rubrik_system_capacity_report-$clusterName"
+$reportFilename = $reportBaseFilename + "-" + $sourceDate.ToString("yyyy-MM-dd") + ".csv"
+
+# HTML report that contains the cluster summary and top objects with the most growth between the dates
+# Change the directory path as needed
+$htmlOutput = "./htmlreports/rubrik_capacity_change_report-" + $clusterName + "-" + $date.ToString("yyyy-MM-dd_HHmm") + ".html"
+
+# CSV file that has detailed object capacity info
+# Change the directory path as needed
+$csvOutput = "./csvreports/rubrik_capacity_change_report-" + $clusterName + "-" + $date.ToString("yyyy-MM-dd_HHmm") + ".csv"
+
+# For the HTML report, the number of top objects to return for the comparisons per date
+$topNum = 20
+
+# SMTP configuration
+$emailTo = @('')
+$emailFrom = ''
+$SMTPServer = ''
+$SMTPPort = '25'
+
+$emailSubject = "Rubrik ($clusterName) - Capacity Change Report for: " + $sourceDate.ToString("yyyy-MM-dd")
+
+# Set to $true to send out email in the script
+$sendEmail = $false
+
+###### VARIABLES - END #######
+
 ###### FUNCTIONS - BEGIN ######
 
-# The "Create-Update-CapacityOverTimeReport" function updates the Capacity over Time report
-# on Rubrik to the correct date. It will also create the report if it does not exist.
+# The "Create-Update-CapacityOverTimeReport" function creates the custom
+# "Capacity over Time" report if it does not exist.
+# If the report exists it will update the dates to the comparison date.
 Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $reportDate)
 {
   $rubrikCapOverTimeReport = Get-RubrikReport -name $rubrikCapOverTimeReportName
 
   # Check the the report exists on Rubrik and create it if not
-  if (!($rubrikCapOverTimeReport))
+  if ($rubrikCapOverTimeReport.name -eq $null)
   {
     $templateBody = [PSCustomObject] @{
       name = $rubrikCapOverTimeReportName
@@ -189,10 +190,7 @@ Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $rep
     $rubrikCapOverTimeReport = Get-RubrikReport -name $rubrikCapOverTimeReportName
   }
 
-  # To generate the correct date we need to add one to the date
-  $reportDate = $reportDate
-
-  # To generate the correct date we need to add one to the date
+  # To generate the report for the date we want, we need to add 1 and 2 days to the date
   $reportAfterDate=$reportDate.AddDays(1).ToString("yyyy-MM-ddT00:00:00.000Z")
   $reportBeforeDate=$reportDate.AddDays(2).ToString("yyyy-MM-ddT00:00:00.000Z")
 
@@ -229,7 +227,6 @@ Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $rep
 
   # Update the report with the new dates and then refresh the report to make it generate much faster.
   $updateReport = Invoke-RubrikRESTCall -Method PATCH -Api "internal" -Endpoint "report/$($rubrikCapOverTimeReport.id)" -Body $reportBodyCapOverTime
-
   $refreshReport = Invoke-RubrikRESTCall -Method POST -Api "internal" -Endpoint "report/$($rubrikCapOverTimeReport.id)/refresh" -Body "{}"
   $updateReport
 
@@ -251,7 +248,7 @@ Function Create-Update-CapacityOverTimeReport($rubrikCapOverTimeReportName, $rep
 ###### FUNCTIONS - END ######
 
 # If there is no custom System Capacity report, create it
-if ( (Get-RubrikReport -name $rubrikSysCapReportName) -eq $null )
+if ( (Get-RubrikReport -name $rubrikSysCapReportName).name -eq $null )
 {
   $reportBodySysCap = @"
   {
@@ -283,7 +280,7 @@ if ( (Get-RubrikReport -name $rubrikSysCapReportName) -eq $null )
     reportTemplate = 'SystemCapacity'
   }
 
-  # Create a report based off the SystemCapacity template, then modify it with the report body we want
+  # Create a report based off the System Capacity template, then modify it with the report body we want
   $createReport = Invoke-RubrikRESTCall -Method POST -Api "internal" -Endpoint "report" -Body $templateBody
   $updateReport = Invoke-RubrikRESTCall -Method PATCH -Api "internal" -Endpoint "report/$($createReport.id)" -Body $reportBodySysCap
 
@@ -317,7 +314,11 @@ if ($date -eq $sourceDate -and !(Test-Path -Path $reportFileName))
   # Get the CSV link of the custom Systems Capacity report and download it
   # Keep historical reports in order for the script to compare against
   $reportLink = Get-RubrikReport -Name $rubrikSysCapReportName | Export-RubrikReport
-  Invoke-WebRequest -Uri $reportLink -OutFile ($reportFilename) -SkipCertificateCheck
+  if ($PSVersionTable.PSVersion.Major -le 5) {
+    Invoke-WebRequest -Uri $reportLink -OutFile ($reportFileName)
+  } else {
+    Invoke-WebRequest -Uri $reportLink -OutFile ($reportFileName) -SkipCertificateCheck
+  }
 } else {
   Write-Host "`nCapacity report found: $reportFilename" -foregroundcolor green
 }
@@ -346,16 +347,20 @@ try {
       # Get the CSV link of the custom Systems Capacity report and download it
       # Keep historical reports in order for the script to compare against
       $reportLink = Get-RubrikReport -Name $rubrikCapOverTimeReportName | Export-RubrikReport
-      Invoke-WebRequest -Uri $reportLink -OutFile ($compFilename) -SkipCertificateCheck
+      if ($PSVersionTable.PSVersion.Major -le 5) {
+       Invoke-WebRequest -Uri $reportLink -OutFile ($compFilename)
+      } else {
+       Invoke-WebRequest -Uri $reportLink -OutFile ($compFilename) -SkipCertificateCheck
+      }
     } else {
       Write-Host "`nCapacity report found: $compFilename" -foregroundcolor green
     }
 
     $curReport = Import-CSV $compFilename
 
-    # Add to an array of array instead of a single array
+    # Add to as an array of arrays instead of a single array
     $reportArray += , $curReport
-  }
+  } # foreach ($i in $compDates)
 } catch {
   Write-Error $ERROR[0]
   exit 1
