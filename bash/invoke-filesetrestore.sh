@@ -2,7 +2,7 @@
 # Requires 'curl' and 'jq'
 # https://build.rubrik.com
 # Written by Steven Tong for community usage
-# Date: 12/10/20
+# Date: 12/10/20, updated: 10/24/21
 
 # This script will restore a fileset to an alternate host (fileset export).
 # A list of source and target directories must be provided.
