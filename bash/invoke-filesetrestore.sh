@@ -17,18 +17,19 @@ TOKEN=''
 # Configure a username:password for authenciation
 # The username:password must be encoded as a base64 string.
 # Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
-USER_PASS='c3RldmVuLnRvbmdAcnVicmlrZGVtby5jb206QXBwbGFwcGwyMw=='
+USER_PASS=''
 # Hostname or IP address of the Rubrik cluster
-RUBRIK='amer1-rbk01.rubrikdemo.com'
+RUBRIK=''
 # SOURCE - Fileset ID that you want to restore from
 FILESETID='Fileset:::62155444-b52f-410b-b5d1-64e371787f5b'
 # SOURCE - List of directories to restore, separated by a space in the array.
 # All files and sub-directories under these directories will be selected for restore.
-SOURCE_DIR=('/home/steven.tong/epic/prd01' '/home/steven.tong/epic/prd02' '/home/steven.tong/epic/prd03')
+SOURCE_DIR=('/epic/prd01' '/epic/prd02' '/epic/prd03')
 # TARGET -  List of directories to restore to, must have same number of directories as $SOURCE_DIR.
 # All files and sub-directories from each source directory will be restored to the corresponding target directory.
-TARGET_DIR=('/home/steven.tong/restore/prd01' '/home/steven.tong/restore/prd02' '/home/steven.tong/restore/prd03')
-# TARGET - Host ID that you want to restore to
+TARGET_DIR=('/restore/prd01' '/restore/prd02' '/restore/prd03')
+# TARGET - Host ID that you want to restore to.
+# If $TARGET_HOSTID is blank,  the restore will be done to the same host it was backed up from
 TARGET_HOSTID=''
 # TARGET_HOSTID='Host:::37eaa1b3-df31-4c06-9ae5-18e0f9ce8769'
 # Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
