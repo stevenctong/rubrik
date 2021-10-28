@@ -1,0 +1,26 @@
+{
+  "properties": {
+    "roleName": "Rubrik Immutable Archive v6.0.0",
+      "description": "Permissions required for configuring Rubrik immutable archives",
+      "assignableScopes": [
+        "/subscriptions/<subscription-id>"
+      ],
+    "permissions": [
+      {
+        "actions": [
+          "Microsoft.Network/networkSecurityGroups/read",
+          "Microsoft.Network/virtualNetworks/read",
+          "Microsoft.Network/virtualNetworks/subnets/read",
+          "Microsoft.Resources/subscriptions/resourcegroups/*/read",
+          "Microsoft.Storage/storageAccounts/listKeys/action",
+          "Microsoft.Storage/storageAccounts/read",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/write",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/lock/action"
+        ],
+        "notActions": [],
+        "dataActions": [],
+        "notDataActions": []
+      }
+    ]
+  }
+}
