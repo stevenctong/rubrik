@@ -173,7 +173,7 @@ for ($i = 0; $i -lt $rubrikClusters.count; $i++)
     }
 
     # Get a list of currently Running events sorted by oldest first
-    $events = Get-RubrikEvent -Status Running -Descending:$false -Limit 50
+    $events = Invoke-RubrikRESTCall -Method GET -Api '1' -Endpoint "event/latest?limit=50&order_by_time=asc&event_status=Running"
 
     # Build a string (list) of long running events
     $longRunningEventList = ""
