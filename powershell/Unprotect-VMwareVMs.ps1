@@ -79,7 +79,7 @@ Import-Module Rubrik
 $date = Get-Date
 
 # CSV file info
-$csvOutput = "./delete_vm_results-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutput = "./unprotect_vm-$($date.ToString("yyyy-MM-dd_HHmm")).log"
 
 ###### VARIABLES - END #######
 
