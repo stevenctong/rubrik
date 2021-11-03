@@ -78,8 +78,8 @@ Import-Module Rubrik
 
 $date = Get-Date
 
-# CSV file info
-$csvOutput = "./unprotect_vm-$($date.ToString("yyyy-MM-dd_HHmm")).log"
+# Log file info
+$logOutput = "./unprotect_vm-$($date.ToString("yyyy-MM-dd_HHmm")).log"
 
 ###### VARIABLES - END #######
 
@@ -137,15 +137,13 @@ if ($proceed -eq 'Y') {
 
     if ($vmID) {
       $result = Protect-RubrikVM -id $vmID -DoNotProtect -ExistingSnapshotRetention 'ExpireImmediately'
-      $vmResult += "[ $count / $vmCount ] Unprotected VM: $($vm.'Object Name')"
+      Add-Content -Path $logOutput "[ $count / $vmCount ] Unprotected VM: $($vm.'Object Name')"
       Write-Host "[ $count / $vmCount ] Unprotected VM: $($vm.'Object Name')"
     } else {
-      $vmResult += "[ $count / $vmCount ] ERROR - No VM found: $($vm.'Object Name')"
+      Add-Content -Path $logOutput "[ $count / $vmCount ] ERROR - No VM found: $($vm.'Object Name')"
       Write-Host "[ $count / $vmCount ] ERROR - No VM found: $($vm.'Object Name')" -foregroundcolor red
     }
   }
 }
 
-# Export VM results to a CSV file
-$vmResult | Out-File -Path $csvOutput
-Write-Host "`nResults output to: $csvOutput"
+Write-Host "`nResults output to: $logOutput"
