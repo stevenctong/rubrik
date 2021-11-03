@@ -113,27 +113,35 @@ try {
 
 $vmList = Import-CSV $vmCSV
 
-Write-Host "List of VMs to delete" -foregroundcolor green
+Write-Host "`nList of VMs to delete:" -foregroundcolor green
 
 $vmList | Format-Table
+$vmCount = $vmList.count
 $vmLogicalSize = [math]::Round($($VMlist.'Object Logical Size (GB)' | Measure -Sum).sum / 1000, 2)
 $vmRubrikSize = [math]::Round($($VMlist.'Local Storage (GB)' | Measure -Sum).sum / 1000, 2)
 
-Write-Host "Total # of VMs: $($vmList.count)" -foregroundcolor green
+Write-Host "Total # of VMs: $vmCount" -foregroundcolor green
 Write-Host "Total Logical Size (TB): $vmLogicalSize TB" -foregroundcolor green
 Write-Host "Total Rubrik Local Used Size (TB): $vmRubrikSize TB" -foregroundcolor green
 $proceed = Read-Host "Are you sure you want to proceed - type Y "
 
 $vmResult = @()
+$count = 0
 
 if ($proceed -eq 'Y') {
   foreach ($vm in $vmList)
   {
-    try {
-      Get-RubrikVM -name $vm.'Object Name' | Protect-RubrikVM -DoNotProtect -ExistingSnapshotRetention 'ExpireImmediately' -verbose
-      $vmResult += "Unprotected VM: $($vm.'Object Name')"
-    } catch {
-      $vmResult += "ERROR unprotecting VM: $($vm.'Object Name')"
+    $count += 1
+
+    $vmID = $(Get-RubrikVM -name $vm.'Object Name').id
+
+    if ($vmID) {
+      $result = Protect-RubrikVM -id $vmID -DoNotProtect -ExistingSnapshotRetention 'ExpireImmediately'
+      $vmResult += "[ $count / $vmCount ] Unprotected VM: $($vm.'Object Name')"
+      Write-Host "[ $count / $vmCount ] Unprotected VM: $($vm.'Object Name')"
+    } else {
+      $vmResult += "[ $count / $vmCount ] ERROR - No VM found: $($vm.'Object Name')"
+      Write-Host "[ $count / $vmCount ] ERROR - No VM found: $($vm.'Object Name')" -foregroundcolor red
     }
   }
 }
