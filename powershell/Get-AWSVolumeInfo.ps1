@@ -74,6 +74,7 @@ foreach ($region in $regions) {
       "InstanceType" = $ec2.InstanceType
       "Volumes" = $volumes.count
       "SizeGiB" = $volSize
+      "SizeGB" = [math]::round($($volSize * 1.073741824), 3)
       "Region" = $region
       "Name" = $ec2.tags.name
       "Platform" = $ec2.Platform
@@ -82,10 +83,14 @@ foreach ($region in $regions) {
     $ec2list += $ec2obj
   }
 }
+
+$totalGiB = ($ec2list.sizeGiB | Measure -Sum).sum
+$totalGB = ($ec2list.sizeGB | Measure -Sum).sum
+
 Write-Host
 Write-Host "Total # of EC2 instances: $($ec2list.count)" -foregroundcolor green
 Write-Host "Total # of volumes: $(($ec2list.volumes | Measure -Sum).sum)" -foregroundcolor green
-Write-Host "Total capacity of all volumes: $(($ec2list.sizeGiB | Measure -Sum).sum) GiB" -foregroundcolor green
+Write-Host "Total capacity of all volumes: $totalGiB GiB or $totalGB GB" -foregroundcolor green
 
 # Use to export to CSV
 $ec2list | Export-CSV -path $output
