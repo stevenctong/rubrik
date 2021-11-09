@@ -1,8 +1,6 @@
 #requires -modules AWSPowerShell.NetCore
 
 # https://build.rubrik.com
-# https://www.rubrik.com/blog/get-started-rubrik-powershell-module/
-# https://github.com/rubrikinc/rubrik-scripts-for-powershell
 
 <#
 .SYNOPSIS
@@ -11,10 +9,10 @@ Gets all EC2 instances with the # of attached volumes and total sizes of all vol
 .DESCRIPTION
 The 'Get-AWSVolumeInfo.ps1' script gets all EC2 instances in the configured regions.
 For each EC2 instance it grabs the total number of volumes and total size (GiB) for all volumes.
-A summary of the total # of instances, total # volumes, and capacity will be output to console.
+A summary of the total # of instances, # of volumes, and capacity will be output to console.
 A CSV file will be exported with the details.
 
-Update the region info as needed in the script.
+Update the region list ($regions) as needed.
 
 Run in AWS CloudShell or use 'Set-AWSCredential' to set the AWS credentials to run with.
 
