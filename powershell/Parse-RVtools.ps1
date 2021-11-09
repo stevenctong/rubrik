@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-Parses and summarize VMtools storage info and outputs the formatted results to a CSV.
+Parses and summarize RVTools storage info and outputs the formatted results to a CSV.
 
 .DESCRIPTION
-The Parse-VMtools.ps1 script parses and summarizes VMtools storage info and outputs the formatted results to a CSV.
+The Parse-VMtools.ps1 script parses and summarizes RVTools storage info and outputs the formatted results to a CSV.
 The script requires the following parameters:
 
 -dir <direcotry_with_VMtools_files : This directory should contain the following files:
@@ -21,7 +21,7 @@ GitHub: stevenctong
 Date: 11/6/21
 
 .EXAMPLE
-./Parse-VMTools.ps1 -dir <directory_with_VMtools_files> -output <filename.csv>
+./Parse-RVTools.ps1 -dir <directory_with_VMtools_files> -output <filename.csv>
 Takes a directory with VMtools files as input and specify a CSV file to output the results to.
 
 #>
