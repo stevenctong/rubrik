@@ -174,7 +174,7 @@ foreach ($vm in $vInfo) {
 $vPartTotal = [math]::round((($vmList.'vPartition Consumed GB' | Measure -sum).sum / 1000), 2)
 $vGap = [math]::round((($vmList.'(vDisk-vPartition) Capacity GB' | Measure -sum).sum / 1000), 2)
 $vDiskTotal = [math]::round((($vmList.'vDisk Total Capacity GB' | Measure -sum).sum / 1000), 2)
-$vInfoTotal = [math]::round((($vmList."Provisioned $unit" | Measure -sum).sum / 1000), 2)
+$vInfoTotal = [math]::round((($vmList."Provisioned GB" | Measure -sum).sum / 1000), 2)
 
 Write-Host ""
 Write-Host "Total # of VMs found: $($vmList.count)" -foregroundcolor green
