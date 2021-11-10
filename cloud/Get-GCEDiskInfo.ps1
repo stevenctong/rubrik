@@ -42,7 +42,7 @@ param (
 
   # Pass in comma separated list of projects
   [Parameter(Mandatory=$false)]
-  [string]$projects = '',
+  [string]$projects = ''
 )
 
 $date = Get-Date
@@ -52,7 +52,7 @@ $output = "gce_disk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current glcoud context`n" -foregroundcolor green
 & gcloud auth list
-& gcloud config list project
+& gcloud config list --format 'value(core)'
 $token = $(gcloud auth application-default print-access-token)
 $headers = @{Authorization = "Bearer $token"}
 
