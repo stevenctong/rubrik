@@ -93,4 +93,6 @@ Write-Host "Total # of volumes: $(($ec2list.volumes | Measure -Sum).sum)" -foreg
 Write-Host "Total capacity of all volumes: $totalGiB GiB or $totalGB GB" -foregroundcolor green
 
 # Use to export to CSV
+Write-Host ""
+Write-Host "CSV file output to: $output" -foregroundcolor green
 $ec2list | Export-CSV -path $output
