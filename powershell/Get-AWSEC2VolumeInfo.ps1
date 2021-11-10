@@ -7,7 +7,7 @@
 Gets all EC2 instances with the # of attached volumes and total sizes of all volumes.
 
 .DESCRIPTION
-The 'Get-AWSVolumeInfo.ps1' script gets all EC2 instances in the configured regions.
+The 'Get-AWSEC2VolumeInfo.ps1' script gets all EC2 instances in the configured regions.
 For each EC2 instance it grabs the total number of volumes and total size (GiB) for all volumes.
 A summary of the total # of instances, # of volumes, and capacity will be output to console.
 A CSV file will be exported with the details.
@@ -22,7 +22,7 @@ GitHub: stevenctong
 Date: 11/8/21
 
 .EXAMPLE
-./Get-AWSVolumeInfo.ps1
+./Get-EC2AWSVolumeInfo.ps1
 Runs the script to get all EC2 and associated volume info and output to a CSV file.
 
 #>
