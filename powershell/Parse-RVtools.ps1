@@ -179,7 +179,7 @@ $vInfoTotal = [math]::round((($vmList."Provisioned GB" | Measure -sum).sum / 100
 Write-Host ""
 Write-Host "Total # of VMs found: $($vmList.count)" -foregroundcolor green
 Write-Host "Total vPartition consumed capacity: $vPartTotal TB" -foregroundcolor green
-Write-Host "Total (vPartition - vDisk) gap: $vGap TB" -foregroundcolor green
+Write-Host "Total (vDisk - vPartition) gap: $vGap TB" -foregroundcolor green
 Write-Host "Total vDisk capacity: $vDiskTotal TB" -foregroundcolor green
 Write-Host "Total vInfo provisioned capacity: $vInfoTotal TB" -foregroundcolor green
 Write-Host ""
