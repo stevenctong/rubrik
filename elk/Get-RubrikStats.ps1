@@ -164,7 +164,7 @@ for ($i = 0; $i -lt $rubrikClusters.count; $i++)
     $eventCount = 1
     if ($events.count -gt 0)
     {
-      foreach ($task in $events) {
+      foreach ($task in $events.data.latestEvent) {
         $eventDetails = Get-RubrikEventSeries -id $task.eventSeriesId
         $eventItem = "[$eventCount]: $($eventDetails.objectName), $($eventDetails.location), duration: $($eventDetails.duration), progress: $($eventDetails.progressPercentage)  "
         $recoveryEventList += $eventItem
@@ -180,7 +180,7 @@ for ($i = 0; $i -lt $rubrikClusters.count; $i++)
     $eventCount = 1
     if ($events.count -gt 0)
     {
-      foreach ($task in $events) {
+      foreach ($task in $events.data.latestEvent) {
         # Calculate how long the event has been running for in hours
         $taskDuration = $dateUTC - [DateTime]$task.time
         $taskHours = ($taskDuration.days * 24) + ($taskDuration.hours)
