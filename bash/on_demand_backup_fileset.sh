@@ -25,9 +25,12 @@ SLAID=''
 # Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
 MONITOR=0
 # Script execution time
-LOGPATH= #SomePath
+# LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
 ### RUBRIK VARIABLES - END ###
+
+echo $SHELL
+echo $LAUNCHTIME
 
 # If an API token is provided, use that. Otherwise, try using the encoded username/password
 if [ "$TOKEN" != '' ]
