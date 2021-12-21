@@ -42,6 +42,7 @@ TARGET_HOSTID=''
 # Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
 MONITOR=0
 # Script execution time
+# LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
 ################################################################################
 
