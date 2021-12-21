@@ -59,10 +59,10 @@ if [ $MONITOR -ne 0 ]; then
     STATUS=$(curl -H "$AUTH_HEADER" -X GET -H 'Content-Type: application/json' "$HREF" -k -1 -s)
 
     # Check if any of the end states are found, if so, $RUBRIKSTATUS changes and loop exits
-    RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCESS\|SUCCESSWITHWARNINGS\|FAILURE\|CANCELED' -c)
+    RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCEED\|SUCCESS\|SUCCESSWITHWARNINGS\|FAIL\|CANCEL' -c)
 
     echo $STATUS
-    sleep 30
+    sleep 60
   done
 
   echo $STATUS
