@@ -2,7 +2,7 @@
 # Requires 'curl' and 'jq'
 # https://build.rubrik.com
 # Written by Steven Tong for community usage
-# Date: 12/10/20, updated: 10/24/21
+# Date: 12/10/20, updated: 12/20/21
 
 # This script will restore a fileset to an alternate host (fileset export).
 # A list of source and target directories must be provided.
@@ -10,6 +10,11 @@
 # Once selected the script will kick off a restore job for each source-target directory pair.
 
 # For authentication, use either an API token or base64 encoded username:password
+
+# You can also run this script by passing in an argument that represents a UTC date: yyyy-mm-dd or yyyy-mm-ddThh:mm:ss
+# The script will select the snapshot nearest that UTC date
+# ./invoke-filesetrestore.sh 2021-12-01
+# ./invoke-filesetrestore.sh 2021-12-01T06:00:00
 
 ### RUBRIK VARIABLES - BEGIN ###
 # Configure an API token for authentication
@@ -21,13 +26,15 @@ USER_PASS=''
 # Hostname or IP address of the Rubrik cluster
 RUBRIK=''
 # SOURCE - Fileset ID that you want to restore from
-FILESETID='Fileset:::62155444-b52f-410b-b5d1-64e371787f5b'
+FILESETID='Fileset:::ecd6533a-e110-4cfe-9d05-ce3ed5ac8ebb'
 # SOURCE - List of directories to restore, separated by a space in the array.
 # All files and sub-directories under these directories will be selected for restore.
-SOURCE_DIR=('/epic/prd01' '/epic/prd02' '/epic/prd03')
+# SOURCE_DIR=('/epic/prd01' '/epic/prd02' '/epic/prd03' '/epic/prd04')
+SOURCE_DIR=('/epic')
 # TARGET -  List of directories to restore to, must have same number of directories as $SOURCE_DIR.
 # All files and sub-directories from each source directory will be restored to the corresponding target directory.
-TARGET_DIR=('/restore/prd01' '/restore/prd02' '/restore/prd03')
+# TARGET_DIR=('/restore/prd01' '/restore/prd02' '/restore/prd03' '/restore/prd04')
+TARGET_DIR=('/restore')
 # TARGET - Host ID that you want to restore to.
 # If $TARGET_HOSTID is blank,  the restore will be done to the same host it was backed up from
 TARGET_HOSTID=''
@@ -35,12 +42,12 @@ TARGET_HOSTID=''
 # Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
 MONITOR=0
 # Script execution time
-LOGPATH= #SomePath
 LAUNCHTIME=`date +%m%d%y_%H%M%S`
 ################################################################################
 
 ### Check to ensure the json utility jq is installed
 echo $SHELL
+echo $LAUNCHTIME
 
 command -v jq >/dev/null 2>&1 || { echo >&2 "Script requires the utility jq. Aborting."; exit 1; }
 
@@ -94,30 +101,71 @@ do
   SNAPSHOTDATES+=($(echo $line | jq -r '.date'))
 done <<< "$SNAPSHOTINFO"
 
-# List out all the snapshots found and the corresponding array index for selection
-echo -e "\n##  Snapshot Dates (UTC)"
-echo "--  --------------------"
+# If a date was passed as an argument then find the closest snapshot to that date and use it
+if [ -n "$1" ]
+then
+  # Calculate the epoch time of the passed in date
+  INPUT_EPOCH=$(date -d $1 +"%s")
 
-i=0
-while [ $i -lt ${#SNAPSHOTDATES[@]} ]
-do
-  printf '%-3s %-20s\n' $i ${SNAPSHOTDATES[$i]}
-  ((i++))
-done
+  # Holds the epoch time difference for comparisons
+  EPOCH_DIFF=9999999
 
-USERSNAPSHOT=-1
+  j=0
+  while [ $j -lt ${#SNAPSHOTDATES[@]} ]
+  do
+    # Get the epoch of the current date to compare to
+    J_EPOCH=$(date -d ${SNAPSHOTDATES[$j]} +"%s")
 
-# Prompts for which snapshot # to recover from with some lightweight checking
-while [[ $USERSNAPSHOT -lt 0 || $USERSNAPSHOT -ge ${#SNAPSHOTDATES[@]} ]]
-do
-  echo -e -n "\nEnter snapshot # to recover from:  "
-  read USERSNAPSHOT
+    # Calculate the difference between the passed in date and current date
+    CURRENT_DIFF=$(($INPUT_EPOCH - $J_EPOCH))
 
-  if [[ $USERSNAPSHOT -lt 0 || $USERSNAPSHOT -ge ${#SNAPSHOTDATES[@]} ]]
-   then
-    echo "Selection outside acceptable range, try again"
-  fi
-done
+    # Compare using the absolute value of the difference
+    if [ $CURRENT_DIFF -gt 0 ]
+    then
+      # If the current difference is less than the comparison difference then this date is closer
+      if [ "$CURRENT_DIFF" -lt "$EPOCH_DIFF" ]
+      then
+        USERSNAPSHOT=$j
+        EPOCH_DIFF=$CURRENT_DIFF
+      fi
+    # Swap calculating the difference to compare using the absolute value
+    else
+      CURRENT_DIFF=$(($J_EPOCH - $INPUT_EPOCH))
+      if [ $CURRENT_DIFF -lt $EPOCH_DIFF ]
+      then
+        USERSNAPSHOT=$j
+        EPOCH_DIFF=$CURRENT_DIFF
+      fi
+    fi
+    ((j++))
+  done
+# Else if no date argument was passed in, list the snapshots for a user to select
+else
+  # List out all the snapshots found and the corresponding array index for selection
+  echo -e "\n##  Snapshot Dates (UTC)"
+  echo "--  --------------------"
+
+  i=0
+  while [ $i -lt ${#SNAPSHOTDATES[@]} ]
+  do
+    printf '%-3s %-20s\n' $i ${SNAPSHOTDATES[$i]}
+    ((i++))
+  done
+
+  USERSNAPSHOT=-1
+
+  # Prompts for which snapshot # to recover from with some lightweight checking
+  while [[ $USERSNAPSHOT -lt 0 || $USERSNAPSHOT -ge ${#SNAPSHOTDATES[@]} ]]
+  do
+    echo -e -n "\nEnter snapshot # to recover from:  "
+    read USERSNAPSHOT
+
+    if [[ $USERSNAPSHOT -lt 0 || $USERSNAPSHOT -ge ${#SNAPSHOTDATES[@]} ]]
+     then
+      echo "Selection outside acceptable range, try again"
+    fi
+  done
+fi
 
 # Sets the snapshot ID that is selected by the user to $SNAPSHOTIDTORESTORE
 SNAPSHOTIDTORESTORE=${SNAPSHOTIDS[$USERSNAPSHOT]}
@@ -227,10 +275,10 @@ if [ $MONITOR -ne 0 ]; then
     STATUS=$(curl -H "$AUTH_HEADER" -X GET -H 'Content-Type: application/json' "$HREF" -k -1 -s)
 
     # Check if any of the end states are found, if so, $RUBRIKSTATUS changes and loop exits
-    RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCESS\|SUCCESSWITHWARNINGS\|FAILURE\|CANCELED' -c)
+    RUBRIKSTATUS=$(echo $STATUS | grep 'SUCCEED\|SUCCESS\|SUCCESSWITHWARNINGS\|FAIL\|CANCEL' -c)
 
     echo $STATUS
-    sleep 30
+    sleep 60
   done
 
   echo $STATUS
