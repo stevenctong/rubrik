@@ -10,13 +10,13 @@
 
 ### RUBRIK VARIABLES - BEGIN ###
 # Configure an API token for authentication
-TOKEN='eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIzNDM3NjEzNi01NDNhLTRkMWEtYWUxOC01MTJkMjE4MjkwNzJfMzNhOWE2NzktOGE5Yi00YjlkLTgxNDYtYWE2NjE0NWVkMzc2IiwiaXNNZmFSZW1lbWJlclRva2VuIjpmYWxzZSwiaXNzIjoiMzQzNzYxMzYtNTQzYS00ZDFhLWFlMTgtNTEyZDIxODI5MDcyIiwiaWF0IjoxNjQwMzk1MTY2LCJqdGkiOiIwNmIwM2Y1ZS1hOGI2LTQwNjItYWY1Ni0yNDUyNzA1NGQ4NWUifQ.r2tbd2Hr-tLX5lODoejm14adkgFkE3iAFZYwZPQlhvU'
+TOKEN=''
 # Configure a username:password for authenciation
 # The username:password must be encoded as a base64 string.
 # Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
 USER_PASS=''
 # Hostname or IP address of the Rubrik cluster
-RUBRIK='10.8.49.101'
+RUBRIK=''
 # Set MONITOR to non-zero if you want the script to monitor progress until the backup has finished
 MONITOR=0
 # Script execution time
