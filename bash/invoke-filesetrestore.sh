@@ -168,7 +168,8 @@ else
   done
 fi
 
-# Sets the snapshot ID that is selected by the user to $SNAPSHOTIDTORESTORE
+# $USERSNAPSHOT is either the index of the closest snapshot to the provided time or
+# the index of the snapshot the user selected
 SNAPSHOTIDTORESTORE=${SNAPSHOTIDS[$USERSNAPSHOT]}
 
 # Lists out the details of the snapshot selected for review
@@ -214,7 +215,7 @@ do
 
   # Test if the source directory info was returned, and if not, exit script
   TESTDIRINFO=$(echo $DIRINFO | jq -r '.data[].filename')
-  if [ "$TESTDIRINFO" = '' ]
+  if [ "$TESTDIRINFO" == '' ]
   then
     echo "ERROR: Invalid path info for source directory: ${SOURCE_DIR[$SOURCECOUNT]}. ABORTING"
     exit 1
@@ -268,6 +269,7 @@ if [ $MONITOR -ne 0 ]; then
 
   # Pull out the URL that we use to query status
   HREF=$(echo $RESULT | sed -e 's/.*href\"\:\"\(.*\)\"\,.*/\1/')
+  HREF=$(echo $HREF | sed 's/internal/v1/g')
   RUBRIKSTATUS=0
 
   while [ $RUBRIKSTATUS -eq 0 ]
