@@ -15,12 +15,15 @@ A CSV file will be exported with the details.
 Pass in an array of project IDs ($projects) or update the value within the script.
 If no project IDs are specified then it will run in the current config context.
 
+Run in GCP Cloud Shell or Cloud Tools for PowerShell.
+
+If you are running using gcloud SDK then you must use the following to login:
+- gcloud init
+- gcloud auth application-default login
+See: https://cloud.google.com/tools/powershell/docs/quickstart
+
 Get a list of projects using:
 - Get-gcpproject | select name,projectid
-
-Run in GCP Cloud Shell or Cloud Tools for PowerShell.
-Use 'gcloud init' to login if needed.
-See: https://cloud.google.com/tools/powershell/docs/quickstart
 
 Check your current gcloud context:
 - gcloud auth list
@@ -30,6 +33,7 @@ Check your current gcloud context:
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 11/9/21
+Updated: 1/19/22
 
 .EXAMPLE
 ./Get-GCEDiskInfo.ps1
