@@ -11,6 +11,7 @@
 # Date: 1/19/22
 
 import rubrik_cdm
+import paramiko
 import urllib3
 import csv
 from datetime import datetime
