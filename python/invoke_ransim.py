@@ -56,5 +56,5 @@ client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 for vm in vm_list:
     vm_snapcount = get_vm_snapshot_num(vm)
     if (vm_snapcount > backup_count):
-        client.connect(hostname=vm_list[vm], username=ssh_username,
-            password=ssh_password)
+        client.connect(hostname=vm_list[vm], username=ssh_username, password=ssh_password)
+        client.exec_command(ssh_command)
