@@ -6,10 +6,10 @@
 
 <#
 .SYNOPSIS
-Calculates the replication and archive lag for a cluster.
+Calculates the replication and archive lag for a cluster and generates a CSV report.
 
 .DESCRIPTION
-The Get-ComplianceStatus.ps1 script calculates the replication and archive lag of a cluster.
+The Get-NonCompliantReport.ps1 script calculates the replication and archive lag of a cluster.
 The results are exported to a CSV file.
 
 .NOTES
@@ -25,11 +25,11 @@ $user and $password - plaintext username and password
 Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
-./Get-ComplianceStatus.ps1 -server <Rubrik_server> -token $token
+./Get-NonCompliantReport.ps1 -server <Rubrik_server> -token $token
 Run the script against the Rubrik cluster using a token.
 
 .EXAMPLE
-./Get-ComplianceStatus.ps1
+./Get-NonCompliantReport.ps1
 Run the script and prompt for all parameters.
 
 #>
@@ -39,7 +39,7 @@ param (
 
   # Rubrik cluster hostname or IP address
   [Parameter(Mandatory=$false)]
-  [string]$server = 'amer2-rbk01.rubrikdemo.com',
+  [string]$server = '',
 
   # Use API token for authentication
   [Parameter(Mandatory=$false)]
