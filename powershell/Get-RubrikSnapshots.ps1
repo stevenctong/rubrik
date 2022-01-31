@@ -16,7 +16,7 @@ The results will be output to a CSV file.
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
-Date: 1/20/21
+Date: 1/20/22
 
 For authentication, use one of the following methods:
 $token - an API token tied to a user account; keep in mind that tokens have an expiration date
@@ -29,9 +29,6 @@ Update the the PARAM and VARIABLES section as needed.
 ./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -vmName 'vm1'
 The script will prompt for a username and password for the Rubrik cluster
 
-.EXAMPLE
-./.ps1 -server <Rubrik_server> -token <API_token> -vmName 'vm1'
-Use an API token for authentication
 
 #>
 
