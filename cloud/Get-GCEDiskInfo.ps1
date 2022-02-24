@@ -62,7 +62,7 @@ param (
 $date = Get-Date
 
 # Filename of the CSV output
-$output = "gceList-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$output = "gce_vmdisk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current glcoud context`n" -foregroundcolor green
 & gcloud auth list
