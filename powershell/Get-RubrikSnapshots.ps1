@@ -9,7 +9,7 @@
 Gets the all snapshots and their expiration dates for a particular VM.
 
 .DESCRIPTION
-The Get-Snapshots.ps1 script gets all snapshots and their expiration dates for a particular VM.
+The Get-RubrikSnapshots.ps1 script gets all snapshots and their expiration dates for a particular VM.
 
 The results will be output to a CSV file.
 
@@ -17,6 +17,7 @@ The results will be output to a CSV file.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 1/20/22
+Updated: 2/24/22
 
 For authentication, use one of the following methods:
 $token - an API token tied to a user account; keep in mind that tokens have an expiration date
@@ -122,10 +123,13 @@ foreach ($snap in $vmInfo.snapshots)
 
   $snapshotInfo = [PSCustomObject]@{
     Name = $vmInfo.name
+    vmID = $vmInfo.id
     DateUTC = $snap.date
     IsOnDemand = $snap.isOnDemandSnapshot
+    CloudState = $snap.cloudState
     SLA = $snap.SlaName
     locationCount = $locationCount
+    snapID = $snap.id
     Local = $snap.snapshotRetentionInfo.localInfo.name
     LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
     Archive = $snap.snapshotRetentionInfo.archivalInfos.name
