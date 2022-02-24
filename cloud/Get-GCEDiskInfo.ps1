@@ -10,7 +10,9 @@ Gets all GCE VMs with the # of attached disks and total sizes of all disks.
 The 'Get-GCEDiskInfo.ps1' script gets all GCE VMs in the specified projects.
 For each GCE VM it grabs the total number of disks and total size (GiB) for all disks.
 A summary of the total # of VMs, # of disks, and capacity will be output to console.
+
 A CSV file will be exported with the details.
+You should copy/paste the console output to send along with the CSV.
 
 Pass in an array of project IDs ($projects) or update the value within the script.
 If no project IDs are specified then it will run in the current config context.
@@ -32,7 +34,7 @@ Check your current gcloud context:
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 11/9/21
-Updated: 1/28/22
+Updated: 2/24/22
 
 .EXAMPLE
 ./Get-GCEDiskInfo.ps1
@@ -60,7 +62,7 @@ param (
 $date = Get-Date
 
 # Filename of the CSV output
-$output = "gceList-$($date.ToString("yyyy-MM-dd_HHmm")).json"
+$output = "gceList-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current glcoud context`n" -foregroundcolor green
 & gcloud auth list
@@ -133,11 +135,11 @@ foreach ($i in $vmHash.getEnumerator())
 
   # Create VM object that we want
   $vmObj = [PSCustomObject] @{
-      "Project" = $i.value.Project
       "VM" = $i.value.VM
+      "NumDisks" = $i.value.NumDisks
       "SizeGiB" = $i.value.DiskSizeGb
       "SizeGB" = [math]::round($($i.value.DiskSizeGb * 1.073741824), 3)
-      "NumDisks" = $i.value.NumDisks
+      "Project" = $i.value.Project
       "Status" = $i.value.Status
   }
 
