@@ -215,7 +215,7 @@ $MITotalGB = (($sqlList | Where -Property 'ManagedInstance' -ne '').MaxSizeGB | 
 Write-Host
 Write-Host "Total # of Azure VMs: $($vmList.count)" -foregroundcolor green
 Write-Host "Total # of Managed Disks: $(($vmList.Disks | Measure -Sum).sum)" -foregroundcolor green
-Write-Host "Total capacity of all volumes: $VMtotalGiB GiB or $VMtotalGB GB" -foregroundcolor green
+Write-Host "Total capacity of all disks: $VMtotalGiB GiB or $VMtotalGB GB" -foregroundcolor green
 
 Write-Host
 Write-Host "Total # of SQL DBs (independent): $(($sqlList.Database -ne '').count)" -foregroundcolor green
