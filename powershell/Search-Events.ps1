@@ -227,12 +227,12 @@ do {
 } while ( ($events -ne $null) -and (($utcDate - $events[-1].time).hours -lt $hours) )
 
 
-# Export some list to a CSV file
+# Export the list to a CSV file
 $eventList | Export-Csv -NoTypeInformation -Path $csvOutput
 Write-Host "`nResults output to: $csvOutput"
 
-# Send an email
+# Send an email with CSV attachment
 if ($sendEmail)
 {
-  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
 }
