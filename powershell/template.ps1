@@ -2,7 +2,6 @@
 
 # https://build.rubrik.com
 # https://www.rubrik.com/blog/get-started-rubrik-powershell-module/
-# https://github.com/rubrikinc/rubrik-sdk-for-powershell
 # https://github.com/rubrikinc/rubrik-scripts-for-powershell
 
 <#
@@ -17,20 +16,22 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date:
 
-For authentication, use an API token (recommended), username/password, or a credential file.
+For authentication, use one of the following methods:
+$token - an API token tied to a user account; keep in mind that tokens have an expiration date
+$credential - credential file that can be created using: Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+$user and $password - plaintext username and password
 
-To create a credential file (note: only the user who creates it can use it):
-- Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+Update the the PARAM and VARIABLES section as needed.
 
-Fill out the PARAM and VARIABLES section with config details for this script.
+.EXAMPLE
+./.ps1 -server <Rubrik_server>
+The script will prompt for a username and password for the Rubrik cluster
 
 .EXAMPLE
 ./.ps1 -server <Rubrik_server> -token <API_token>
 Use an API token for authentication
 
-.EXAMPLE
-./.ps1 -server <Rubrik_server>
-Checks for credential file and if none found prompts for username/password.
+
 
 #>
 
@@ -89,7 +90,7 @@ try {
   else {
     if ($user) {
       if ($password) {
-        $password = ConvertTo-SecureString $password -AsPlainText -Force
+        [SecureString]$password = ConvertTo-SecureString -String  $password -AsPlainText -Force
         $credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password
       }
       else { $credential = Get-Credential -Username $user }
@@ -141,14 +142,14 @@ $bodyJson = [PSCustomObject] @{
 $req = Invoke-RubrikRESTCall -Method 'Patch' -Api '1' -Body $bodyJson -Endpoint "vmware/vm)"
 
 
-# Export some list to a CSV file
+# Export the list to a CSV file
 $list | Export-Csv -NoTypeInformation -Path $csvOutput
 Write-Host "`nResults output to: $csvOutput"
 
-# Send an email
+# Send an email with CSV attachment
 if ($sendEmail)
 {
-  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
 }
 
 # Format a timeSpan object to a string when calculating difference between two times
