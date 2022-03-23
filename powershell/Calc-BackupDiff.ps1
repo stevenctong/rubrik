@@ -159,15 +159,14 @@ foreach ($i in $snapshotList)
   try
   {
     $backupData = Invoke-RubrikRESTCall -Method GET -Api 'internal' -Endpoint "browse?snapshot_id=$($i.snapshotID)&path=/"
-    $backupData.data
     $fileSystemSizeGB = 0
     foreach ($j in $backupData.data)
     {
       $fileSystemSizeGB += $j.size/1000000000
     }
     $i | Add-Member -MemberType NoteProperty -Name "FileSystemSizeGB" -Value $fileSystemSizeGB
-    $reportObject = $report |  where { $_.'object name' -eq $i.name -and $_.'location' -eq $i.location}
-    $usedCapacityGB = $usedCapacity.'Local Storage (B)'/1000000000
+    $reportObject = $report |  where { $_.'object name' -eq $i.name }
+    $usedCapacityGB = $reportObject.'Local Storage (B)'/1000000000
     $i | Add-Member -MemberType NoteProperty -Name "UsedSizeGB" -Value $usedCapacityGB
     $i | Add-Member -MemberType NoteProperty -Name "UsedMinusFileSystem" -Value $($usedCapacityGB - $fileSystemSizeGB)
   }
