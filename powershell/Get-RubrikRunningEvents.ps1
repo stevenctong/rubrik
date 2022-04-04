@@ -111,8 +111,7 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 # Get a list of Rubrik events with filtering
-$events = Get-RubrikEvent -status "Running" -Limit 5
-# $events = Get-RubrikEvent -status "Running" -EventType "Backup"
+$events = Get-RubrikEvent -status "Running" -EventType "Backup"
 
 # Holds an array of events to output
 $eventArray = @()
