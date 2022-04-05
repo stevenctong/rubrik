@@ -6,10 +6,14 @@
 
 <#
 .SYNOPSIS
-Gets the all snapshots and their expiration dates for a particular VM.
+Gets the all snapshots and their expiration dates for a particular particular object.
 
 .DESCRIPTION
-The Get-RubrikSnapshots.ps1 script gets all snapshots and their expiration dates for a particular VM.
+The Get-RubrikSnapshots.ps1 script gets all snapshots and their expiration dates for a particular object.
+Provide the following to run the script:
+
+-name : VM name or hostname
+-type : 'vmware' or 'fileset'
 
 The results will be output to a CSV file.
 
@@ -17,7 +21,7 @@ The results will be output to a CSV file.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 1/20/22
-Updated: 2/24/22
+Updated: 4/4/22
 
 For authentication, use one of the following methods:
 $token - an API token tied to a user account; keep in mind that tokens have an expiration date
@@ -27,9 +31,11 @@ $user and $password - plaintext username and password
 Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
-./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -vmName 'vm1'
+./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -name 'vm1' -type 'vmware'
 The script will prompt for a username and password for the Rubrik cluster
 
+./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -name 'hostname1' -type 'fileset'
+The script will prompt for a username and password for the Rubrik cluster
 
 #>
 
@@ -56,9 +62,13 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$rubrikCred = 'rubrik_cred.xml',
 
-  # VM name to get a list of snapshots for
+  # VM name or physical host name to get snapshot details for
   [Parameter(Mandatory=$false)]
-  [string]$vmName = ''
+  [string]$name = '',
+
+  # Object type: vmware, fileset
+  [Parameter(Mandatory=$false)]
+  [string]$type = ''
 )
 
 Import-Module Rubrik
@@ -80,7 +90,7 @@ $html = "Body<br><br>"
 $sendEmail = $false
 
 # CSV file info
-$csvOutput = "./$($VMname)_snapshotList-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutput = "./$($name)_snapshotList-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### VARIABLES - END #######
 
@@ -111,35 +121,77 @@ try {
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
-$vmInfo = Get-RubrikVM -name $vmName -DetailedObject
-
+# Holds the list of snapshots
 $snapshotList = @()
 
-foreach ($snap in $vmInfo.snapshots)
+switch ($type)
 {
-  $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
-    $snap.snapshotRetentionInfo.archivalInfos.name.count +
-    $snap.snapshotRetentionInfo.replicationInfos.name.count
+  "vmware" {
+    $objInfo = Get-RubrikVM -name $name -DetailedObject
 
-  $snapshotInfo = [PSCustomObject]@{
-    Name = $vmInfo.name
-    vmID = $vmInfo.id
-    DateUTC = $snap.date
-    IsOnDemand = $snap.isOnDemandSnapshot
-    CloudState = $snap.cloudState
-    SLA = $snap.SlaName
-    locationCount = $locationCount
-    snapID = $snap.id
-    Local = $snap.snapshotRetentionInfo.localInfo.name
-    LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
-    Archive = $snap.snapshotRetentionInfo.archivalInfos.name
-    ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
-    Replication = $snap.snapshotRetentionInfo.replicationInfos.name
-    ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
+    foreach ($snap in $objInfo.snapshots)
+    {
+      $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
+        $snap.snapshotRetentionInfo.archivalInfos.name.count +
+        $snap.snapshotRetentionInfo.replicationInfos.name.count
+
+      $snapshotInfo = [PSCustomObject]@{
+        Name = $objInfo.name
+        vmID = $objInfo.id
+        DateUTC = $snap.date
+        IsOnDemand = $snap.isOnDemandSnapshot
+        CloudState = $snap.cloudState
+        SLA = $snap.SlaName
+        locationCount = $locationCount
+        snapID = $snap.id
+        Local = $snap.snapshotRetentionInfo.localInfo.name
+        LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
+        Archive = $snap.snapshotRetentionInfo.archivalInfos.name
+        ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
+        Replication = $snap.snapshotRetentionInfo.replicationInfos.name
+        ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
+      }
+
+      $snapshotInfo
+      $snapshotList += $snapshotInfo
+    }
   }
+  "fileset" {
+    $filesetList = Get-RubrikFileset -hostName $name
 
-  $snapshotInfo
-  $snapshotList += $snapshotInfo
+    foreach ($fileset in $filesetList)
+    {
+      $objInfo = Get-RubrikFileset -id $fileset.id
+
+      foreach ($snap in $objInfo.snapshots)
+      {
+        $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
+          $snap.snapshotRetentionInfo.archivalInfos.name.count +
+          $snap.snapshotRetentionInfo.replicationInfos.name.count
+
+        $snapshotInfo = [PSCustomObject]@{
+          Name = $objInfo.name
+          vmID = $objInfo.id
+          DateUTC = $snap.date
+          IsOnDemand = $snap.isOnDemandSnapshot
+          CloudState = $snap.cloudState
+          SLA = $snap.SlaName
+          locationCount = $locationCount
+          snapID = $snap.id
+          Local = $snap.snapshotRetentionInfo.localInfo.name
+          LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
+          Archive = $snap.snapshotRetentionInfo.archivalInfos.name
+          ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
+          Replication = $snap.snapshotRetentionInfo.replicationInfos.name
+          ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
+        }
+
+        $snapshotInfo
+        $snapshotList += $snapshotInfo
+      }
+    }
+  }
+  default { Write-Error "No matching type provided"; exit }
 }
 
 # Export some list to a CSV file
