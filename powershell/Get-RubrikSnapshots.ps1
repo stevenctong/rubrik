@@ -32,10 +32,10 @@ Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
 ./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -name 'vm1' -type 'vmware'
-The script will prompt for a username and password for the Rubrik cluster
+The script will prompt for a username and password for the Rubrik cluster and get snapshots for VM name 'vm1' of type 'vmware'
 
 ./Get-RubrikSnapshots.ps1 -server <Rubrik_server> -name 'hostname1' -type 'fileset'
-The script will prompt for a username and password for the Rubrik cluster
+The script will prompt for a username and password for the Rubrik cluster and get snapshots for host with name 'hostname1' of type 'fileset'
 
 #>
 
