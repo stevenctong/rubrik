@@ -121,77 +121,63 @@ try {
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
+# Holds a list of objects to get snapshots for
+$objList = @()
+
 # Holds the list of snapshots
 $snapshotList = @()
 
 switch ($type)
 {
   "vmware" {
+    # Get VMware object details
     $objInfo = Get-RubrikVM -name $name -DetailedObject
-
-    foreach ($snap in $objInfo.snapshots)
-    {
-      $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
-        $snap.snapshotRetentionInfo.archivalInfos.name.count +
-        $snap.snapshotRetentionInfo.replicationInfos.name.count
-
-      $snapshotInfo = [PSCustomObject]@{
-        Name = $objInfo.name
-        vmID = $objInfo.id
-        DateUTC = $snap.date
-        IsOnDemand = $snap.isOnDemandSnapshot
-        CloudState = $snap.cloudState
-        SLA = $snap.SlaName
-        locationCount = $locationCount
-        snapID = $snap.id
-        Local = $snap.snapshotRetentionInfo.localInfo.name
-        LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
-        Archive = $snap.snapshotRetentionInfo.archivalInfos.name
-        ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
-        Replication = $snap.snapshotRetentionInfo.replicationInfos.name
-        ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
-      }
-
-      $snapshotInfo
-      $snapshotList += $snapshotInfo
-    }
+    # Add to object list for processing later
+    $objList += $objInfo
   }
   "fileset" {
+    # Get a list of filesets associated with the host
     $filesetList = Get-RubrikFileset -hostName $name
 
+    # Get details for each fileset for processing later
     foreach ($fileset in $filesetList)
     {
       $objInfo = Get-RubrikFileset -id $fileset.id
-
-      foreach ($snap in $objInfo.snapshots)
-      {
-        $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
-          $snap.snapshotRetentionInfo.archivalInfos.name.count +
-          $snap.snapshotRetentionInfo.replicationInfos.name.count
-
-        $snapshotInfo = [PSCustomObject]@{
-          Name = $objInfo.name
-          vmID = $objInfo.id
-          DateUTC = $snap.date
-          IsOnDemand = $snap.isOnDemandSnapshot
-          CloudState = $snap.cloudState
-          SLA = $snap.SlaName
-          locationCount = $locationCount
-          snapID = $snap.id
-          Local = $snap.snapshotRetentionInfo.localInfo.name
-          LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
-          Archive = $snap.snapshotRetentionInfo.archivalInfos.name
-          ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
-          Replication = $snap.snapshotRetentionInfo.replicationInfos.name
-          ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
-        }
-
-        $snapshotInfo
-        $snapshotList += $snapshotInfo
-      }
+      $objList += $objInfo
     }
   }
   default { Write-Error "No matching type provided"; exit }
+}
+
+# Loop through each object and then grab the snapshots for each object
+foreach ($obj in $objList)
+{
+  foreach ($snap in $obj.snapshots)
+  {
+    $locationCount = $snap.snapshotRetentionInfo.localInfo.name.count +
+      $snap.snapshotRetentionInfo.archivalInfos.name.count +
+      $snap.snapshotRetentionInfo.replicationInfos.name.count
+
+    $snapshotInfo = [PSCustomObject]@{
+      Name = $obj.name
+      ObjectID = $obj.id
+      DateUTC = $snap.date
+      IsOnDemand = $snap.isOnDemandSnapshot
+      CloudState = $snap.cloudState
+      SLA = $snap.SlaName
+      locationCount = $locationCount
+      snapID = $snap.id
+      Local = $snap.snapshotRetentionInfo.localInfo.name
+      LocalExpirationUTC = $snap.snapshotRetentionInfo.localInfo.expirationTime
+      Archive = $snap.snapshotRetentionInfo.archivalInfos.name
+      ArchiveExpirationUTC = $snap.snapshotRetentionInfo.archivalInfos.expirationTime
+      Replication = $snap.snapshotRetentionInfo.replicationInfos.name
+      ReplicationExpirationUTC = $snap.snapshotRetentionInfo.replicationInfos.expirationTime
+    }
+
+    $snapshotInfo
+    $snapshotList += $snapshotInfo
+  }
 }
 
 # Export some list to a CSV file
