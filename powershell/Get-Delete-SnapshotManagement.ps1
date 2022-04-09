@@ -93,10 +93,6 @@ Import-Module Rubrik
 # Use '1' for later cluster versions (v5.1+)
 $apiVer = '1'
 
-# Depending on cluster version, set to either $true or $false
-# Whether to use the GraphQL endpoint to get the list of snapshot management
-$graphQL = $false
-
 # Get snapshots before this date. Set to '' if you want all snapshots without filtering by date.
 #$beforeDate = (Get-Date -Year 2020 -Month 6 -Day 1)
 $beforeDate = ''    # Set to '' if you want all snapshots
@@ -152,10 +148,10 @@ try {
 if ($csvDelete -eq '')
 {
   # Get all objects under Snapshot Management (On Demands, Relics, Unmanaged Objects)
-  if ($graphQL) {
+  try {
     $query = '{"query":"query UnmanagedObjectV1{unmanagedObjectV1Connection{nodes{id name objectType physicalLocation{name}unmanagedStatus isRemote snapshotCount localStorage archiveStorage retentionSlaDomainName}}}"}'
     $allSnapshotManagement = (Invoke-RubrikGraphQLCall -Body $query).unmanagedObjectV1Connection.nodes
-  } else {
+  } catch {
     $allSnapshotManagement = Get-RubrikUnmanagedObject
   }
 
