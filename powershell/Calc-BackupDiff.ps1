@@ -23,6 +23,9 @@ If the 'UsedToFSRatio' is very high, it means that Rubrik is storing a lot of da
 but there may not actually be that much capacity on the file system.
 This could be because of dirty blocks that VMware is marking as used.
 
+Note: If the System Capacity report has duplicate VM names, the used capacity will
+not be pulled at this time.
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
@@ -123,7 +126,11 @@ try {
 $reportLink = Get-RubrikReport -Name $rubrikSysCapReportName | Export-RubrikReport
 
 # Download the System Capacity report
-$capacityReport = Invoke-WebRequest -Uri $reportLink[0] -SkipCertificateCheck
+if ($reportLink.count -gt 1) {
+  $capacityReport = Invoke-WebRequest -Uri $reportLink[0] -SkipCertificateCheck
+} else {
+  $capacityReport = Invoke-WebRequest -Uri $reportLink -SkipCertificateCheck
+}
 
 # Format the report as a PS Table
 $report = $capacityReport.content | ConvertFrom-CSV
@@ -131,6 +138,9 @@ $report = $capacityReport.content | ConvertFrom-CSV
 # Get a list of all VMs that have a SLA assignment
 $objectList = Get-RubrikVM -SLAAssignment Direct
 $objectList += Get-RubrikVM -SLAAssignment Derived
+
+Write-Host "Found $($objectList.count) VMs." -foregroundcolor green
+Write-Host "Gathering info for each VM... this may take some time." -foregroundcolor green
 
 # Get info for each VM and the snapshot ID nearest $snapDate
 $snapshotList = $objectList | ForEach-Object -throttlelimit $threads -parallel {
@@ -161,7 +171,6 @@ $snapshotList = $objectList | ForEach-Object -throttlelimit $threads -parallel {
     $snapshotDetail = [PSCustomObject]@{
       Name = $objectInfo.name
       Location = $location
-      CalculatedName = $objectInfo.Name + '+' + $location
       Type = $type
       SLA = $objectInfo.effectiveSlaDomainName
       SnapshotID = $snapshot.id
@@ -171,6 +180,11 @@ $snapshotList = $objectList | ForEach-Object -throttlelimit $threads -parallel {
     $snapshotDetail
   }
 }
+
+Write-Host "Finished gathering info for each VM." -foregroundcolor green
+Write-Host "Gathering file system capacity for each VM..." -foregroundcolor green
+Write-Host "This will take longer than the previous section..." -foregroundcolor green
+Write-Host "If you see warnings that a snapshot has not been indexed, you can ignore them." -foregroundcolor green
 
 $comparisonList = $snapshotList | ForEach-Object -throttlelimit 32 -parallel {
   $rubrikConnection = $using:rubrikConnection
