@@ -171,6 +171,7 @@ $snapshotList = $objectList | ForEach-Object -throttlelimit $threads -parallel {
     $snapshotDetail = [PSCustomObject]@{
       Name = $objectInfo.name
       Location = $location
+      vmID = $_.id
       Type = $type
       SLA = $objectInfo.effectiveSlaDomainName
       SnapshotID = $snapshot.id
