@@ -44,7 +44,10 @@ param (
 
   # Choose to get info for only Azure VMs and/or SQL
   [Parameter(Mandatory=$false)]
-  [string]$subscriptions = ''
+  [string]$subscriptions = '',
+
+  [Parameter(Mandatory=$true)]
+  [string]$TenantId
 )
 
 $date = Get-Date
@@ -54,7 +57,7 @@ $outputVmDisk = "azure_vmdisk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 $outputSQL = "azure_sql_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current identity:" -foregroundcolor green
-$context = Get-AzureRmContext
+$context = Get-AzContext
 $context | format-table
 
 # Contains list of VMs and SQL DBs with capacity info
@@ -68,12 +71,13 @@ if ( $subscriptions -eq '' ) {
   $subscriptions = $subscriptions.split(',')
 }
 
+$tenantObject = Get-AzTenant -TenantId $TenantId
 # Get Azure info for all specified subscriptions
 foreach ($subscription in $subscriptions) {
   Write-Host "Getting VM info for subscription: $subscription" -foregroundcolor green
 
-  $setContext = Set-AzContext -SubscriptionName $subscription
-  if ($setContext -eq $null)
+  $setContext = Select-AzSubscription -Name $subscription -Context $context
+  if ($null -eq $setContext)
   {
     Write-Error "Error switching to subscription: $subscription"
     break
