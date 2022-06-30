@@ -1,5 +1,4 @@
-# This code will bulk modify set consistence to unknown (Auto)
-# for Virtual Machines that are currently set to CRASH_CONSISTENT
+# This script will bulk set the consistency level of a VM
 
 # Get a list of Nutanix VMs
 # For VMware, use "Get-RubrikVM"
