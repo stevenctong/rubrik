@@ -12,7 +12,7 @@
 # For authentication, use either an Service Account, API Token, Username+Password
 # Configure a Service Account for authentication
 SVC_ID='User:::d670b65c-8267-45fa-8dc0-678b6c63e488'
-SVC_SECRET='/A1lS0aC8NJdC66HEqzPicul6cBPc+RQN1hsSpomdSOdSULFYJxKwVoWOQpm6VIGIEgzjH7eHEI7SKbedzWR'
+SVC_SECRET=''
 # Configure an API token for authentication
 TOKEN=''
 # Configure a username:password for authenciation
@@ -20,7 +20,7 @@ TOKEN=''
 # Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
 USER_PASS=''
 # Hostname or IP address of the Rubrik cluster
-RUBRIK='amer1-rbk01.rubrikdemo.com'
+RUBRIK=''
 # Managed Volume ID - grab it from the URL of the MV
 MV_ID='ManagedVolume:::05191817-3198-40de-92b8-d9d4e48bd62e'
 # Script execution time
