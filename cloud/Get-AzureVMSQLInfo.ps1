@@ -29,6 +29,7 @@ See: https://docs.microsoft.com/en-us/azure/cloud-shell/overview
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 2/19/22
+Updated: 7/13/22
 
 .EXAMPLE
 ./Get-AzureVMSQLInfo.ps1
@@ -65,7 +66,7 @@ $sqlList = @()
 if ( $subscriptions -eq '' ) {
   $subscriptions = $context.subscription.name
 } else {
-  $subscriptions = $subscriptions.split(',')
+  [string[]]$subscriptions = $subscriptions.split(',')
 }
 
 # Get Azure info for all specified subscriptions
