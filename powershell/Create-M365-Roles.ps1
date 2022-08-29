@@ -287,8 +287,7 @@ Function Create-Role {
   $permissions += $permissionObj
   $objIds = @(
     "Inherit",
-    "DoNotProtect",
-    "d5a08769-a6ad-450e-8110-7ad47f36495d"
+    "DoNotProtect"
   )
   $permissionObj = @{
     "operation" = "ViewSLA"
