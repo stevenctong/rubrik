@@ -43,11 +43,11 @@ param (
 
   # Rubrik Security Cloud URL
   [Parameter(Mandatory=$false)]
-  [string]$rubrikURL = '',
+  [string]$rubrikURL = 'rubrik-se-rdp.my.rubrik.com',
 
   # M365 Subscription ID
   [Parameter(Mandatory=$false)]
-  [string]$subscriptionID = '12345678-d57e-451c-a40a-abcdefghijk',
+  [string]$subscriptionID = '26ec13c4-d57e-451c-a40a-0d7cd029f03c',
 
   # Mapping file
   [Parameter(Mandatory=$false)]
@@ -132,14 +132,14 @@ Function Get-M365SharePoint {
     # [Parameter(Mandatory=$false)]
     # [string[]]$objectTypes = @( 'O365Site', 'O365SharepointDrive', 'O365SharepointList')
   )
-  $variableso365Sites = @{
+  $variables = @{
     "o365OrgId" = "$subscriptionID"
   }
-  $payloado365Sites = @{
+  $payload = @{
     "query" = "";
-    "variables" = $variableso365Sites
+    "variables" = $variables
   }
-  $queryo365Sites = "query (`$after:String, `$o365OrgId:UUID!) {
+  $query = "query (`$after:String, `$o365OrgId:UUID!) {
     o365Sites (after:`$after, o365OrgId:`$o365OrgId) {
       nodes {
         id
@@ -152,18 +152,109 @@ Function Get-M365SharePoint {
       }
     }
   }"
-  $payloado365Sites.query = $queryo365Sites
+  $payload.query = $query
   $spSiteList = @()
-  $spSiteNodes = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payloado365Sites | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Sites
+  $spSiteNodes = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Sites
   $spSiteList += $spSiteNodes.nodes
   while ($spSiteNodes.pageInfo.hasNextPage -eq 'True')
   {
-    $payloado365Sites.variables.after = $spSiteNodes.pageInfo.endCursor
-    $spSiteNodes = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payloado365Sites | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Sites
+    $payload.variables.after = $spSiteNodes.pageInfo.endCursor
+    $spSiteNodes = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Sites
     $spSiteList += $spSiteNodes.nodes
   }
   return $spSiteList
-}  ### Function Create-Role
+}  ### Function Get-M365SharePoint
+
+
+# Return the result of a OneDrive user search
+Function Get-M365OneDriveUser {
+  param (
+    [CmdletBinding()]
+    # M365 Subscription ID
+    [Parameter(Mandatory=$true)]
+    [string]$subscriptionID,
+    # Email of user to search for
+    [Parameter(Mandatory=$true)]
+    [string]$userEmail
+  )
+  $variables = @{
+    "o365OrgId" = "$subscriptionID";
+    "filter" = @(
+      @{
+        "field" = "IS_GHOST";
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "NAME_OR_EMAIL_ADDRESS";
+        "texts" = @(
+          "$userEmail"
+        )
+      }
+    )
+  }
+  $payload = @{
+    "query" = "";
+    "variables" = $variables
+  }
+  $query = "query (`$o365OrgId: UUID!, `$filter: [Filter!]!) {
+    o365Onedrives(o365OrgId: `$o365OrgId, filter: `$filter) {
+      nodes {
+        id
+        userPrincipalName
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }"
+  $payload.query = $query
+  $oneDriveList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Onedrives.nodes
+  return $oneDriveList
+}  ### Function Get-M365OneDriveUser
+
+
+# Return the detail of a role
+Function Get-RoleDetail {
+  param (
+    [CmdletBinding()]
+    # Role ID
+    [Parameter(Mandatory=$true)]
+    [string]$roleID
+  )
+  $variables = @{
+    "roleIds" = @(
+      "$roleID"
+    )
+  }
+  $payload = @{
+    "query" = "";
+    "variables" = $variables
+  }
+  $query = "query (`$roleIds: [String!]!) {
+    getRolesByIds(roleIds: `$roleIds) {
+      id
+      name
+      description
+      isReadOnly
+      protectableClusters
+      permissions {
+        ... on Permission {
+          operation
+          objectsForHierarchyTypes {
+            objectIds
+            snappableType
+          }
+        }
+      }
+    }
+  }"
+  $payload.query = $query
+  $roleDetail = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.getRolesByIds
+  return $roleDetail
+}  ### Function Get-RoleDetails
 
 
 # Create a new role
@@ -221,20 +312,63 @@ Function Create-Role {
     }
     $permissions += $permissionObj
   }
-  $variablesMutateRole = @{
+  $variables = @{
     "name" = "$roleName";
     "description" = "Custom role for M365";
     "protectableClusters" = @();
     "permissions" = $permissions
   }
-  $payloadMutateRole = @{
+  $payload = @{
     "query" = "mutation mutateRoleTest (`$name: String!, `$description: String!, `$permissions: [PermissionInput!]!, `$protectableClusters: [String!]!) {
       mutateRole(name: `$name, description: `$description, permissions: `$permissions, protectableClusters: `$protectableClusters)
       }";
-    "variables" = $variablesMutateRole
+    "variables" = $variables
   }
-  Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payloadMutateRole | ConvertTo-JSON -Depth 100) -Headers $headers
+  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
 }  ### Function Create-Role
+
+
+# Add a object ID to an existing role
+Function Add-Object-Role {
+  param (
+    [CmdletBinding()]
+    # Role ID
+    [Parameter(Mandatory=$true)]
+    [string]$roleID,
+    # Object ID
+    [Parameter(Mandatory=$true)]
+    [PSCustomObject]$objectID
+  )
+  # List of permissions that are applicable to object ID
+  $permissionList = @( "ViewInventory", "RefreshDataSource", "ManageProtection",
+    "TakeOnDemandSnapshot", "DeleteSnapshot", "ExportFiles", "ExportSnapshots",
+    "Download", "RestoreToOrigin", "ManageDataSource")
+  $roleDetail = Get-RoleDetail -roleID $roleID
+  # Add the object ID to each permission that is in $permissionList
+  foreach ($perm in $roleDetail.permissions)
+  {
+    $perm.objectsForHierarchyTypes[0].objectIds = $perm.objectsForHierarchyTypes[0].objectIds | Sort-Object
+    if ($permissionList.contains($perm.operation))
+    {
+      $perm.objectsForHierarchyTypes[0].objectIds += $objectId.id
+    }
+  }
+  $variables = @{
+    "roleId" = "$roleId";
+    "name" = "$($roleDetail.name)";
+    "description" = "$($roleDetail.description)"
+    "protectableClusters" = @()
+  }
+  $variables.permissions = $roleDetail.permissions
+  $payload = @{
+    "query" = "mutation (`$roleId: String, `$name: String!, `$description: String!, `$permissions: [PermissionInput!]!, `$protectableClusters: [String!]!) {
+      mutateRole(roleId: `$roleId, name: `$name, description: `$description, permissions: `$permissions, protectableClusters: `$protectableClusters)
+    }";
+    "variables" = $variables
+  }
+  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+}  ### Function Add-Object-Role
+
 
 # Add a role to a user
 Function Add-User-Role {
@@ -247,19 +381,19 @@ Function Add-User-Role {
     [Parameter(Mandatory=$true)]
     [string[]]$roleIDs
   )
-  $variablesAppendRoleMutation = @{
+  $variables = @{
     "adGroupIds" = @();
     "userIds" = $userIDs;
     "roleIds" = $roleIDs;
   }
-  $payloadAppendRoleMutation = @{
+  $payload = @{
     "query" = "mutation AppendRoleMutation(`$userIds: [String!]!, `$adGroupIds: [String!], `$roleIds: [String!]!) {
       addRoleAssignments(userIds: `$userIds, adGroupIds: `$adGroupIds, roleIds: `$roleIds)
       }";
-    "variables" = $variablesAppendRoleMutation
+    "variables" = $variables
   }
-  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payloadAppendRoleMutation | ConvertTo-JSON -Depth 100) -Headers $headers
-}  ### Function Create-Role
+  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+}  ### Function Add-User-Role
 
 
 ###### FUNCTIONS - END ######
@@ -358,18 +492,26 @@ $payloadUserList.query = $queryUserList
 $userList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payloadUserList | ConvertTo-JSON -Depth 100) -Headers $headers).data.allUsersOnAccountConnection.edges.node
 
 foreach ($user in $mapping) {
-  $rubrikUser = $userList | Where-Object { $_.email -eq $($user.user) -and $_.domain -eq "LOCAL" }
   $dept = $user.Department
+  $roleID = $($roleList | Where-Object { $_.name -eq "$dept-M365Role" }).id
+  $rubrikUser = $userList | Where-Object { $_.email -eq $($user.user) -and $_.domain -eq "LOCAL" }
   if ($rubrikUser)
   {
     if ($rubrikUser.roles.name -notcontains "$dept-M365Role")
     {
       Write-Host "Role not found for user: $dept-M365Role for $($user.user)"
-      Write-Host "Adding role to user: $dept-M365Role for $($user.user)" -foregroundcolor green
-      Write-Host ""
-      $roleIDs = @( $($roleList | Where-Object { $_.name -eq "$dept-M365Role" }).id )
-      $userIDs = @( $rubrikUser.id )
-      Add-User-Role -userIDs $userIDs -roleIDs $roleIDs
+      Write-Host "Adding RSC user to role: $($user.user) to $dept-M365Role" -foregroundcolor green
+      Add-User-Role -userIDs $rubrikUser.id -roleIDs $roleID
+      $objectID = Get-M365OneDriveUser -SubscriptionId $subscriptionID -userEmail $user.user
+      if ($objectID)
+      {
+        Write-Host "Adding M365 user to role permissions: $dept-M365Role for $($user.user)" -foregroundcolor green
+        Write-Host ""
+        Add-Object-Role -roleID $roleID -objectID $objectID
+      } else {
+        Write-Host "M365 user not found for: $($user.user)" -foregroundcolor yellow
+        Write-Host ""
+      }
     } else {
       Write-Host "User already has role assigned: $dept-M365Role for $($user.user)"
     }
