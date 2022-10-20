@@ -55,7 +55,7 @@ $outputVmDisk = "azure_vmdisk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 $outputSQL = "azure_sql_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current identity:" -foregroundcolor green
-$context = Get-AzureRmContext
+$context = Get-AzContext
 $context | format-table
 
 # Contains list of VMs and SQL DBs with capacity info
@@ -64,19 +64,20 @@ $sqlList = @()
 
 # If no subscription is specified, only use the current subscription
 if ( $subscriptions -eq '' ) {
-  $subscriptions = $context.subscription.name
+  $subs = $context.subscription.name
 } else {
-  [string[]]$subscriptions = $subscriptions.split(',')
+  [string[]]$subs = $subscriptions.split(',')
 }
 
-# Get Azure info for all specified subscriptions
-foreach ($subscription in $subscriptions) {
-  Write-Host "Getting VM info for subscription: $subscription" -foregroundcolor green
 
-  $setContext = Set-AzContext -SubscriptionName $subscription
+# Get Azure info for all specified subscriptions
+foreach ($sub in $subs) {
+  Write-Host "Getting VM info for subscription: $sub" -foregroundcolor green
+
+  $setContext = Set-AzContext -SubscriptionName $sub
   if ($setContext -eq $null)
   {
-    Write-Error "Error switching to subscription: $subscription"
+    Write-Error "Error switching to subscription: $sub"
     break
   }
 
@@ -106,7 +107,7 @@ foreach ($subscription in $subscriptions) {
       "Disks" = $diskNum
       "SizeGiB" = $diskSizeGiB
       "SizeGB" = [math]::round($($diskSizeGiB * 1.073741824), 3)
-      "Subscription" = $subscription
+      "Subscription" = $sub
       "Region" = $vm.Location
       "ResourceGroup" = $vm.ResourceGroupName
       "vmID" = $vm.vmID
@@ -147,7 +148,7 @@ foreach ($subscription in $subscriptions) {
               "ManagedInstance" = ""
               "MaxSizeGiB" = [math]::round($($pool.MaxSizeBytes / 1073741824), 0)
               "MaxSizeGB" = [math]::round($($pool.MaxSizeBytes / 1000000000), 3)
-              "Subscription" = $subscription
+              "Subscription" = $sub
               "Region" = $pool.Location
               "ResourceGroup" = $pool.ResourceGroupName
               "DatabaseID" = ""
@@ -164,7 +165,7 @@ foreach ($subscription in $subscriptions) {
             "ManagedInstance" = ""
             "MaxSizeGiB" = [math]::round($($sqlDB.MaxSizeBytes / 1073741824), 0)
             "MaxSizeGB" = [math]::round($($sqlDB.MaxSizeBytes / 1000000000), 3)
-            "Subscription" = $subscription
+            "Subscription" = $sub
             "Region" = $sqlDB.Location
             "ResourceGroup" = $sqlDB.ResourceGroupName
             "DatabaseID" = $sqlDB.DatabaseId
@@ -190,7 +191,7 @@ foreach ($subscription in $subscriptions) {
       "ManagedInstance" = $MI.ManagedInstanceName
       "MaxSizeGiB" = $MI.StorageSizeInGB
       "MaxSizeGB" = [math]::round($($MI.StorageSizeInGB * 1.073741824), 3)
-      "Subscription" = $subscription
+      "Subscription" = $sub
       "Region" = $MI.Location
       "ResourceGroup" = $MI.ResourceGroupName
       "DatabaseID" = ""
@@ -199,7 +200,7 @@ foreach ($subscription in $subscriptions) {
     }
     $sqlList += $sqlObj
   }  # foreach ($MI in $sqlManagedInstances)
-}  # foreach ($subscription in $subscriptions) {
+}  # foreach ($sub in $subs) {
 
 $VMtotalGiB = ($vmList.SizeGiB | Measure -Sum).sum
 $VMtotalGB = ($vmList.SizeGB | Measure -Sum).sum
