@@ -55,7 +55,7 @@ $outputVmDisk = "azure_vmdisk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 $outputSQL = "azure_sql_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current identity:" -foregroundcolor green
-$context = Get-AzContext
+$context = Get-AzContext -ListAvailable
 $context | format-table
 
 # Contains list of VMs and SQL DBs with capacity info
