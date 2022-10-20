@@ -1,3 +1,5 @@
+#requires -Modules Az.Accounts, Az.Compute, Az.Sql
+
 # https://build.rubrik.com
 
 <#
@@ -47,6 +49,9 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$subscriptions = ''
 )
+
+
+Import-Module Az.Accounts, Az.Compute, Az.Sql
 
 $date = Get-Date
 
