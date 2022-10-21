@@ -66,6 +66,9 @@ azConfig = Get-AzConfig -DisplayBreakingChangeWarning
 Update-AzConfig -DisplayBreakingChangeWarning $false
 Import-Module Az.Accounts, Az.Compute, Az.Sql
 
+$azConfig = Get-AzConfig -DisplayBreakingChangeWarning 
+Update-AzConfig -DisplayBreakingChangeWarning $false | Out-Null
+
 $date = Get-Date
 
 # Filenames of the CSVs to output
@@ -260,6 +263,6 @@ $vmList | Export-CSV -path $outputVmDisk
 Write-Host "SQL CSV file output to: $outputSQL" -foregroundcolor green
 $sqlList | Export-CSV -path $outputSQL
 
-if ($(azConfig).Value -eq $true) {
-  Update-AzConfig -DisplayBreakingChangeWarning $true
+if ($azConfig.Value -eq $true) {
+  Update-AzConfig -DisplayBreakingChangeWarning $true  | Out-Null
 }
