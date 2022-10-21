@@ -248,6 +248,9 @@ foreach ($sub in $subs) {
   }  # foreach ($MI in $sqlManagedInstances)
 }  # foreach ($sub in $subs) {
 
+# Reset subscription context back to original.
+$setContext = Set-AzContext -SubscriptionName $context.subscription.Name | Out-Null
+
 $VMtotalGiB = ($vmList.SizeGiB | Measure-Object -Sum).sum
 $VMtotalGB = ($vmList.SizeGB | Measure-Object -Sum).sum
 
