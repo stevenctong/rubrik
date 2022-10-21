@@ -30,7 +30,7 @@ Run in Azure CloudShell or Azure PowerShell connected to your subscription.
 See: https://docs.microsoft.com/en-us/azure/cloud-shell/overview
 
 .PARAMETER Subscriptions
-A comma seperated list of subscriptions to gather data from.
+A comma separated list of subscriptions to gather data from.
 
 .PARAMETER AllSubscriptions
 Flag to find all subscriptions in the tenant and download data.
