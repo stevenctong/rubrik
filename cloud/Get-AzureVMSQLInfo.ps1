@@ -1,15 +1,17 @@
 #requires -Modules Az.Accounts, Az.Compute, Az.Sql
 
-# https://build.rubrik.com
-
 <#
 .SYNOPSIS
 Gets all Azure VM Managed Disk and/or Azure SQL info in the specified subscription(s).
 
 .DESCRIPTION
 The 'Get-AzureVMSQLInfo.ps1' script gets all VM Managed Disk and/or Azure SQL info in the specified subscription(s).
-You can specify one or more subscription to run the script against.
+You can specify one or more subscription to run the script against. 
+You can also specify to discover and report on all subscriptions with in the tenant that Powershell is logged into.
 If no subscription is specified then it will gather info against the current subscription context.
+
+This script requires the Azure Powershell module. That module can be installed by running  `Install-Module Az`
+If not already done use the `Connect-AzAccount` command to connect to a specific Azure Tenant to report on.
 
 The script gathers all Azure VMs and associated Managed Disk information.
 The script also gathers all Azure SQL DB (independent), Elastic Pool, and Managed Instance size information.
@@ -27,18 +29,39 @@ Update the subscription list ($subscriptions) as needed or pass it in as an argu
 Run in Azure CloudShell or Azure PowerShell connected to your subscription.
 See: https://docs.microsoft.com/en-us/azure/cloud-shell/overview
 
+.PARAMETER Subscriptions
+A comma seperated list of subscriptions to gather data from.
+
+.PARAMETER AllSubscriptions
+Flag to find all subscriptions in the tenant and download data.
+
+.PARAMETER CurrentSubscription
+Flog to only gather information from the current subscription.
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 2/19/22
 Updated: 7/13/22
+Updated: 10/20/22
 
 .EXAMPLE
 ./Get-AzureVMSQLInfo.ps1
 Runs the script against the current subscription context.
 
-./Get-AzureVMSQLInfo.ps1 -subscriptions "sub1,sub2"
+.EXAMPLE
+./Get-AzureVMSQLInfo.ps1 -Subscriptions "sub1,sub2"
 Runs the script against subscriptions 'sub1' and 'sub2'.
+
+.EXAMPLE
+./Get-AzureVMSQLInfo.ps1 -AllSubscriptions
+Runs the script against all subscriptions in the tenant. 
+
+.LINK
+https://build.rubrik.com
+https://github.com/rubrikinc
+https://github.com/stevenctong/rubrik
+
 
 #>
 
@@ -62,8 +85,6 @@ param (
 
 )
 
-azConfig = Get-AzConfig -DisplayBreakingChangeWarning
-Update-AzConfig -DisplayBreakingChangeWarning $false
 Import-Module Az.Accounts, Az.Compute, Az.Sql
 
 $azConfig = Get-AzConfig -DisplayBreakingChangeWarning 
@@ -100,7 +121,7 @@ foreach ($sub in $subs) {
   Write-Host "Getting VM info for subscription: $sub" -foregroundcolor green
 
   $setContext = Set-AzContext -SubscriptionName $sub
-  if ($setContext -eq $null)
+  if ($null -eq $setContext)
   {
     Write-Error "Error switching to subscription: $sub"
     break
@@ -112,7 +133,7 @@ foreach ($sub in $subs) {
   # Loop through each VM to get all disk info
   foreach ($vm in $vms)
   {
-    # Count of and size of all disks attahched to the VM
+    # Count of and size of all disks attached to the VM
     $diskNum = 0
     $diskSizeGiB = 0
     # Loop through each OS disk on the VM and add to the disk info
@@ -164,7 +185,7 @@ foreach ($sub in $subs) {
           # Check if the current Elastic Pool already exists in the SQL list
           $poolName = $sqlList | Where-Object -Property 'ElasticPool' -eq $pool.ElasticPoolName
           # If Elastic Pool does not exist then add it
-          if ($poolName -eq $null)
+          if ($null -eq $poolName)
           {
             $sqlObj = [PSCustomObject] @{
               "Database" = ""
@@ -227,21 +248,21 @@ foreach ($sub in $subs) {
   }  # foreach ($MI in $sqlManagedInstances)
 }  # foreach ($sub in $subs) {
 
-$VMtotalGiB = ($vmList.SizeGiB | Measure -Sum).sum
-$VMtotalGB = ($vmList.SizeGB | Measure -Sum).sum
+$VMtotalGiB = ($vmList.SizeGiB | Measure-Object -Sum).sum
+$VMtotalGB = ($vmList.SizeGB | Measure-Object -Sum).sum
 
-$sqlTotalGiB = ($sqlList.MaxSizeGiB | Measure -Sum).sum
-$sqlTotalGB = ($sqlList.MaxSizeGB | Measure -Sum).sum
-$DBtotalGiB = (($sqlList | Where -Property 'Database' -ne '').MaxSizeGiB | Measure -Sum).sum
-$DBtotalGB = (($sqlList | Where -Property 'Database' -ne '').MaxSizeGB | Measure -Sum).sum
-$elasticTotalGiB = (($sqlList | Where -Property 'ElasticPool' -ne '').MaxSizeGiB | Measure -Sum).sum
-$elasticTotalGB = (($sqlList | Where -Property 'ElasticPool' -ne '').MaxSizeGB | Measure -Sum).sum
-$MITotalGiB = (($sqlList | Where -Property 'ManagedInstance' -ne '').MaxSizeGiB | Measure -Sum).sum
-$MITotalGB = (($sqlList | Where -Property 'ManagedInstance' -ne '').MaxSizeGB | Measure -Sum).sum
+$sqlTotalGiB = ($sqlList.MaxSizeGiB | Measure-Object -Sum).sum
+$sqlTotalGB = ($sqlList.MaxSizeGB | Measure-Object -Sum).sum
+$DBtotalGiB = (($sqlList | Where-Object -Property 'Database' -ne '').MaxSizeGiB | Measure-Object -Sum).sum
+$DBtotalGB = (($sqlList | Where-Object -Property 'Database' -ne '').MaxSizeGB | Measure-Object -Sum).sum
+$elasticTotalGiB = (($sqlList | Where-Object -Property 'ElasticPool' -ne '').MaxSizeGiB | Measure-Object -Sum).sum
+$elasticTotalGB = (($sqlList | Where-Object -Property 'ElasticPool' -ne '').MaxSizeGB | Measure-Object -Sum).sum
+$MITotalGiB = (($sqlList | Where-Object -Property 'ManagedInstance' -ne '').MaxSizeGiB | Measure-Object -Sum).sum
+$MITotalGB = (($sqlList | Where-Object -Property 'ManagedInstance' -ne '').MaxSizeGB | Measure-Object -Sum).sum
 
 Write-Host
 Write-Host "Total # of Azure VMs: $($vmList.count)" -foregroundcolor green
-Write-Host "Total # of Managed Disks: $(($vmList.Disks | Measure -Sum).sum)" -foregroundcolor green
+Write-Host "Total # of Managed Disks: $(($vmList.Disks | Measure-Object -Sum).sum)" -foregroundcolor green
 Write-Host "Total capacity of all disks: $VMtotalGiB GiB or $VMtotalGB GB" -foregroundcolor green
 
 Write-Host
