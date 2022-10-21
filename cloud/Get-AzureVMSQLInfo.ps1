@@ -43,11 +43,23 @@ Runs the script against subscriptions 'sub1' and 'sub2'.
 #>
 
 param (
-  [CmdletBinding()]
+  [CmdletBinding(DefaultParameterSetName = 'CurrentSubscription')]
 
   # Choose to get info for only Azure VMs and/or SQL
-  [Parameter(Mandatory=$false)]
-  [string]$subscriptions = ''
+  [Parameter(ParameterSetName='UserSubscriptions',
+    Mandatory=$true)]
+  [ValidateNotNullOrEmpty()]
+  [string]$Subscriptions = '',
+  # Choose to get info for all Azure VMs and/or SQL
+  [Parameter(ParameterSetName='AllSubscriptions',
+    Mandatory=$true)]
+  [ValidateNotNullOrEmpty()]
+  [switch]$AllSubscriptions,
+  [Parameter(ParameterSetName='CurrentSubscription',
+    Mandatory=$false)]
+  [ValidateNotNullOrEmpty()]
+  [switch]$CurrentSubscription
+
 )
 
 azConfig = Get-AzConfig -DisplayBreakingChangeWarning
@@ -61,17 +73,21 @@ $outputVmDisk = "azure_vmdisk_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 $outputSQL = "azure_sql_info-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 Write-Host "Current identity:" -foregroundcolor green
-$context = Get-AzContext -ListAvailable
-$context | format-table
+$context = Get-AzContext
+$context | Select-Object -Property Account,Environment,Tenant |  format-table
 
 # Contains list of VMs and SQL DBs with capacity info
 $vmList = @()
 $sqlList = @()
 
 # If no subscription is specified, only use the current subscription
-if ( $subscriptions -eq '' ) {
+if ($AllSubscriptions -eq $true) {
+  $subs =  $(Get-AzContext -ListAvailable).subscription.name
+} 
+elseif ( $subscriptions -eq '' ) {
   $subs = $context.subscription.name
-} else {
+}
+else {
   [string[]]$subs = $subscriptions.split(',')
 }
 
