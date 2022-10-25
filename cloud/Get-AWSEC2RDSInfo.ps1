@@ -1,4 +1,5 @@
 #requires -modules AWSPowerShell.NetCore
+Import-Module AWSPowerShell.NetCore
 
 # https://build.rubrik.com
 
@@ -81,11 +82,25 @@ AWS account profile and searches all regions.
 Runs the script to get all EC2 and RDS instance info and output to a CSV file. Uses all of the  
 AWS account profiles in the user environment. 
 
+<<<<<<< Updated upstream
 .EXAMPLE
 ./Get-AWSEC2RDSInfo.ps1 -AccountProfiles "aws_account_profile1,aws_account_profile2" -Regions "us-west-1,us-west-2"
 Runs the script to get all EC2 and RDS instance info and output to a CSV file. Uses the selected 
 account profiles "aws_account_profile1" and "aws_account_profile2" and limits the query to the "us-west-1" and 
 "us-west-2" regions. 
+=======
+$accounts = @( '084960129194', '773366790932' )
+
+$account = $acounts[0]
+
+$roleARN = "arn:aws:iam::${account}:role/RubrikSizingScript"
+
+$response = (Use-STSRole -Region $Region -RoleArn $RoleArn -RoleSessionName 'CMDB').Credentials
+$credentials = New-AWSCredentials -AccessKey $Response.AccessKeyId -SecretKey $Response.SecretAccessKey -SessionToken $Response.SessionToken
+
+
+$date = Get-Date
+>>>>>>> Stashed changes
 
 .EXAMPLE
 ./Get-AWSEC2RDSInfo.ps1 -AccountProfiles aws_gov_cloud_account_profile -Regions us-gov-east-1 -Partition GovCloud

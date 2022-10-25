@@ -3,5 +3,6 @@
 testshares.csv
 login.ps1
 rubrik_info.py*
+powershell/*reports
 __pycache__
 settings.json

@@ -43,11 +43,16 @@ param (
 
   # Set to true to pull the most recent backups first
   [Parameter(Mandatory=$false)]
-  [bool]$desc = $false
-)
+  [bool]$desc = $false,
 
-# Number of days to break out the individual backups for
-$calcDays = 3
+  # Number of days to break out the individual backups for
+  [Parameter(Mandatory=$false)]
+  [int]$calcDays = 3,
+
+  # Set to $true to group the columns by category instead of date
+  [Parameter(Mandatory=$false)]
+  [bool]$group = $false
+)
 
 # Default sort order is oldest backups first, checks if user wants newest backups first and import the report
 if ($desc -ne $true)
@@ -75,6 +80,7 @@ foreach ($job in $jobs) {
   {
     $jobHash.($job.'Object Name') = @{}
     $jobHash.($job.'Object Name').'Name' = $job.'Object Name'
+    $jobHash.($job.'Object Name').'Object ID' = $job.'Object ID'
     $jobHash.($job.'Object Name').'Logical (GB)' = $([float]($job.'Logical Data Protected (B)') / 1000000000)
     $jobHash.($job.'Object Name').'[1] Date' = $job.'Hour'
     $jobHash.($job.'Object Name').'[1] Data Trans (GB)' = $([float]$job.'Data Transferred (B)' / 1000000000)
@@ -94,25 +100,60 @@ foreach ($job in $jobs) {
 # Holds final list of objects along with their corresponding backup jobs we want
 $objList = @()
 
+# Total number of objects to process
+$objCount = $jobHash.count
+$count = 0
+
 # Iterate through the hash table that has key for each object, along with backup details
 foreach ($i in $jobHash.getEnumerator())
 {
+  $count += 1
+  Write-Host "Processing [ $count / $objCount ] : $($i.Value.Name)"
+
   # Create initial object details
   $obj = [PSCustomObject] @{
       "Name" = $i.value.Name
-      "Logical (GB)" = $i.value.'Logical (GB)'
+      "Logical (GB)" = [math]::round($i.value.'Logical (GB)', 3)
   }
 
-  # For each date we want to pull, add the backup details to the object
-  $day = 0
-  while ($day -lt $calcDays)
+  # If default grouping is by date, loop through each date and put the columns together
+  if ($group -eq $false)
   {
+    # For each date we want to pull, add the backup details to the object
+    $day = 0
+    while ($day -lt $calcDays)
+    {
+        $day += 1
+        $obj | Add-Member -MemberType NoteProperty -Name "[$day] Date" -Value $i.value."[$day] Date"
+        $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Trans (GB)" -Value ([math]::round($i.value."[$day] Data Trans (GB)", 3))
+        $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Stored (GB)" -Value ([math]::round($i.value."[$day] Data Stored (GB)", 3))
+    }
+    $objList += $obj
+  # Otherwise, only add a single column each time we loop through date
+  } else {
+    # For each date we want to pull, add a single column
+    $day = 0
+    while ($day -lt $calcDays)
+    {
+      $day += 1
+      $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Trans (GB)" -Value ([math]::round($i.value."[$day] Data Trans (GB)", 3))
+    }
+    # For each date we want to pull, add a single column
+    $day = 0
+    while ($day -lt $calcDays)
+    {
+      $day += 1
+      $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Stored (GB)" -Value ([math]::round($i.value."[$day] Data Stored (GB)", 3))
+    }
+    # For each date we want to pull, add a single column
+    $day = 0
+    while ($day -lt $calcDays)
+    {
       $day += 1
       $obj | Add-Member -MemberType NoteProperty -Name "[$day] Date" -Value $i.value."[$day] Date"
-      $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Trans (GB)" -Value $i.value."[$day] Data Trans (GB)"
-      $obj | Add-Member -MemberType NoteProperty -Name "[$day] Data Stored (GB)" -Value $i.value."[$day] Data Stored (GB)"
+    }
+    $objList += $obj
   }
-  $objList += $obj
 }
 
 $objList | Export-CSV -path $output

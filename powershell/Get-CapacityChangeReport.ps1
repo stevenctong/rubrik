@@ -317,7 +317,7 @@ if ($date -eq $sourceDate -and !(Test-Path -Path $reportFileName))
   if ($PSVersionTable.PSVersion.Major -le 5) {
     Invoke-WebRequest -Uri $reportLink -OutFile ($reportFileName)
   } else {
-    Invoke-WebRequest -Uri $reportLink -OutFile ($reportFileName) -SkipCertificateCheck
+    Invoke-WebRequest -Uri $reportLink -SkipCertificateCheck
   }
 } else {
   Write-Host "`nCapacity report found: $reportFilename" -foregroundcolor green

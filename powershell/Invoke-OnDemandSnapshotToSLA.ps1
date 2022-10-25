@@ -2,7 +2,6 @@
 
 # https://build.rubrik.com
 # https://www.rubrik.com/blog/get-started-rubrik-powershell-module/
-# https://github.com/rubrikinc/rubrik-sdk-for-powershell
 # https://github.com/rubrikinc/rubrik-scripts-for-powershell
 
 <#
@@ -45,7 +44,7 @@ To create a credential file (note: only the user who creates it can use it):
 Fill out the PARAM section with config details for this script or pass when running.
 
 .EXAMPLE
-.\Invoke-OnDemandSnapshotsToSLA.ps1 -server <Rubrik_server> -token <API_token> -slaSourceString toAzure -targetSLAname Monthlies-Azure
+.\Invoke-OnDemandSnapshotsToSLA.ps1 -server <Rubrik_server> -token <API_token> -sourceSLAstring toAzure -targetSLAname Monthlies-Azure
 Takes an on demand snapshot of all objects in SLA(s) containing 'toAzure' in the name to target SLA 'Monthlies-Azure'
 
 .NOTES
@@ -77,7 +76,11 @@ param (
 
   # Source SLA string - takes an on demand snapshot for objects in SLAs that contain this string
   [Parameter(Mandatory=$false)]
-  [string]$slaSourceString = '',
+  [string]$sourceSLAstring = '',
+
+  # Source SLA array - takes an on demand snapshot for objects in SLAs that contain this string
+  [Parameter(Mandatory=$false)]
+  [array]$sourceSLAname = @(''),
 
   # Target SLA name - on demand snapshot is taken to this SLA
   [Parameter(Mandatory=$false)]
@@ -95,7 +98,7 @@ $SMTPServer = ''
 $SMTPPort = '25'
 
 $emailSubject = "Rubrik ($server) - Triggering On Demand Backups to SLA $slaTargetName" + $date.ToString("yyyy-MM-dd HH:MM")
-$html = "<b><Rubrik cluster: $server/b><br>Date: $date<br>Source SLA string: $slaSourceString<br>Target SLA name: $targetSLAname<br><br>"
+$html = "<b><Rubrik cluster: $server/b><br>Date: $date<br>Source SLA string: $sourceSLAstring<br>Target SLA name: $targetSLAname<br><br>"
 
 # Set to $true to send out email in the script
 $sendEmail = $false
@@ -109,7 +112,7 @@ try {
   else {
     if ($user) {
       if ($password) {
-        [SecureString]$password = ConvertTo-SecureString $password -AsPlainText -Force
+        [SecureString]$password = ConvertTo-SecureString -String $password -AsPlainText -Force
         $credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password
       }
       else { $credential = Get-Credential -Username $user }
@@ -129,47 +132,47 @@ try {
 ###### RUBRIK AUTHENTICATION - END ######
 
 # Get a list of all SLAs in Rubrik
-$slaList = Get-RubrikSLA -PrimaryClusterID local | Sort-Object 'Name'
-$slaDomains = @()
+$slaCluster = Get-RubrikSLA -PrimaryClusterID local | Sort-Object 'Name'
+$slaList = @()
 
 # Filter SLAs by those with the source SLA string we're looking for
-foreach ($i in $slaList) {
-  if ($i.name -match $slaSourceString) {
-    $i.name
-    $slaDomains += $i.name
+foreach ($sla in $slaCluster) {
+  if ($sla.name -match $sourceSLAstring) {
+    $sla.name
+    $slaList += $sla.name
   }
 }
 
 # List containing the objects that we want to take an on demand snapshot of
 $objList = @()
 
-Write-Host "`nBuilding list of objects from source SLAs with string: `"$slaSourceString`"`n" -foregroundcolor green
+Write-Host "`nBuilding list of objects from source SLAs with string: `"$sourceSLAstring`"`n" -foregroundcolor green
 
 # For each SLA we found, get all objects of each type for that SLA to build the list of objects
-foreach ($SLA in $slaDomains) {
+foreach ($sla in $slaList) {
 
-  Write-Host "Getting objects for SLA: `"$SLA`"" -foregroundcolor green
+  Write-Host "Getting objects for SLA: `"$sla`"" -foregroundcolor green
 
   Write-Host ".....Getting VMware VMs"
-  $objList += Get-RubrikVM -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikVM -SLA $sla -PrimaryClusterID local
 
   Write-Host ".....Getting HyperV VMs"
-  $objList += Get-RubrikHyperVVM -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikHyperVVM -SLA $sla -PrimaryClusterID local
 
   Write-Host ".....Getting AHV VMs"
-  $objList += Get-RubrikNutanixVM -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikNutanixVM -SLA $sla -PrimaryClusterID local
 
   Write-Host ".....Getting Filesets that are not Passthrough"
-  $objList += (Get-RubrikFileset -SLA $SLA -PrimaryClusterID local | Where-Object {$_.isPassthrough -eq $false})
+  $objList += (Get-RubrikFileset -SLA $sla -PrimaryClusterID local | Where-Object {$_.isPassthrough -eq $false})
 
   Write-Host ".....Getting SQL Server Databases"
-  $objList += Get-RubrikDatabase -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikDatabase -SLA $sla -PrimaryClusterID local
 
   Write-Host ".....Getting Oracle Databases"
-  $objList += Get-RubrikOracleDB -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikOracleDB -SLA $sla -PrimaryClusterID local
 
   Write-Host ".....Getting Volume Groups"
-  $objList += Get-RubrikVolumeGroup -SLA $SLA -PrimaryClusterID local
+  $objList += Get-RubrikVolumeGroup -SLA $sla -PrimaryClusterID local
 }
 
 $totalCount = ($objList | Where { $_.Name -ne $null }).count

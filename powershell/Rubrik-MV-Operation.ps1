@@ -26,9 +26,9 @@ Opens or closes the MV according to -op to the -mvHost
 param (
   [CmdletBinding()]
 
-  # Host
+  # MV Name
   [Parameter(Mandatory=$true)]
-  [string]$mvHost,
+  [string]$mvName,
 
   # Managed Volume action - open or close
   [Parameter(Mandatory=$true)]
@@ -36,18 +36,46 @@ param (
 )
 
 
+if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsPolicy') {
+  # Added try catch block to resolve issue #613
+  $ErrorActionPreference = 'Stop'
+  try {
+    Add-Type -TypeDefinition @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+      public bool CheckValidationResult(
+          ServicePoint srvPoint, X509Certificate certificate,
+          WebRequest request, int certificateProblem) {
+          return true;
+      }
+    }
+"@
+    [System.Net.ServicePointManager]::CertificatePolicy = New-Object -TypeName TrustAllCertsPolicy
+  } catch {
+    Write-Warning 'An error occured while attempting to allow self-signed certificates'
+    Write-Debug ($Error[0] | ConvertTo-Json | Out-String)
+  }
+}
+
+try {
+  if ([Net.ServicePointManager]::SecurityProtocol -notlike '*Tls12*') {
+    Write-Verbose -Message 'Adding TLS 1.2'
+    [Net.ServicePointManager]::SecurityProtocol = ([Net.ServicePointManager]::SecurityProtocol).tostring() + ', Tls12'
+  }
+}
+catch {
+  Write-Verbose -Message $_
+  Write-Verbose -Message $_.Exception.InnerException.Message
+}
+
 ###### VARIABLES - BEGIN ######
 
 $date = Get-Date
 
 # Rubrik cluster information
-$server = ''
-$apiToken = ''
-
-# Host to Managed Volume Mapping
-$mvHosts = @{
-  "" = ""
-}
+$server = 'amer1-rbk01.rubrikdemo.com'
+$apiToken = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiI1YTc1YWU5Yy0zMzdkLTQ3ZDMtYjUxNS01MmFmNzE5MTcxMmNfMTgxMDI1OTctYTZiNS00YWQ1LWFiM2QtMDc5Y2M5MzQ5ZjJlIiwiaXNNZmFSZW1lbWJlclRva2VuIjpmYWxzZSwiaXNzIjoiNWE3NWFlOWMtMzM3ZC00N2QzLWI1MTUtNTJhZjcxOTE3MTJjIiwiaWF0IjoxNjY2NjQ0NDkxLCJqdGkiOiIwNzQ4NzNhYS1kMmQ5LTRiZmQtYTcyYy1lNDBkOWQ3MTAxOTkifQ.ZD5ajuk__fAcw_FmFLBJuG-p4PoogB662XrpvvjtwGA'
 
 #Log directory
 $logDir = 'C:\Rubrik\log'
@@ -68,18 +96,16 @@ $sendEmail = $false
 
 # Starg logging
 $log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
-Start-Transcript -Path $log -NoClobber
+# Start-Transcript -Path $log -NoClobber
 
-$baseMVURL = "https://" + $server + "/api/internal/managed_volume/"
 $header = @{"Authorization" = "Bearer "+$apiToken}
 $type = "application/json"
 
-if ($mvHosts.$mvHost -eq $null)
-{
-  Write-Error "Host not defined in script, exiting"
-  Stop-Transcript
-  exit 98
-}
+$getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
+
+$mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose).data.id
+
+$baseMVURL = "https://" + $server + "/api/v1/managed_volume/"
 
 if ($op -eq 'open')
 {
@@ -92,7 +118,7 @@ if ($op -eq 'open')
   exit 99
 }
 
-$mvURL = $baseMVURL + $mvHosts.$mvHost + $opURL
+$mvURL = $baseMVURL + $mvID + $opURL
 
 Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose
 
@@ -103,4 +129,4 @@ if ($sendEmail)
 }
 
 # Stopping logging
-Stop-Transcript
+# Stop-Transcript
