@@ -4,3 +4,4 @@ testshares.csv
 login.ps1
 rubrik_info.py*
 __pycache__
+settings.json
