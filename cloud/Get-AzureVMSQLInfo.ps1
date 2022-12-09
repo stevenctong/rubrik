@@ -6,9 +6,10 @@ Gets all Azure VM Managed Disk and/or Azure SQL info in the specified subscripti
 
 .DESCRIPTION
 The 'Get-AzureVMSQLInfo.ps1' script gets all VM Managed Disk and/or Azure SQL info in the specified subscription(s).
-You can specify one or more subscription to run the script against. 
-You can also specify to discover and report on all subscriptions with in the tenant that Powershell is logged into.
+You can specify one or more subscription to run the script against, or against all subscriptions.
 If no subscription is specified then it will gather info against the current subscription context.
+
+If you need to get detailed disk info, there is a flag to do so.
 
 This script requires the Azure Powershell module. That module can be installed by running  `Install-Module Az`
 If not already done use the `Connect-AzAccount` command to connect to a specific Azure Tenant to report on.
@@ -22,7 +23,7 @@ If a SQL DB is on a Managed Instance, then the script will gather the Managed In
 
 A summary of the total # of VMs, Disks, and SQL capacity information will be output to console.
 A CSV file will be exported with the details.
-You should copy/paste the console output to send along with the CSV.
+Please copy/paste the console output to send along with the CSV.
 
 Update the subscription list ($subscriptions) as needed or pass it in as an argument.
 
@@ -42,8 +43,7 @@ Flog to only gather information from the current subscription.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 2/19/22
-Updated: 7/13/22
-Updated: 10/20/22
+Updated: 12/8/22
 
 .EXAMPLE
 ./Get-AzureVMSQLInfo.ps1
@@ -55,7 +55,11 @@ Runs the script against subscriptions 'sub1' and 'sub2'.
 
 .EXAMPLE
 ./Get-AzureVMSQLInfo.ps1 -AllSubscriptions
-Runs the script against all subscriptions in the tenant. 
+Runs the script against all subscriptions in the tenant.
+
+.EXAMPLE
+./Get-AzureVMSQLInfo.ps1 -DiskDetails
+Get info on each disk, one per row, instead of summarized per VM.
 
 .LINK
 https://build.rubrik.com
@@ -66,28 +70,25 @@ https://github.com/stevenctong/rubrik
 #>
 
 param (
-  [CmdletBinding(DefaultParameterSetName = 'CurrentSubscription')]
+  [CmdletBinding()]
 
-  # Choose to get info for only Azure VMs and/or SQL
-  [Parameter(ParameterSetName='UserSubscriptions',
-    Mandatory=$true)]
-  [ValidateNotNullOrEmpty()]
+  # User can provide a comma separated list of subscriptions to gather info on
   [string]$Subscriptions = '',
-  # Choose to get info for all Azure VMs and/or SQL
-  [Parameter(ParameterSetName='AllSubscriptions',
-    Mandatory=$true)]
+
+  # Flag to get info on all subscriptions
+  [Parameter(Mandatory=$false)]
   [ValidateNotNullOrEmpty()]
   [switch]$AllSubscriptions,
-  [Parameter(ParameterSetName='CurrentSubscription',
-    Mandatory=$false)]
-  [ValidateNotNullOrEmpty()]
-  [switch]$CurrentSubscription
 
+  # Flag to get all disk details output per row
+  [Parameter(Mandatory=$false)]
+  [ValidateNotNullOrEmpty()]
+  [switch]$DiskDetails
 )
 
 Import-Module Az.Accounts, Az.Compute, Az.Sql
 
-$azConfig = Get-AzConfig -DisplayBreakingChangeWarning 
+$azConfig = Get-AzConfig -DisplayBreakingChangeWarning
 Update-AzConfig -DisplayBreakingChangeWarning $false | Out-Null
 
 $date = Get-Date
@@ -104,17 +105,19 @@ $context | Select-Object -Property Account,Environment,Tenant |  format-table
 $vmList = @()
 $sqlList = @()
 
+$vmCount = 0
+$diskCount = 0
+
 # If no subscription is specified, only use the current subscription
 if ($AllSubscriptions -eq $true) {
   $subs =  $(Get-AzContext -ListAvailable).subscription.name
-} 
+}
 elseif ( $subscriptions -eq '' ) {
   $subs = $context.subscription.name
 }
 else {
   [string[]]$subs = $subscriptions.split(',')
 }
-
 
 # Get Azure info for all specified subscriptions
 foreach ($sub in $subs) {
@@ -129,38 +132,92 @@ foreach ($sub in $subs) {
 
   # Get a list of all VMs in the current subscription
   $vms = Get-AzVM
+  $vmCount += $vms.count
 
-  # Loop through each VM to get all disk info
-  foreach ($vm in $vms)
+  # Summarize VM details if we don't want disk details
+  if ($diskDetails -eq $false)
   {
-    # Count of and size of all disks attached to the VM
-    $diskNum = 0
-    $diskSizeGiB = 0
-    # Loop through each OS disk on the VM and add to the disk info
-    foreach ($osDisk in $vm.StorageProfile.osdisk)
+    # Loop through each VM to get all disk info
+    foreach ($vm in $vms)
     {
-      $diskNum += 1
-      $diskSizeGiB += [int]$osDisk.DiskSizeGB
+      # Count of and size of all disks attached to the VM
+      $diskNum = 0
+      $diskSizeGiB = 0
+      # Loop through each OS disk on the VM and add to the disk info
+      foreach ($osDisk in $vm.StorageProfile.osdisk)
+      {
+        $diskCount += 1
+        $diskNum += 1
+        $diskSizeGiB += [int]$osDisk.DiskSizeGB
+      }
+      # Loop through each data disk on the VM and add to the disk info
+      foreach ($dataDisk in $vm.StorageProfile.dataDisks)
+      {
+        $diskCount += 1
+        $diskNum += 1
+        $diskSizeGiB += [int]$dataDisk.DiskSizeGB
+      }
+      $vmObj = [PSCustomObject] @{
+        "Name" = $vm.name
+        "Disks" = $diskNum
+        "SizeGiB" = $diskSizeGiB
+        "SizeGB" = [math]::round($($diskSizeGiB * 1.073741824), 3)
+        "Subscription" = $sub
+        "Region" = $vm.Location
+        "ResourceGroup" = $vm.ResourceGroupName
+        "vmID" = $vm.vmID
+        "InstanceType" = $vm.HardwareProfile.vmSize
+        "Status" = $vm.StatusCode
+      }
+      $vmList += $vmObj
     }
-    # Loop through each data disk on the VM and add to the disk info
-    foreach ($dataDisk in $vm.StorageProfile.dataDisks)
+  } else  # Get disk details, output per row
+  {
+    # Loop through each VM to get all disk info
+    foreach ($vm in $vms)
     {
-      $diskNum += 1
-      $diskSizeGiB += [int]$dataDisk.DiskSizeGB
+      # Loop through each OS disk on the VM and add to the disk info
+      foreach ($osDisk in $vm.StorageProfile.osdisk)
+      {
+        $diskCount += 1
+        $diskSizeGiB = [int]$osDisk.DiskSizeGB
+
+        $vmObj = [PSCustomObject] @{
+          "Name" = $vm.name
+          "SizeGiB" = $diskSizeGiB
+          "SizeGB" = [math]::round($($diskSizeGiB * 1.073741824), 3)
+          "diskID" = $osDisk.ManagedDisk.id
+          "Subscription" = $sub
+          "Region" = $vm.Location
+          "ResourceGroup" = $vm.ResourceGroupName
+          "vmID" = $vm.vmID
+          "InstanceType" = $vm.HardwareProfile.vmSize
+          "Status" = $vm.StatusCode
+        }
+        $vmList += $vmObj
+      }
+      # Loop through each data disk on the VM and add to the disk info
+      foreach ($dataDisk in $vm.StorageProfile.dataDisks)
+      {
+        $diskCount += 1
+        $diskSizeGiB += [int]$dataDisk.DiskSizeGB
+
+        $vmObj = [PSCustomObject] @{
+          "Name" = $vm.name
+          "Disks" = $diskNum
+          "SizeGiB" = $diskSizeGiB
+          "SizeGB" = [math]::round($($diskSizeGiB * 1.073741824), 3)
+          "diskID" = $dataDisk.ManagedDisk.id
+          "Subscription" = $sub
+          "Region" = $vm.Location
+          "ResourceGroup" = $vm.ResourceGroupName
+          "vmID" = $vm.vmID
+          "InstanceType" = $vm.HardwareProfile.vmSize
+          "Status" = $vm.StatusCode
+        }
+        $vmList += $vmObj
+      }
     }
-    $vmObj = [PSCustomObject] @{
-      "Name" = $vm.name
-      "Disks" = $diskNum
-      "SizeGiB" = $diskSizeGiB
-      "SizeGB" = [math]::round($($diskSizeGiB * 1.073741824), 3)
-      "Subscription" = $sub
-      "Region" = $vm.Location
-      "ResourceGroup" = $vm.ResourceGroupName
-      "vmID" = $vm.vmID
-      "InstanceType" = $vm.HardwareProfile.vmSize
-      "Status" = $vm.StatusCode
-    }
-    $vmList += $vmObj
   }
 
   # Get all Azure SQL servers
@@ -264,21 +321,27 @@ $MITotalGiB = (($sqlList | Where-Object -Property 'ManagedInstance' -ne '').MaxS
 $MITotalGB = (($sqlList | Where-Object -Property 'ManagedInstance' -ne '').MaxSizeGB | Measure-Object -Sum).sum
 
 Write-Host
-Write-Host "Total # of Azure VMs: $($vmList.count)" -foregroundcolor green
-Write-Host "Total # of Managed Disks: $(($vmList.Disks | Measure-Object -Sum).sum)" -foregroundcolor green
+Write-Host "Total # of Azure VMs: $vmCount" -foregroundcolor green
+Write-Host "Total # of Managed Disks: $diskCount" -foregroundcolor green
 Write-Host "Total capacity of all disks: $VMtotalGiB GiB or $VMtotalGB GB" -foregroundcolor green
 
 Write-Host
-Write-Host "Total # of SQL DBs (independent): $(($sqlList.Database -ne '').count)" -foregroundcolor green
-Write-Host "Total # of SQL Elastic Pools: $(($sqlList.ElasticPool -ne '').count)" -foregroundcolor green
-Write-Host "Total # of SQL Managed Instances: $(($sqlList.ManagedInstance -ne '').count)" -foregroundcolor green
-Write-Host "Total capacity of all SQL DBs (independent): $DBtotalGiB GiB or $DBtotalGB GB" -foregroundcolor green
-Write-Host "Total capacity of all SQL Elastic Pools: $elasticTotalGiB GiB or $elasticTotalGB GB" -foregroundcolor green
-Write-Host "Total capacity of all SQL Managed Instances: $MITotalGiB GiB or $MITotalGB GB" -foregroundcolor green
+if ($sqlList.count -eq 0)
+{
+  Write-Host "No Azure SQL DBs, ElasticPools, or Managed Instances found" -foregroundcolor green
+} else
+{
+  Write-Host "Total # of SQL DBs (independent): $(($sqlList.Database -ne '').count)" -foregroundcolor green
+  Write-Host "Total # of SQL Elastic Pools: $(($sqlList.ElasticPool -ne '').count)" -foregroundcolor green
+  Write-Host "Total # of SQL Managed Instances: $(($sqlList.ManagedInstance -ne '').count)" -foregroundcolor green
+  Write-Host "Total capacity of all SQL DBs (independent): $DBtotalGiB GiB or $DBtotalGB GB" -foregroundcolor green
+  Write-Host "Total capacity of all SQL Elastic Pools: $elasticTotalGiB GiB or $elasticTotalGB GB" -foregroundcolor green
+  Write-Host "Total capacity of all SQL Managed Instances: $MITotalGiB GiB or $MITotalGB GB" -foregroundcolor green
 
-Write-Host
-Write-Host "Total # of SQL DBs, Elastic Pools & Managed Instances: $($sqlList.count)" -foregroundcolor green
-Write-Host "Total capacity of all SQL: $sqlTotalGiB GiB or $sqlTotalGB GB" -foregroundcolor green
+  Write-Host
+  Write-Host "Total # of SQL DBs, Elastic Pools & Managed Instances: $($sqlList.count)" -foregroundcolor green
+  Write-Host "Total capacity of all SQL: $sqlTotalGiB GiB or $sqlTotalGB GB" -foregroundcolor green
+}
 
 # Export to CSV
 Write-Host ""
