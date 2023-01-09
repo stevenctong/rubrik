@@ -8,51 +8,55 @@ Opening a MV will make the share read-writable.
 Closing a MV will make the share read-only and allow Rubrik to take a snapshot.
 A MV should always be closed once a backup has been written to it.
 
--mvName - Pass in the MV name
--cluster - Pass in the Rubrik cluster the MV is provisioned on
+-mvName - Managed Volume name, provide either MV Name + Cluster OR MV ID
+-cluster - Rubrik cluster, provide either MV Name + Cluster OR MV ID
+-mvID - MV ID, provide either MV Name + Cluster OR MV ID
 -op - Either 'open' or 'close'
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
-Date: 1/2/23
+Date: 1/7/23
 
 For authentication, provide a RSC Service Account JSON defined at variable $serviceAccountPath.
 
 Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
-./RSC-MV-Operations.ps1 -mvID <mvID> -cluster <cluster> -op 'open'
-Open the Managed Volume on the specifed cluster to a writable state.
+./RSC-MV-Operations.ps1 -mvName <mvName> -cluster <cluster> -op 'open'
+Open the Managed Volume with the specific name + cluster to writeable.
 
-./RSC-MV-Operations.ps1 -mvID <mvID> -cluster <cluster> -op 'close'
-Close the Managed Volume on the specifed cluster to read-only.
+./RSC-MV-Operations.ps1 -mvName <mvName> -cluster <cluster> -op 'close'
+Close the Managed Volume with the specific name + cluster to read-only.
+
+./RSC-MV-Operations.ps1 -mvID <mvID> -op 'open'
+Use a MV ID to open it to a writable state.
 #>
 
 
 param (
   [CmdletBinding()]
 
-  # MV Name
-  [Parameter(Mandatory=$true)]
+  # MV name, provide with Rubrik cluster instead of MV ID
+  [Parameter(Mandatory=$false)]
   [string]$mvName,
 
-  # Rubrik cluster the MV is provisioned on
-  [Parameter(Mandatory=$true)]
+  # Rubrik cluster, provide with MV name instead of MV ID
+  [Parameter(Mandatory=$false)]
   [string]$cluster,
+
+  # MV ID, provide instead of MV Name + Rubrik cluster
+  [Parameter(Mandatory=$false)]
+  [string]$mvID,
 
   # Managed Volume action - open or close
   [Parameter(Mandatory=$true)]
-  [string]$op,
-
-  # Optional - MV ID to use, otherwise provide MV Name + Rubrik Cluster
-  [Parameter(Mandatory=$false)]
-  [string]$mvID
+  [string]$op
 )
 
 $date = Get-Date
 
-# SMTP configuration
+# SMTP configuration if you want to send an email at the end of this script
 $emailTo = @('')
 $emailFrom = ''
 $SMTPServer = ''
@@ -61,11 +65,8 @@ $SMTPPort = '25'
 $emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
 $html = "Body<br><br>"
 
-# Set to $true to send out email in the script
+# Set to $true to send out email at the end of this script
 $sendEmail = $false
-
-# CSV file info
-$csvOutput = "./<name>-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
@@ -145,7 +146,7 @@ Function Find-ManagedVolume {
     # Managed Volume Name
     [Parameter(Mandatory=$true)]
     [string]$mvName,
-    # Rubrik cluster ID
+    # Rubrik Cluster ID
     [Parameter(Mandatory=$true)]
     [string]$clusterID
   )
@@ -222,8 +223,7 @@ Function Find-ManagedVolume {
   return $mvResult
 }  ### Function Find-ManagedVolume
 
-
-# Find a cluster with an exact match for $cluster
+# Find a Rubrik cluster with an exact match for $cluster
 Function Find-Cluster {
   param (
     [CmdletBinding()]
@@ -258,6 +258,7 @@ Function Find-Cluster {
     "variables" = $variables
   }
   $clusterResult = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.clusterConnection.edges.node
+  # Loop through results to filter for an exact match
   $clusterMatch = $null
   foreach ($i in $clusterResult)
   {
@@ -267,7 +268,6 @@ Function Find-Cluster {
   }
   return $clusterMatch
 }  ### Function Find-Cluster
-
 
 # Open a MV to a writable state
 Function Open-MV {
@@ -302,7 +302,6 @@ Function Open-MV {
   return $response
 }  ### Function Open-MV
 
-
 # Close a MV to a read-only state
 Function Close-MV {
   param (
@@ -336,11 +335,19 @@ Function Close-MV {
   return $response
 }  ### Function Close-MV
 
-
 ###### FUNCTIONS - END ######
 
+# If a MV ID is not provided then find the MV ID using the MV Name + Rubrik Cluster
 if ($mvID -eq '' -Or $mvID -eq $null)
 {
+  if ($mvName -eq '' -Or $mvName -eq $null) {
+    Write-Error "No MV name provided. Exiting..."
+    exit
+  }
+  if ($cluster -eq '' -Or $cluster -eq $null) {
+    Write-Error "No Rubrik cluster provided. Exiting..."
+    exit
+  }
   $clusterResult = Find-Cluster -cluster $cluster
   if ($clusterResult.count -eq 0) {
     Write-Error "No cluster found by name: $cluster. Exiting..."
@@ -359,33 +366,25 @@ if ($op -eq 'open')
 {
   Write-Host "Opening MV: $mvName ($mvID) on cluster: $cluster"
   $response = Open-MV -mvID $mvID
-  if ($response.message -eq $null) {
+  if ($response.errors -eq $null) {
     Write-Host "Opened MV: $mvName ($mvID) on cluster: $cluster for writing." -foregroundcolor green
   } else {
-    Write-Error "Error opening MV"
-    $response.message
+    Write-Error "Error opening MV: $mvName ($mvID) on cluster: $cluster"
+    Write-Error "$($response.errors.message)"
   }
 } elseif ($op -eq 'close') {
   Write-Host "Closing MV: $mvName ($mvID) on cluster: $cluster"
   $response = Close-MV -mvID $mvID
-  if ($response.message -eq $null) {
+  if ($response.errors -eq $null) {
     Write-Host "Closed MV: $mvName ($mvID) on cluster: $cluster to read-only." -foregroundcolor green
   } else {
-    Write-Error "Error closing MV"
-    $response.message
+    Write-Error "Error closing MV: $mvName ($mvID) on cluster: $cluster"
+    Write-Error "$($response.errors.message)"
   }
 }
 
-
-
-
-# # Export the list to a CSV file
-# $list | Export-Csv -NoTypeInformation -Path $csvOutput
-# Write-Host "`nResults output to: $csvOutput"
-#
-# # Send an email with CSV attachment
-# if ($sendEmail)
-# {
-#   Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
-# }
-#
+# Send an email
+if ($sendEmail)
+{
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $html -SmtpServer $SMTPServer -Port $SMTPPort
+}
