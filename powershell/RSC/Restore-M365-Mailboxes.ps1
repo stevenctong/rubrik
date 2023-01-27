@@ -46,6 +46,9 @@ param (
 
 $date = Get-Date
 
+# CSV file output
+$csvOutput = "./rubrik_m365_restore-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
 # SMTP configuration if you want to send an email at the end of this script
 $emailTo = @('')
 $emailFrom = ''
@@ -55,12 +58,14 @@ $SMTPPort = '25'
 $emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
 $html = "Body<br><br>"
 
+$retries = 3
+
 # Set to $true to send out email at the end of this script
 $sendEmail = $false
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
-$serviceAccountPath = "./rsc-service-account.json"
+$serviceAccountPath = "./rsc-service-account-rr.json"
 
 Write-Information -Message "Info: Attempting to read the Service Account file located at $serviceAccountPath"
 try {
@@ -307,7 +312,7 @@ Function Get-M365MailboxLatestSnapshot {
     "variables" = $variables
   }
   $mailboxSnapshot = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.o365Mailbox
-  return $mailboxSnapshot.newestIndexedSnapshot.id
+  return $mailboxSnapshot
 }  ### Function Get-M365MailboxLatestSnapshot
 
 # Get the root folder of a snapshot of a mailbox
@@ -354,7 +359,7 @@ Function Get-M365MailboxRootFolder {
   }
   $rootFolder = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.browseFolder.edges.node
   $rootFolderID = $rootFolder.id
-  return $rootFolderID
+  return $rootFolder
 }  ### Function Get-M365MailboxRootFolder
 
 # Warm the mailbox cache
@@ -409,7 +414,7 @@ Function Restore-M365Mailbox {
     "actionType" = "RESTORE_SNAPPABLE"
   }
   $payload = @{
-    "query" = "mutation O365RestoreMailboxMutation(`$orgId: UUID, `$mailboxId: UUID!, `$restoreConfigs: [RestoreObjectConfig!]!, `$actionType: O365RestoreActionType!) {
+    "query" = "mutation (`$orgId: UUID, `$mailboxId: UUID!, `$restoreConfigs: [RestoreObjectConfig!]!, `$actionType: O365RestoreActionType!) {
       restoreO365Mailbox(restoreConfig: {mailboxUuid: `$mailboxId, restoreConfigs: `$restoreConfigs, orgUuid: `$orgId, actionType: `$actionType}) {
         taskchainId
         __typename
@@ -419,8 +424,6 @@ Function Restore-M365Mailbox {
   }
   $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
   $taskchainID = $response.data.restoreO365Mailbox.taskchainId
-  Write-Host "Mailbox: $mailboxID; $responsedata.restoreO365Mailbox"
-  Write-Host "Mailbox: $mailboxID; $taskchainID"
   return $taskchainID
 }  ### Function Restore-M365Mailbox
 
@@ -494,27 +497,30 @@ if ($emailAddress -eq '' -or $emailAddress -eq $null)
   $mailboxes = Get-M365MailboxDetail -subscriptionID $subscriptionID -emailAddress $emailAddress
 }
 
-Write-Host "Number of mailboxes found: $($mailboxes.count)"
-Write-Host "Getting the latest index'ed snapshot for each mailbox"
+Write-Host "Number of mailboxes found: $($mailboxes.count)" -foregroundcolor green
+Write-Host "Getting the latest index'ed snapshot for each mailbox" -foregroundcolor green
 
 # Get the latest index'ed snapshot for each mailbox
 foreach ($mailbox in $mailboxes)
 {
   $snapshotID = Get-M365MailboxLatestSnapshot -mailboxID $mailbox.id
-  if ($snapshotID -eq '') {
+  if ($snapshotID -eq '' -or $snapshotID -eq $null) {
     Write-Host "No index'ed snapshot found for: $($mailbox.userPrincipalName)"
+    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'snapshotID' -value 'NoneFound'
+  } else {
+    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'snapshotID' -value $snapshotID
   }
-  Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'snapshotID' -value $snapshotID
 }
 
-Write-Host "Getting the root folder of each mailbox, this may take some time..."
+Write-Host "Getting the root folder of each mailbox, this may take some time..." -foregroundcolor green
 
 $funcGetM365MailboxRootFolder = ${function:Get-M365MailboxRootFolder}.ToString()
 $funcWarmM365MailboxCache = ${function:Warm-M365MailboxCache}.ToString()
 
+# Get the root folder ID of each mailbox
 $mailboxes | foreach-object -throttlelimit 16 -parallel {
-  if ($_.snapshotID -eq '') {
-    Write-Host "No index'ed snapshot found for mailbox, skipping: $($mailbox.userPrincipalName)"
+  if ($_.snapshotID -eq '' -or $_.snapshotID -eq $null -or $_.snapshotID -eq 'NoneFound') {
+    Write-Host "No index'ed snapshot found for mailbox, skipping: $($_.userPrincipalName)" -foregroundcolor red
     Add-Member -InputObject $_ -MemberType NoteProperty -name 'rootFolderID' -value ''
   } else {
     Write-Host "Getting root folder for: $($_.userPrincipalName)"
@@ -525,17 +531,31 @@ $mailboxes | foreach-object -throttlelimit 16 -parallel {
       $headers = $using:headers
       Warm-M365MailboxCache -mailboxID $_.id
       Start-Sleep 15
-      $rootFolderID = Get-M365MailboxRootFolder -subscriptionID $using:subscriptionID -mailboxID $_.id -snapshotID $_.snapshotID
-      Add-Member -InputObject $_ -MemberType NoteProperty -name 'rootFolderID' -value $rootFolderID
-      Write-Host "Got root folder for: $($_.userPrincipalName)"
+      $retryCount = 1
+      $rootFolderID = ''
+      do {
+        $rootFolderID = Get-M365MailboxRootFolder -subscriptionID $using:subscriptionID -mailboxID $_.id -snapshotID $_.snapshotID
+        if ($rootFolderID -eq '' -or $rootFolderID -eq $null) {
+          Write-Host "Could not get root folder, retrying ($retryCount of $using:retries) for: $($_.userPrincipalName)" -foregroundcolor yellow
+          $retryCount += 1
+        } else {
+          Write-Host "Got root folder for: $($_.userPrincipalName)"
+          Add-Member -InputObject $_ -MemberType NoteProperty -name 'rootFolderID' -value $rootFolderID
+        }
+      } while (($rootFolderID -eq '' -or $rootFolderID -eq $null) -and $retryCount -le $using:retries)
     } catch {
       Write-Error "Error getting root folder for: $($mailbox.userPrincipalName)"
       Write-Error "$_"
       Add-Member -InputObject $_ -MemberType NoteProperty -name 'rootFolderID' -value 'Error'
     }
+    if ($rootFolderID -eq '' -or $rootFolderID -eq $null) {
+      Write-Error "Could not get root folder for: $($_.userPrincipalName)"
+      Add-Member -InputObject $_ -MemberType NoteProperty -name 'rootFolderID' -value $rootFolderID
+    }
   }
 }
 
+# Non-parallel loop to get root folder IDs
 # foreach ($mailbox in $mailboxes)
 # {
 #   Write-Host "[$count/$mailboxTotal] Getting root folder for: $($mailbox.userPrincipalName)"
@@ -550,7 +570,7 @@ $mailboxes | foreach-object -throttlelimit 16 -parallel {
 #   $count += 1
 # }
 
-Write-Host "Initiating restore for each mailbox"
+Write-Host "Initiating restore for each mailbox" -foregroundcolor green
 $count = 1
 $mailboxTotal = $mailboxes.count
 
@@ -562,38 +582,54 @@ foreach ($mailbox in $mailboxes)
     $taskChainID = Restore-M365Mailbox -subscriptionID $subscriptionID -mailboxID $mailbox.id -snapshotID $mailbox.snapshotID -rootFolderID $mailbox.rootFolderID
     Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'taskChainID' -value $taskChainID
     Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'status' -value 'Active'
-    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'startTime' -value ''
     Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'message' -value ''
   } catch {
     Write-Error "Error trying to restore: $($mailbox.userPrincipalName)"
     Write-Error "$_"
     Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'taskChainID' -value 'Error'
-    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'startTime' -value 'Error'
     Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'status' -value 'Error'
-    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'message' -value 'Error'
+    Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'message' -value $_
   }
+  Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'startTime' -value ''
+  Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'endTime' -value ''
+  Add-Member -InputObject $mailbox -MemberType NoteProperty -name 'duration' -value ''
+
 }
 
-Start-Sleep 10
-Write-Host "Getting event details in a loop"
+# Export the list to a CSV file
+$mailboxes | Export-Csv -NoTypeInformation -Path $csvOutput
+Write-Host "`nMailbox and event task ID output to: $csvOutput" -foregroundcolor green
 
-do {
-  Write-Host "Events still active: $(($mailboxes | Where-Object { $_.status -eq 'Active'}).count)"
-  foreach ($mailbox in ($mailboxes | Where-Object { $_.status -eq 'Active'})) {
-    $eventDetail = $eventDetail = Get-EventDetail -taskChainID $($mailbox.taskChainID)
-    if ($eventDetail.errors) {
-      $mailbox.status = 'Error'
-      $mailbox.message = $eventDetail.errors.message
-      Write-Host "Error getting event detail for: $($mailbox.userPrincipalName)" -foregroundcolor red
-    } elseif ($eventDetail.lastActivityStatus -eq 'Success' -or $eventDetail.lastActivityStatus -eq 'Failure') {
-      $mailbox.status = $eventDetail.lastActivityStatus
-      $mailbox.startTime = $eventDetail.startTime
-      $mailbox.message = $eventDetail.message
-      Write-Host "Restore $($eventDetail.lastActivityStatus) for: $($mailbox.userPrincipalName)" -foregroundcolor green
-    }  #elseif
-  }
-  Start-Sleep 30
-} while ($(($mailboxes | Where-Object { $_.status -eq 'Active'}).count) -gt 0)
+
+#
+# Start-Sleep 20
+# Write-Host "Getting event details in a loop"
+#
+# do {
+#   Write-Host "Events still active: $(($mailboxes | Where-Object { $_.status -eq 'Active'}).count)" -foregroundcolor green
+#   foreach ($mailbox in ($mailboxes | Where-Object { $_.status -eq 'Active'})) {
+#     $eventDetail = $eventDetail = Get-EventDetail -taskChainID $($mailbox.taskChainID)
+#     $retryCount = 1
+#     do {
+#       if ($eventDetail.errors) {
+#         $mailbox.status = 'Error'
+#         $mailbox.startTime = ''
+#         $mailbox.endTime = ''
+#         $mailbox.message = $eventDetail.errors.message
+#         Write-Host "Error getting event detail for, retrying ($retryCount of $retries): $($mailbox.userPrincipalName)" -foregroundcolor yellow
+#         $retryCount += 1
+#         Start-Sleep 20
+#       } elseif ($eventDetail.lastActivityStatus -eq 'Success' -or $eventDetail.lastActivityStatus -eq 'Failure') {
+#         $mailbox.status = $eventDetail.lastActivityStatus
+#         $mailbox.startTime = $eventDetail.startTime
+#         $mailbox.endTime = $eventDetail.lastUpdated
+#         $mailbox.message = $eventDetail.message
+#         Write-Host "Restore $($eventDetail.lastActivityStatus) for: $($mailbox.userPrincipalName)" -foregroundcolor green
+#       }  #elseif
+#     } while ($eventDetail.errors -and $retryCount -le 3)
+#   }
+#   Start-Sleep 30
+# } while ($(($mailboxes | Where-Object { $_.status -eq 'Active'}).count) -gt 0)
 
 
 # Send an email
