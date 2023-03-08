@@ -1,14 +1,11 @@
 <#
 .SYNOPSIS
-This script will perform a restore of M365 mailboxes for either an email address or specified number of users.
+This script will assign a SLA to VMs.
 
 .DESCRIPTION
-WARNING - THIS SCRIPT IS STILL A WORK IN PROGRESS AND NEEDS SOME ERROR HANDLING
-
-This script will perform a restore of M365 mailboxes for either an email addres or specified number of users.
-Providing an email address will restore all emails that partially match.
-Providing a number of users to restore will initiate a mass restore.
-If multiple subscriptions are in RSC, you must provide a subscription ID.
+This script will assign a SLA to VMs.
+The current script is hard coded to protect all VMs in a SLA.
+Will generalize it later.
 
 .NOTES
 Written by Steven Tong for community usage
@@ -20,14 +17,9 @@ For authentication, provide a RSC Service Account JSON defined at variable $serv
 Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
-./Restore-M365Mailboxes.ps1 -emailAddress 'steven'
-Restores all email addresses that contains 'steven' in it.
+./Protect-VM.ps1
+Protect the VMs hard coded in the script by SLA.
 
-./Restore-M365Mailboxes.ps1 -numMailboxRestore 100
-Restore the first 100 mailboxes returned in the list.
-
-./Restore-M365Mailboxes.ps1 -emailAddress 'steven' -subscriptionID '90841-28875-28875'
-Specify a subscription ID if there are multiple subscriptions in RSC.
 #>
 
 
