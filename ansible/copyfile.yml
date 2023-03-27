@@ -1,0 +1,10 @@
+---
+- name: Copy files
+  hosts: all
+  remote_user: root
+  gather_facts: no
+  tasks:
+    - name: Copy file with owner and permissions
+      copy:
+        src: iotest.fio
+        dest: /root/iotest.fio

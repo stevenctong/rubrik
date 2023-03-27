@@ -1,0 +1,15 @@
+[global]
+runtime=172800
+rate=250KB
+name=/root/testfile
+size=5GB
+ioengine=libaio
+rw=randwrite
+bs=64k
+direct=1
+numjobs=1
+iodepth=8
+time_based
+group_reporting
+
+[writetest]

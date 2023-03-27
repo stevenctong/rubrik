@@ -1,0 +1,15 @@
+---
+- name: Set firewalld
+  hosts: all
+  remote_user: root
+  gather_facts: no
+  tasks:
+    - name: Set firewalld
+      firewalld:
+        port: 8765/tcp
+        permanent: yes
+        state: enabled
+    - name: Reload firewalld
+      systemd:
+        name: firewalld
+        state: reloaded
