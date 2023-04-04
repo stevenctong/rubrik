@@ -1,40 +1,64 @@
 <#
 .SYNOPSIS
-Opens or closes a MV according to the command line arguments.
+Opens or closes a MV according to the defined variables.
 
 .DESCRIPTION
-Opens or closes a MV according to the command line arguments.
-Define a hash table of hosts to Managed Volumes IDs within the script.
-Pass in the the host using the "-mvHost" argument.
-Pass in either "open" or "close" in the "-op" argument to open or close the MV.
+Opens or closes a MV according to the defined variables.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/18/21
+Updated: 4/4/22
 
-For authentication, fill in the API token variable.
+For authentication, use a CDM Service Account.
 
 Fill out the VARIABLES section with config details for this script.
 
 .EXAMPLE
-./Rubrik-MV-Operation.ps1 -mvHost <host> -op <open or close>
-Opens or closes the MV according to -op to the -mvHost
+./Rubrik-MV-Operation.ps1
+Opens or closes the MV according to defined variables
 
 #>
 
-param (
-  [CmdletBinding()]
+###### VARIABLES - BEGIN ######
 
-  # MV Name
-  [Parameter(Mandatory=$true)]
-  [string]$mvName,
+$date = Get-Date
 
-  # Managed Volume action - open or close
-  [Parameter(Mandatory=$true)]
-  [string]$op
-)
+# MV ID, grab from the MV URL, looks like 'ManagedVolumes:::<ID>' - grab the whole thing
+$mvID = ''
 
+# Optionally, instead of using MV ID use the MV Name
+# $mvName = ''
+
+# MV operation, to either 'open' or 'close'
+$op = ''
+
+# Rubrik cluster IP, use a Floating IP for more resiliency
+$server = ''
+
+# Service Account ID and Secret
+$svcID = ''
+$svcSecret = ''
+
+# $apiToken = ''  # older method of authentication with user API token
+
+#Log directory
+$logDir = 'C:\Rubrik\log'
+
+# SMTP configuration
+$emailTo = @('')
+$emailFrom = ''
+$SMTPServer = ''
+$SMTPPort = '25'
+
+$emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
+$html = "Body<br><br>"
+
+# Set to $true to send out email in the script
+$sendEmail = $false
+
+###### VARIABLES - END #######
 
 if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsPolicy') {
   # Added try catch block to resolve issue #613
@@ -69,41 +93,27 @@ catch {
   Write-Verbose -Message $_.Exception.InnerException.Message
 }
 
-###### VARIABLES - BEGIN ######
-
-$date = Get-Date
-
-# Rubrik cluster information
-$server = ''
-$apiToken = ''
-
-#Log directory
-$logDir = 'C:\Rubrik\log'
-
-# SMTP configuration
-$emailTo = @('')
-$emailFrom = ''
-$SMTPServer = ''
-$SMTPPort = '25'
-
-$emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
-$html = "Body<br><br>"
-
-# Set to $true to send out email in the script
-$sendEmail = $false
-
-###### VARIABLES - END #######
-
-# Starg logging
-$log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
+# Start logging
+# $log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
 # Start-Transcript -Path $log -NoClobber
 
-$header = @{"Authorization" = "Bearer "+$apiToken}
 $type = "application/json"
+$auth_body = @{
+  "serviceAccountId" = $svcID
+  "secret" = $svcSecret
+} | ConvertTo-Json
 
-$getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
+$authURL = "https://" + $server + "/api/v1/service_account/session"
+$rubrik_token = Invoke-RestMethod -Method Post -uri $authURL -ContentType $type -body $auth_body -SkipCertificateCheck
 
-$mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose).data.id
+$header = @{"Authorization" = "Bearer "+ $rubrik_token.token}
+
+
+
+if ($mvName -ne '') {
+  $getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
+  $mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose -SkipCertificateCheck).data.id
+}
 
 $baseMVURL = "https://" + $server + "/api/v1/managed_volume/"
 
@@ -120,7 +130,7 @@ if ($op -eq 'open')
 
 $mvURL = $baseMVURL + $mvID + $opURL
 
-Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose
+Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose -SkipCertificateCheck
 
 # Send an email
 if ($sendEmail)
