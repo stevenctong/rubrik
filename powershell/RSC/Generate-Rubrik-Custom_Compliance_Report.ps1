@@ -58,6 +58,9 @@ $reportIDdailyTaskReport = 501
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
+# Whether to list successful tasks or not in the report
+$showSuccess = $true
+
 # Whether to export the html as a file along with file path
 $exportHTML = $true
 $htmlOutput = "./Rubrik-Daily_Object_Report-$($date.ToString("yyyy-MM-dd_HHmm")).html"
@@ -700,7 +703,7 @@ foreach ($task in $rubrikTasksSorted)
     $HTMLTaskTableRow = @"
     <tr id="canceled">
 "@
-  } else
+  } elseif ($showSuccess -eq $true)
   {
     $HTMLTaskTableRow = @"
     <tr id="success">
