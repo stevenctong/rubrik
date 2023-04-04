@@ -1,64 +1,40 @@
 <#
 .SYNOPSIS
-Opens or closes a MV according to the defined variables.
+Opens or closes a MV according to the command line arguments.
 
 .DESCRIPTION
-Opens or closes a MV according to the defined variables.
+Opens or closes a MV according to the command line arguments.
+Define a hash table of hosts to Managed Volumes IDs within the script.
+Pass in the the host using the "-mvHost" argument.
+Pass in either "open" or "close" in the "-op" argument to open or close the MV.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/18/21
-Updated: 4/4/22
 
-For authentication, use a CDM Service Account.
+For authentication, fill in the API token variable.
 
 Fill out the VARIABLES section with config details for this script.
 
 .EXAMPLE
-./Rubrik-MV-Operation.ps1
-Opens or closes the MV according to defined variables
+./Rubrik-MV-Operation.ps1 -mvHost <host> -op <open or close>
+Opens or closes the MV according to -op to the -mvHost
 
 #>
 
-###### VARIABLES - BEGIN ######
+param (
+  [CmdletBinding()]
 
-$date = Get-Date
+  # MV Name
+  [Parameter(Mandatory=$true)]
+  [string]$mvName,
 
-# MV ID, grab from the MV URL, looks like 'ManagedVolumes:::<ID>' - grab the whole thing
-$mvID = 'ManagedVolume:::d46bcef5-ac61-4c32-91d9-6a59bfe3e5a3'
+  # Managed Volume action - open or close
+  [Parameter(Mandatory=$true)]
+  [string]$op
+)
 
-# Optionally, instead of using MV ID use the MV Name
-# $mvName = ''
-
-# MV operation, to either 'open' or 'close'
-$op = 'open'
-
-# Rubrik cluster IP, use a Floating IP for more resiliency
-$server = '10.8.48.101'
-
-# Service Account ID and Secret
-$svcID = 'User:::a70dabae-84af-464d-b92a-0fd717dd4830'
-$svcSecret = '21+scHZV3WFAWGYAu2P50PnYS+ZlpVP3YczzZ+yyQh0UIZ+X3B86eqW2ReSpJAX8RMSw92j/qOwLUivF+/WQ'
-
-# $apiToken = ''  # older method of authentication with user API token
-
-#Log directory
-$logDir = 'C:\Rubrik\log'
-
-# SMTP configuration
-$emailTo = @('')
-$emailFrom = ''
-$SMTPServer = ''
-$SMTPPort = '25'
-
-$emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
-$html = "Body<br><br>"
-
-# Set to $true to send out email in the script
-$sendEmail = $false
-
-###### VARIABLES - END #######
 
 if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsPolicy') {
   # Added try catch block to resolve issue #613
@@ -93,27 +69,41 @@ catch {
   Write-Verbose -Message $_.Exception.InnerException.Message
 }
 
-# Start logging
-# $log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
+###### VARIABLES - BEGIN ######
+
+$date = Get-Date
+
+# Rubrik cluster information
+$server = ''
+$apiToken = ''
+
+#Log directory
+$logDir = 'C:\Rubrik\log'
+
+# SMTP configuration
+$emailTo = @('')
+$emailFrom = ''
+$SMTPServer = ''
+$SMTPPort = '25'
+
+$emailSubject = "Rubrik ($server) - " + $date.ToString("yyyy-MM-dd HH:MM")
+$html = "Body<br><br>"
+
+# Set to $true to send out email in the script
+$sendEmail = $false
+
+###### VARIABLES - END #######
+
+# Starg logging
+$log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
 # Start-Transcript -Path $log -NoClobber
 
+$header = @{"Authorization" = "Bearer "+$apiToken}
 $type = "application/json"
-$auth_body = @{
-  "serviceAccountId" = $svcID
-  "secret" = $svcSecret
-} | ConvertTo-Json
 
-$authURL = "https://" + $server + "/api/v1/service_account/session"
-$rubrik_token = Invoke-RestMethod -Method Post -uri $authURL -ContentType $type -body $auth_body -SkipCertificateCheck
+$getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
 
-$header = @{"Authorization" = "Bearer "+ $rubrik_token.token}
-
-
-
-if ($mvName -ne '') {
-  $getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
-  $mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose -SkipCertificateCheck).data.id
-}
+$mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose).data.id
 
 $baseMVURL = "https://" + $server + "/api/v1/managed_volume/"
 
@@ -130,7 +120,7 @@ if ($op -eq 'open')
 
 $mvURL = $baseMVURL + $mvID + $opURL
 
-Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose -SkipCertificateCheck
+Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose
 
 # Send an email
 if ($sendEmail)
