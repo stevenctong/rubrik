@@ -33,7 +33,7 @@ Fill out the PARAMTERS and VARIABLES section as needed.
 ./Rubrik-MV-Operation.ps1 -op 'open'
 Open the MV using hard coded variables in the script.
 
-./Rubrik-MV-Operation.ps1 -op 'close' -rubrikJson './rubrikcreds.json'
+./Rubrik-MV-Operation.ps1 -mvName 'mvsql_data '-op 'close' -rubrikJson './rubrikcreds.json'
 Close the MV using the info provided in the .json file.
 
 #>
