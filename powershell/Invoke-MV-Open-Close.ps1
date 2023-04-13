@@ -30,10 +30,10 @@ Pass the .json filename as a parameter.
 Fill out the PARAMTERS and VARIABLES section as needed.
 
 .EXAMPLE
-./Rubrik-MV-Operation.ps1 -op 'open'
+./Invoke-MV-Open-Close.ps1 -op 'open'
 Open the MV using hard coded variables in the script.
 
-./Rubrik-MV-Operation.ps1 -mvName 'mvsql_data '-op 'close' -rubrikJson './rubrikcreds.json'
+./Invoke-MV-Open-Close..ps1 -mvName 'mvsql_data '-op 'close' -rubrikJson './rubrikcreds.json'
 Close the MV using the info provided in the .json file.
 
 #>
