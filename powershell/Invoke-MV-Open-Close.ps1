@@ -9,42 +9,80 @@ Opens or closes a MV according to the defined variables.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/18/21
-Updated: 4/4/22
+Updated: 4/12/22
 
-For authentication, use a CDM Service Account.
+For the MV, be sure to apply a SLA domain policy to it.
 
-Fill out the VARIABLES section with config details for this script.
+For authentication, use a CDM Service Account assigned to a Custom Role.
+The Custom Role needs access to the MVs and the "Take On Demand Snapshot' permission.
+
+You can create a .json file with the Rubrik cluster IP/hostname and service account ID & secret.
+The .json should look like:
+
+{
+  "rubrikServer": "",
+  "svcID": "User:::abc-def",
+  "svcSecret": "abc"
+}
+
+Pass the .json filename as a parameter.
+
+Fill out the PARAMTERS and VARIABLES section as needed.
 
 .EXAMPLE
-./Rubrik-MV-Operation.ps1
-Opens or closes the MV according to defined variables
+./Rubrik-MV-Operation.ps1 -op 'open'
+Open the MV using hard coded variables in the script.
+
+./Rubrik-MV-Operation.ps1 -op 'close' -rubrikJson './rubrikcreds.json'
+Close the MV using the info provided in the .json file.
 
 #>
 
+param (
+  [CmdletBinding()]
+
+  # Json file containing the Rubrik cluster info and service account details
+  [Parameter(Mandatory=$false)]
+  [string]$rubrikJson = '',
+
+  # MV operation: 'open' for read-write, 'close' to read-only
+  [Parameter(Mandatory=$false)]
+  [string]$op = '',
+
+  # Managed Volume ID
+  [Parameter(Mandatory=$false)]
+  [string]$mvID = '',
+
+  # Managed Volume name - optionally use MV ID instead of MV name
+  [Parameter(Mandatory=$false)]
+  [string]$mvName = ''
+)
+
 ###### VARIABLES - BEGIN ######
 
-$date = Get-Date
+# If Rubrik JSON is specified in parameters, use its information
+if ($rubrikJson -ne '')
+{
+  # Get the Rubrik cluster and service account details from the .json file
+  $rubrikSvc = Get-Content -Raw -Path $rubrikJson | ConvertFrom-Json
+  $server = $rubrikSvc.rubrikServer
+  $svcID = $rubrikSvc.svcID
+  $svcSecret = $rubrikSvc.svcSecret
+} else {
+  # Rubrik cluster IP, use a Floating IP for more resiliency
+  $server = ''
 
-# MV ID, grab from the MV URL, looks like 'ManagedVolumes:::<ID>' - grab the whole thing
-$mvID = ''
-
-# Optionally, instead of using MV ID use the MV Name
-# $mvName = ''
-
-# MV operation, to either 'open' or 'close'
-$op = ''
-
-# Rubrik cluster IP, use a Floating IP for more resiliency
-$server = ''
-
-# Service Account ID and Secret
-$svcID = ''
-$svcSecret = ''
+  # Service Account ID and Secret
+  $svcID = ''
+  $svcSecret = ''
+}
 
 # $apiToken = ''  # older method of authentication with user API token
 
+$date = Get-Date
+
 #Log directory
-$logDir = 'C:\Rubrik\log'
+# $logDir = 'C:\Rubrik\log'
 
 # SMTP configuration
 $emailTo = @('')
@@ -60,7 +98,9 @@ $sendEmail = $false
 
 ###### VARIABLES - END #######
 
-if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsPolicy') {
+$psVer = $PSVersionTable.psversion.major
+
+if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsPolicy' -and $psVer -le 5) {
   # Added try catch block to resolve issue #613
   $ErrorActionPreference = 'Stop'
   try {
@@ -81,7 +121,6 @@ if ([System.Net.ServicePointManager]::CertificatePolicy -notlike 'TrustAllCertsP
     Write-Debug ($Error[0] | ConvertTo-Json | Out-String)
   }
 }
-
 try {
   if ([Net.ServicePointManager]::SecurityProtocol -notlike '*Tls12*') {
     Write-Verbose -Message 'Adding TLS 1.2'
@@ -93,9 +132,32 @@ catch {
   Write-Verbose -Message $_.Exception.InnerException.Message
 }
 
+[System.Net.ServicePointManager]::SecurityProtocol =[System.Net.SecurityProtocolType]::Tls12
+
 # Start logging
 # $log = $logDir + "\rubrik-" + $date.ToString("yyyy-MM-dd") + "@" + $date.ToString("HHmmss") + ".log"
 # Start-Transcript -Path $log -NoClobber
+
+if ($rubrikJson -eq '' -and $server -eq '') {
+  Write-Error "You must pass either a .json containing the Rubrik cluster details or define the details in the script."
+  Write-Error "Exiting..."
+  exit 99
+}
+
+if ($op -eq 'open')
+{
+  $opURL = "/begin_snapshot"
+} elseif ($op -eq 'close') {
+  $opURL = "/end_snapshot"
+} else {
+  Write-Error "Invalid argument for -op: should either be open or close, exiting."
+  Stop-Transcript
+  exit 99
+}
+
+$delSessionURL = "https://" + $server + "/api/v1/session/me"
+
+Write-Host "Connecting to Rubrik cluster: $server"
 
 $type = "application/json"
 $auth_body = @{
@@ -104,33 +166,70 @@ $auth_body = @{
 } | ConvertTo-Json
 
 $authURL = "https://" + $server + "/api/v1/service_account/session"
-$rubrik_token = Invoke-RestMethod -Method Post -uri $authURL -ContentType $type -body $auth_body -SkipCertificateCheck
+if ($psVer -ge 6)
+{
+  $rubrik_token = Invoke-RestMethod -Method Post -uri $authURL -ContentType $type -body $auth_body -SkipCertificateCheck
+} else {
+  $rubrik_token = Invoke-RestMethod -Method Post -uri $authURL -ContentType $type -body $auth_body
+}
 
 $header = @{"Authorization" = "Bearer "+ $rubrik_token.token}
 
-
-
 if ($mvName -ne '') {
+  Write-Host "Getting the MV ID of: $mvName"
   $getURL = "https://" + $server + "/api/internal/managed_volume?name=" + $mvName
-  $mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -verbose -SkipCertificateCheck).data.id
-}
-
-$baseMVURL = "https://" + $server + "/api/v1/managed_volume/"
-
-if ($op -eq 'open')
-{
-  $opURL = "/begin_snapshot"
-} elseif ($op -eq 'close') {
-  $opURL = "/end_snapshot"
+  if ($psVer -ge 6) {
+    $mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type -SkipCertificateCheck).data.id
+  } else {
+    $mvID = $(Invoke-RestMethod -Uri $getURL -Headers $header -Method GET -ContentType $type).data.id
+  }
+  if ($mvID -eq $null -or $mvID -eq '') {
+    Write-Error "Could not get MV ID for: $mvName, exiting"
+    # Delete Rubrik session
+    if ($psVer -ge 6)
+    {
+      Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type -SkipCertificateCheck
+    } else {
+      Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type
+    }
+    exit 99
+  }
+  Write-Host "MV ID: $mvID"
 } else {
-  Write-Error "Invalid argument for -op: should either be open or close, exiting"
-  Stop-Transcript
-  exit 99
+  Write-Host "MV ID: $mvID"
 }
+
+Write-Host "Performing MV operation: $op"
+$baseMVURL = "https://" + $server + "/api/v1/managed_volume/"
 
 $mvURL = $baseMVURL + $mvID + $opURL
 
-Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -verbose -SkipCertificateCheck
+try {
+  if ($psVer -ge 6) {
+    Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type -SkipCertificateCheck
+  } else {
+    Invoke-RestMethod -Uri $mvURL -Headers $header -Method POST -ContentType $type
+  }
+} catch {
+  Write-Error "Error with MV operation $op $resp"
+  Write-Error "Exiting."
+  # Delete Rubrik session
+  if ($psVer -ge 6)
+  {
+    Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type -SkipCertificateCheck
+  } else {
+    Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type
+  }
+  exit 99
+}
+
+# Delete Rubrik session
+if ($psVer -ge 6)
+{
+  Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type -SkipCertificateCheck
+} else {
+  Invoke-RestMethod -uri $delSessionURL -Headers $header -Method Delete -ContentType $type
+}
 
 # Send an email
 if ($sendEmail)
@@ -140,3 +239,5 @@ if ($sendEmail)
 
 # Stopping logging
 # Stop-Transcript
+
+exit 0
