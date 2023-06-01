@@ -1,0 +1,12 @@
+mutation MssqlDatabaseExportMutation($input: ExportMssqlDatabaseInput!) {
+    exportMssqlDatabase(input: $input) {
+        id
+        links {
+            href
+            rel
+        }
+        status
+        progress
+        startTime
+    }
+}

@@ -1,0 +1,26 @@
+query GetMSSQLInstance($hostname: [String!], $instance: [String!]) {
+objects: mssqlTopLevelDescendants(filter: [{field: NAME, texts: $hostname}, {field: IS_RELIC, texts: "false"}, {field: IS_ARCHIVED, texts: "false"}, {field: IS_REPLICATED, texts: "false"}]) {
+    nodes {
+      id
+      name
+      ... on PhysicalHost {
+        id
+        name
+        cbtStatus
+        physicalChildConnection(filter: [{field: NAME, texts: $instance}]) {
+          nodes {
+            ... on MssqlInstance {
+              id
+              name
+              slaAssignment
+              effectiveSlaDomain {
+                name
+                id
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

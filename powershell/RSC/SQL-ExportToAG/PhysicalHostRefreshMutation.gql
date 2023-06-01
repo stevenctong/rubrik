@@ -1,0 +1,12 @@
+mutation PhysicalHostRefreshMutation($id: String!) {
+  refreshHost(input: {id: $id}) {
+    output {
+      hostSummary {
+        status
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}

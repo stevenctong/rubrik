@@ -1,0 +1,17 @@
+query GetMSSQLDatabaseFromAvailabilityGroup($fid: UUID!, $DatabaseName: [String!]) {
+  objects: hierarchyObject(fid: $fid) {
+    ... on MssqlAvailabilityGroup {
+      logicalChildConnection(
+        filter: [
+          {field: IS_RELIC, texts: "true"}, 
+          {field: NAME, texts: $DatabaseName}
+        ]
+      ) {
+        nodes {
+          name
+          id
+        }
+      }
+    }
+  }
+}

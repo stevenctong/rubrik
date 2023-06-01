@@ -1,0 +1,7 @@
+query MssqlDatabaseDetailsRecoverableRangesQuery($id: String!) {
+  objects: mssqlRecoverableRanges(input: {id: $id}) {
+    data {
+      endTime
+    }
+  }
+}

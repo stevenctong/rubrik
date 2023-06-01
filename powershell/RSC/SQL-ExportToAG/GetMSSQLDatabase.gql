@@ -1,0 +1,14 @@
+query GetMSSQLDatabase($instanceID: UUID!, $DatabaseName: [String!]) {
+objects: mssqlInstance(fid: $instanceID) {
+    id
+    name
+    descendantConnection(filter: {field: NAME, texts: $DatabaseName}) {
+      nodes {
+        ... on MssqlDatabase {
+          id
+          name
+        }
+      }
+    }
+  }
+}

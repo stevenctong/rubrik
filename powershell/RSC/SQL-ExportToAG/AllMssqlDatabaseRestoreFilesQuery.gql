@@ -1,0 +1,13 @@
+query AllMssqlDatabaseRestoreFilesQuery($input: MssqlGetRestoreFilesV1Input!) {
+  objects: allMssqlDatabaseRestoreFiles(input: $input) {
+    items {
+      fileId
+      fileType
+      logicalName
+      originalName
+      originalPath
+      __typename
+    }
+    __typename
+  }
+}
