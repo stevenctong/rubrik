@@ -48,15 +48,13 @@ to create the html reports for. The mapping file is specified at the variable
 Use the following flag to create or update a mapping file:
 -createMapping $true
 
-If there is no existing mapping file found at $mappingFile location
-then a new mapping file is created.
+** If there is no existing mapping file found at $mappingFile location then a
+   new mapping file is created.
+** If an existing mapping file exists then it will create a current object
+  list with the mapping filename appended with the current date.
+** Within the mapping file, note the 'Department' that each object belongs to.
 
-If an existing mapping file exists then it will create a current object
-list with the mapping filename appended with the current date.
-
-Within the mapping file, note the 'Department' that each object belongs to.
-
-The script will use the mapping file and for each department create a separate html report.
+Running the script without any flags will look for a mapping file and create the reports.
 
 If you want the report to be emails, fill out the SMTP information and set
 the variable $sendEmail to $true.
@@ -77,8 +75,6 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$createMapping = $false
 )
-
-
 
 ### Variables section - please fill out as needed
 
@@ -107,6 +103,9 @@ $newMappingFile = "./Rubrik-Department_Mapping-$($date.ToString("yyyy-MM-dd_HHmm
 
 # Whether to export the html as a file along with file path
 $exportHTML = $true
+
+# The base filename for each of the html reports.
+# Each report will be named: $htmlBaseName-'Department'-<date>.html
 $htmlBaseName = "./Rubrik-Daily_Object_Report"
 # $htmlOutput = "./Rubrik-Daily_Object_Report-$($date.ToString("yyyy-MM-dd_HHmm")).html"
 
@@ -372,7 +371,7 @@ if ($createMapping -eq $true) {
     $newRubrikProtectionList | Export-CSV -NoTypeInformation -Path $mappingFile
   }
   # Exit script since we just want the mapping file updated / created
-  # exit
+  exit
 }
 
 # Import the current mapping file
