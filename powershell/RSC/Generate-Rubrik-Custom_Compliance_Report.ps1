@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 7/24/23
+Updated: 7/25/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -48,6 +48,14 @@ Runs the script to generate the custom html report.
 #>
 
 ### Variables section - please fill out as needed
+
+param (
+  [CmdletBinding()]
+
+  # Sort order options: "Start time", "End time", "Duration", "Data transferred"
+  [Parameter(Mandatory=$false)]
+  [string]$sortOrder = 'Start time'
+)
 
 # File location of the RSC service account json
 $serviceAccountPath = "./rsc-service-account-rr.json"
@@ -393,13 +401,13 @@ Write-Host "Sorting tasks" -foreground green
 $rubrikTasksSorted = @()
 
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Fail' } |
-  Sort-Object -property 'Duration' -Descending
+  Sort-Object -property $sortOrder -Descending
 
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Cancel' } |
-  Sort-Object -property 'Duration' -Descending
+  Sort-Object -property $sortOrder -Descending
 
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Success' } |
-  Sort-Object -property 'Duration' -Descending
+  Sort-Object -property $sortOrder -Descending
 
 # Calculate cluster totals for tasks
 $clusterTotal.SuccessCount = $($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
