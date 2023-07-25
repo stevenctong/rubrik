@@ -20,6 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
+Updated: 7/24/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -52,8 +53,8 @@ Runs the script to generate the custom html report.
 $serviceAccountPath = "./rsc-service-account-rr.json"
 
 # The report IDs for the two custom reports that are created
-$reportIDdailyComplianceReport = 500
-$reportIDdailyTaskReport = 501
+$reportIDdailyComplianceReport = 53
+$reportIDdailyTaskReport = 52
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -388,7 +389,10 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 # Within each grouping, sorted by "Duration" in descending order
 Write-Host "Sorting tasks" -foreground green
 
-$rubrikTasksSorted = $rubrikTasks | Where { $_.'Task status' -match 'Fail' } |
+# Need to initialize array in case there are no failed tasks to start with
+$rubrikTasksSorted = @()
+
+$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Fail' } |
   Sort-Object -property 'Duration' -Descending
 
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Cancel' } |
@@ -672,7 +676,7 @@ $HTMLTaskTableMiddle = $null
 $HTMLTaskTableStart = @"
   <table class="table2">
     <tr>
-      <th colspan="7">Daily Object Task Report</th>
+      <th colspan="8">Daily Object Task Report</th>
     </tr>
     <tr>
       <th>Name</th>
@@ -681,6 +685,7 @@ $HTMLTaskTableStart = @"
       <th>Status</th>
       <th>Data Transferred (GB)</th>
       <th>Started</th>
+      <th>Ended</th>
       <th>Duration</th>
     </tr>
 "@
@@ -709,18 +714,22 @@ foreach ($task in $rubrikTasksSorted)
     <tr id="success">
 "@
   }
-  $HTMLTaskTableRow += @"
-    <td style=text-align:left>$($task.'Object Name')</td>
-    <td style=text-align:left>$($task.'Location')</td>
-    <td style=text-align:left>$($task.'Cluster Name')</td>
-    <td>$($task.'Task Status')</td>
-    <td>$($task.'Data Trans GB')</td>
-    <td>$($task.'Start Time')</td>
-    <td>$($task.'Duration Text')</td>
-  </tr>
+  if ($showSuccess -eq $true)
+  {
+    $HTMLTaskTableRow += @"
+      <td style=text-align:left>$($task.'Object Name')</td>
+      <td style=text-align:left>$($task.'Location')</td>
+      <td style=text-align:left>$($task.'Cluster Name')</td>
+      <td>$($task.'Task Status')</td>
+      <td>$($task.'Data Trans GB')</td>
+      <td>$($task.'Start Time')</td>
+      <td>$($task.'End Time')</td>
+      <td>$($task.'Duration Text')</td>
+    </tr>
 "@
 
-  $HTMLTaskTableMiddle += $HTMLTaskTableRow
+    $HTMLTaskTableMiddle += $HTMLTaskTableRow
+  }
 }
 
 $HTMLTaskTable += $HTMLTaskTableStart + $HTMLTaskTableMiddle + $HTMLTaskTableEnd + "<br><br>"
