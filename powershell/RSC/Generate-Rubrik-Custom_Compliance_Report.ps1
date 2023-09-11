@@ -314,6 +314,7 @@ foreach ($cluster in $clusterList)
 {
   $clusterObj = [PSCustomObject] @{
     "SuccessCount" = 0
+    "PartiallySucceededCount" = 0
     "CanceledCount" = 0
     "FailedCount" = 0
     "TotalCount" = 0
@@ -329,9 +330,11 @@ foreach ($cluster in $clusterList)
 # PSCustomObject to keep track of all counts for all clusters
 $clusterTotal = [PSCustomObject] @{
   "SuccessCount" = 0
+  "PartiallySucceededCount" = 0
   "CanceledCount" = 0
   "FailedCount" = 0
   "TotalCount" = 0
+  "PartiallySucceededRate" = [float]0
   "SuccessRate" = [float]0
   "InCompliance" = 0
   "OutCompliance" = 0
@@ -354,6 +357,8 @@ foreach ($i in $rubrikTasks)
   $clusterCountHash[$i.'Cluster Name'].'TotalCount' += 1
   if ($i.'Task Status' -match 'Success') {
     $clusterCountHash[$i.'Cluster Name'].'SuccessCount' += 1
+  } elseif ($i.'Task Status' -match 'Partially Succeeded') {
+    $clusterCountHash[$i.'Cluster Name'].'PartiallySucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
     $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
   } elseif ($i.'TaskStatus' -match 'Canceled') {
@@ -390,7 +395,8 @@ foreach ($i in $rubrikTasks)
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
-  $value.SuccessRate = [math]::round($value.SuccessCount / ($value.SuccessCount + $value.FailedCount) * 100, 1)
+  $value.SuccessRate = [math]::round(($value.SuccessCount + $value.PartiallySucceededCount) /
+    ($value.SuccessCount + $value.PartiallySucceededCount + $value.FailedCount) * 100, 1)
 }
 
 # Create a table of tasks, with Failed tasks followed by Canceled, followed by Successul taks
@@ -406,15 +412,19 @@ $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Fail' } |
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Cancel' } |
   Sort-Object -property $sortOrder -Descending
 
+$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' } |
+  Sort-Object -property $sortOrder -Descending
+
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Success' } |
   Sort-Object -property $sortOrder -Descending
 
 # Calculate cluster totals for tasks
 $clusterTotal.SuccessCount = $($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
+$clusterTotal.PartiallySucceededCount = $($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
 $clusterTotal.CanceledCount = $($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
 $clusterTotal.FailedCount = $($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
-$clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
-$clusterTotal.SuccessRate = [math]::round($clusterTotal.SuccessCount / ($clusterTotal.SuccessCount + $clusterTotal.FailedCount) * 100, 1)
+$clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
+$clusterTotal.SuccessRate = [math]::round(($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount) / ($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.FailedCount) * 100, 1)
 
 # Filter for objects that are In Compliance and separately, Out of Compliance
 $objectsInCompliance = $rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' }
@@ -585,12 +595,13 @@ $HTMLTaskSummaryTableMiddle = $null
 $HTMLTaskSummaryTableStart = @"
   <table class="table2">
     <tr>
-      <th colspan="6">Daily Backup Task Summary</th>
+      <th colspan="7">Daily Backup Task Summary</th>
     </tr>
     <tr>
       <th>Cluster</th>
       <th>Total</th>
       <th>Success</th>
+      <th>Partially Succeeded</th>
       <th>Failed</th>
       <th>Canceled</th>
       <th>Success Rate</th>
@@ -610,6 +621,7 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator() | Sort-Object -Prop
     <td style=text-align:right>$($clusterStatus.Name)</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'TotalCount')</b></td>
     <td style=color:black;background:$HTMLGreenColor>$($value.'SuccessCount')</td>
+    <td style=color:black;background:$HTMLGreenColor>$($value.'PartiallySucceededCount')</td>
     <td style=color:white;background:$HTMLRedColor>$($value.'FailedCount')</td>
     <td style=color:black;background:yellow>$($value.'CanceledCount')</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'SuccessRate')</b></td>
@@ -623,6 +635,7 @@ $HTMLTaskSummaryTableMiddle += @"
     <td>Total</td>
     <td>$($clusterTotal.TotalCount)</td>
     <td>$($clusterTotal.SuccessCount)</td>
+    <td>$($clusterTotal.PartiallySucceededCount)</td>
     <td>$($clusterTotal.FailedCount)</td>
     <td>$($clusterTotal.CanceledCount)</td>
     <td>$($clusterTotal.SuccessRate)</td>
