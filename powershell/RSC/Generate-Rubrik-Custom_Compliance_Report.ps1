@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 9/10/23
+Updated: 9/13/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -83,6 +83,9 @@ $emailSubject = "Rubrik Daily Compliance and Task Report - " + $date.ToString("y
 
 # Set to $true to send out email at the end of this script
 $sendEmail = $false
+
+# Debug output
+$debug = $false
 
 ### End Variables section
 
@@ -342,8 +345,8 @@ $clusterTotal = [PSCustomObject] @{
   "ComplianceRate" = [float]0
 }
 
-Write-Host "Processing $rubrikTasksCount tasks" -foregroundcolor green
 $rubrikTasksCount = $rubrikTasks.count
+Write-Host "Processing $rubrikTasksCount tasks" -foregroundcolor green
 $count = 1
 
 # Process each task and calculate some values
@@ -435,6 +438,20 @@ $clusterTotal.InCompliance = $objectsInCompliance.count
 $clusterTotal.OutCompliance = $objectsOutCompliance.count
 $clusterTotal.TotalCompliance = $clusterTotal.InCompliance + $clusterTotal.OutCompliance
 $clusterTotal.ComplianceRate = [math]::round($clusterTotal.InCompliance / $clusterTotal.TotalCompliance * 100, 1)
+
+if ($debug) {
+  Write-Host "Compliance Objects" -foregroundcolor yellow
+  $rubrikCompliance
+  Write-Host ""
+  Write-Host "Objects out of compliance list" -foregroundcolor yellow
+  $objectsOutCompliance
+  Write-Host ""
+  Write-Host "Var: clusterTotal.OutCompliance" -foregroundcolor yellow
+  $clusterTotal.OutCompliance
+  Write-Host ""
+  Write-Host "Var: clusterTotal.TotalCompliance" -foregroundcolor yellow
+  $clusterTotal.TotalCompliance
+}
 
 # For each cluster, get the compliance summary details
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
