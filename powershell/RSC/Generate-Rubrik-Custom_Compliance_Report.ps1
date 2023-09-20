@@ -430,8 +430,10 @@ $clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.PartiallyS
 $clusterTotal.SuccessRate = [math]::round(($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount) / ($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.FailedCount) * 100, 1)
 
 # Filter for objects that are In Compliance and separately, Out of Compliance
-$objectsInCompliance = $rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' }
-$objectsOutCompliance = $rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' }
+$objectsInCompliance = @()
+$objectsOutCompliance = @()
+$objectsInCompliance += $rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' }
+$objectsOutCompliance += $rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' }
 
 # Calculate cluster totals for compliance
 $clusterTotal.InCompliance = $objectsInCompliance.count
@@ -444,7 +446,10 @@ if ($debug) {
   $rubrikCompliance
   Write-Host ""
   Write-Host "Objects out of compliance list" -foregroundcolor yellow
+  Write-Host ""
   $objectsOutCompliance
+  Write-Host "Objects out of compliance type" -foregroundcolor yellow
+  $objectsOutCompliance.getType()
   Write-Host ""
   Write-Host "Var: clusterTotal.OutCompliance" -foregroundcolor yellow
   $clusterTotal.OutCompliance
