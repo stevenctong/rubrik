@@ -465,7 +465,11 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
   $value.InCompliance = $($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
   $value.OutCompliance = $($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
   $value.TotalCompliance = $value.InCompliance + $value.OutCompliance
-  $value.ComplianceRate = [math]::round($value.InCompliance / $value.TotalCompliance * 100, 1)
+  if ($value.TotalCompliance -gt 0) {
+    $value.ComplianceRate = [math]::round($value.InCompliance / $value.TotalCompliance * 100, 1)
+  } else {
+    $value.ComplianceRate = "-"
+  }
 }
 
 # Process each object out of compliance
