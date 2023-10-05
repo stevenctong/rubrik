@@ -18,6 +18,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 9/25/23
+Updated: 10/5/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -55,6 +56,10 @@ $reportIDProtectionTaskDetail = 101
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
+# Whether save the report CSV for each run or not
+$saveCSV = $true
+$csvFileName = "./csvReports/rubrik_tasks_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
 # SMTP configuration if you want to send an email at the end of this script
 # $emailTo = @('')
 # $emailFrom = ''
@@ -65,8 +70,15 @@ $utcDate = $date.ToUniversalTime()
 # Set to $true to send out email at the end of this script
 # $sendEmail = $false
 
-# Define TB in bytes
+# Define the capacity metric conversions
+$GB = 1000000000
+$GiB = 1073741824
 $TB = 1000000000000
+$TiB = 1099511627776
+
+# Set which capacity metric to use
+$capacityMetric = $GB
+$capacityDisplay = 'GB'
 
 ### End Variables section
 
@@ -274,8 +286,14 @@ Function Get-ReportCSVLink {
 $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDProtectionTaskDetail
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikTasks | Export-CSV -path $csvFileName
+  }
 } else {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikTasks | Export-CSV -path $csvFileName
+  }
 }
 Write-Host "Downloaded the Protection Task Report CSV: $($rubrikTasks.count) tasks" -foregroundcolor green
 
@@ -293,30 +311,30 @@ $objectSummary = @()
 foreach ($obj in $objectTypes)
 {
   $objRubrikTasks = $rubrikTasks | Where 'Object Type' -eq $obj
-  $dataTransSumTB = ($objRubrikTasks | Measure -Property 'Data transferred' -sum).sum / $TB
-  $dataTransSumTB = [math]::Round($dataTransSumTB, 3)
+  $dataTransSumMetric = ($objRubrikTasks | Measure -Property 'Data transferred' -sum).sum / $capacityMetric
+  $dataTransSumMetric = [math]::Round($dataTransSumMetric, 3)
   if (($obj -ne 'ManagedVolume') -And ($obj -ne 'ActiveDirectoryDomainController')) {
-    $dataStoredSumTB = ($objRubrikTasks | Measure -Property 'Data stored' -sum).sum / $TB
-    $dataStoredSumTB = [math]::Round($dataStoredSumTB, 3)
+    $dataStoredSumMetric = ($objRubrikTasks | Measure -Property 'Data stored' -sum).sum / $capacityMetric
+    $dataStoredSumMetric = [math]::Round($dataStoredSumMetric, 3)
   } else {
-    $dataStoredSumTB = '-'
+    $dataStoredSumMetric = '-'
   }
   $objItem = [PSCustomObject] @{
     "Object Type" = $obj
-    "Sum Data Transferred (TB)" = $dataTransSumTB
-    "Sum Data Stored (TB)" = $dataStoredSumTB
+    "Sum Data Transferred ($capacityDisplay)" = $dataTransSumMetric
+    "Sum Data Stored ($capacityDisplay)" = $dataStoredSumMetric
   }
   $objectSummary += $objItem
 }
 
 # Calculate all data transferred across all jobs
-$sumAllDataTransferredTB = ($rubrikTasks | Measure -Property 'Data transferred' -sum).sum / $TB
-$sumAllDataTransferredTB = [math]::Round($sumAllDataTransferredTB, 3)
+$sumAllDataTransferredMetric = ($rubrikTasks | Measure -Property 'Data transferred' -sum).sum / $capacityMetric
+$sumAllDataTransferredMetric = [math]::Round($sumAllDataTransferredMetric, 3)
 
 # Calculate all data stored across all jobs, excluding MVs and AD which don't have data stored
 $rubrikStoredObjects = $rubrikTasks | Where { $_.'Object Type' -ne 'ManagedVolume' -and $_.'Object Type' -ne 'ActiveDirectoryDomainController' }
-$sumAllDataStoredTB = ($rubrikStoredObjects | Measure -Property 'Data stored' -sum).sum / $TB
-$sumAllDataStoredTB = [math]::Round($sumAllDataStoredTB, 3)
+$sumAllDataStoredMetric = ($rubrikStoredObjects | Measure -Property 'Data stored' -sum).sum / $capacityMetric
+$sumAllDataStoredMetric = [math]::Round($sumAllDataStoredMetric, 3)
 
 Write-Host ""
 Write-Host "Earliest date: $($dateRange.minimum)" -foregroundcolor green
@@ -326,8 +344,8 @@ Write-Host "Sum of Data Transferred and Data Stored per object type" -foreground
 Write-Host ""
 $objectSummary | format-table
 Write-Host ""
-Write-Host "Sum of Data Transferred (TB): $sumAllDataTransferredTB" -foregroundcolor green
-Write-Host "Sum of Data Stored (TB): $sumAllDataStoredTB" -foregroundcolor green
+Write-Host "Sum of Data Transferred ($capacityDisplay): $sumAllDataTransferredMetric" -foregroundcolor green
+Write-Host "Sum of Data Stored ($capacityDisplay): $sumAllDataStoredMetric" -foregroundcolor green
 Write-Host "Note: Data Stored excludes Managed Volumes and native AD at this time" -foregroundcolor yellow
 
 # Send an email with CSV attachment
