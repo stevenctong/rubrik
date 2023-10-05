@@ -70,6 +70,10 @@ $utcDate = $date.ToUniversalTime()
 # Whether to list successful tasks or not in the report
 $showSuccess = $true
 
+# Whether save the report CSV for each run or not
+$saveCSV = $true
+$csvFileName = "./csvReports/rubrik_compliance_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
 # Whether to export the html as a file along with file path
 $exportHTML = $true
 $htmlOutput = "./Rubrik-Daily_Object_Report-$($date.ToString("yyyy-MM-dd_HHmm")).html"
@@ -293,8 +297,14 @@ Function Get-ReportCSVLink {
 $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDdailyTaskReport
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikTasks | Export-CSV -path $csvFileName
+  }
 } else {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikTasks | Export-CSV -path $csvFileName
+  }
 }
 Write-Host "Downloaded the Daily Task Report CSV: $($rubrikTasks.count) tasks" -foregroundcolor green
 
