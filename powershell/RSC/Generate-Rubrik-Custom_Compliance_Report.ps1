@@ -462,8 +462,11 @@ if ($debug) {
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
-  $value.InCompliance = $($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
-  $value.OutCompliance = $($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
+  # Fix the count here
+  $value.InCompliance = @()
+  $value.InCompliance += $($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
+  $value.OutCompliance = @()
+  $value.OutCompliance += $($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
   $value.TotalCompliance = $value.InCompliance + $value.OutCompliance
   if ($value.TotalCompliance -gt 0) {
     $value.ComplianceRate = [math]::round($value.InCompliance / $value.TotalCompliance * 100, 1)
