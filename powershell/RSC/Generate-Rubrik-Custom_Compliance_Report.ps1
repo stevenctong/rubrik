@@ -432,10 +432,15 @@ $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Success' }
   Sort-Object -property $sortOrder -Descending
 
 # Calculate cluster totals for tasks
-$clusterTotal.SuccessCount = $($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
-$clusterTotal.PartiallySucceededCount = $($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
-$clusterTotal.CanceledCount = $($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
-$clusterTotal.FailedCount = $($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
+$clusterTotal.SuccessCount = 0
+$clusterTotal.PartiallySucceededCount = 0
+$clusterTotal.CanceledCount = 0
+$clusterTotal.FailedCount = 0
+
+$clusterTotal.SuccessCount += $($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
+$clusterTotal.PartiallySucceededCount += $($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
+$clusterTotal.CanceledCount += $($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
+$clusterTotal.FailedCount += $($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
 $clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
 $clusterTotal.SuccessRate = [math]::round(($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount) / ($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.FailedCount) * 100, 1)
 
@@ -473,9 +478,9 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
   # Fix the count here
-  $value.InCompliance = @()
+  $value.InCompliance = 0
+  $value.OutCompliance = 0
   $value.InCompliance += $($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
-  $value.OutCompliance = @()
   $value.OutCompliance += $($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
   $value.TotalCompliance = $value.InCompliance + $value.OutCompliance
   if ($value.TotalCompliance -gt 0) {
