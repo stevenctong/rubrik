@@ -9,8 +9,7 @@ This script summrizes information from a Rubrik Object Capacity report.
 Users will need to create a custom report in Rubrik Security Cloud and
 provide access to those reports via a RSC service account w/read-only permissions.
 
-The script can be scheduled to run on a server daily in order to generate
-the html report.
+The script can be scheduled to run on a server daily in order to generate a CSV report.
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
@@ -18,6 +17,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 10/5/23
+Updated: 10/18/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -30,8 +30,13 @@ An "Object Capacity" report should be created with whatever filters you want:
 For each report, grab the report ID. This can be seen as the # in the URL
 when you have the report open.
 
-Fill out the report ID in these two variables:
+Fill out the report ID in this variable:
 - $reportIDObjectCapacity
+
+If you want the RSC source report CSV and generated summary saved as a CSV, fill
+these variables with a filename:
+- $csvFileName = Location to save the RSC report CSV
+- $csvResultsFilename = Location to save the generated report CSV
 
 If you want the report to be emails, fill out the SMTP information and set
 the variable $sendEmail to $true.
@@ -55,14 +60,17 @@ $utcDate = $date.ToUniversalTime()
 
 # Whether save the report CSV for each run or not
 $saveCSV = $true
+# Location to save the RSC report CSVs
 $csvFileName = "./csvReports/rubrik_objectcapacity_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+# Location to save the calculated report
+$csvResultsFilename = "./csvResults/rubrik_objectcapacity_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 # SMTP configuration if you want to send an email at the end of this script
 # $emailTo = @('')
 # $emailFrom = ''
 # $SMTPServer = ''
 # $SMTPPort = '25'
-# $emailSubject = "Rubrik Protection Summary - " + $date.ToString("yyyy-MM-dd HH:MM")
+# $emailSubject = "Rubrik Object Capacity Summary - " + $date.ToString("yyyy-MM-dd HH:MM")
 
 # Set to $true to send out email at the end of this script
 # $sendEmail = $false
@@ -284,72 +292,130 @@ $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
   if ($saveCSV) {
+    Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
     $rubrikObjCapacity | Export-CSV -path $csvFileName
   }
 } else {
   $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
   if ($saveCSV) {
+    Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
     $rubrikObjCapacity | Export-CSV -path $csvFileName
   }
 }
 Write-Host "Downloaded the Protection Task Report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
 
-# Getting object types in the report
-$objectTypes = $RubrikObjCapacity | select -expandProperty 'Object Type' -Unique
+# Holds all the calculated stats
+$statsArray = @()
 
-# For each type of object, calculate the total data transferred and data stored
-$objectSummary = @()
+# Generate a list of clusters to calculate stats for
+$clusterList = $rubrikObjCapacity | select -expandProperty 'Cluster Name' -Unique
 
-# For each object type, calculate data transferred and data stored
-# Note: we will exclude MV and AD at this time for data stored since it does not have values
-foreach ($obj in $objectTypes)
+# Loop through each cluster and calculate stats
+foreach ($cluster in $clusterList)
 {
-  $objRubrikObjCapacity = $RubrikObjCapacity | Where 'Object Type' -eq $obj
-  $dataTransSumMetric = ($objRubrikObjCapacity | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
-  $dataTransSumMetric = [math]::Round($dataTransSumMetric, 3)
-  $dataStoredSumMetric = ($objRubrikObjCapacity | Measure -Property 'Local Storage' -sum).sum / $capacityMetric
-  $dataStoredSumMetric = [math]::Round($dataStoredSumMetric, 3)
-  $dataArchivalSumMetric = ($objRubrikObjCapacity | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
-  $dataArchivalSumMetric = [math]::Round($dataArchivalSumMetric, 3)
-  $objItem = [PSCustomObject] @{
-    "Object Type" = $obj
-    "Object Count" = $objRubrikObjCapacity.count
-    "Sum Bytes Transferred ($capacityDisplay)" = $dataTransSumMetric
-    "Sum Local Storage ($capacityDisplay)" = $dataStoredSumMetric
-    "Sum Archival Storage ($capacityDisplay)" = $dataArchivalSumMetric
+  # Get a sorted list of workloads per cluster
+  $clusterWorkloadList = $rubrikObjCapacity | Where { $_.'Cluster Name' -match $cluster } |
+    select -expandProperty 'Object Type' -Unique | Sort
+  # Contains the totals for each cluster
+  $clusterTotals = [PSCustomObject] @{
+    "Cluster" = $cluster
+    "Object Type" = 'Total'
+    "Object Count" = 0
+    "Bytes Transferred ($capacityDisplay)" = 0
+    "Local Storage ($capacityDisplay)" = 0
+    "Archival Storage ($capacityDisplay)" = 0
   }
-  $objectSummary += $objItem
+  # For each workload, calculate the stats
+  foreach ($clusterWorkload in $clusterWorkloadList)
+  {
+    # Get all objects that match the cluster name and workload we are interested in
+    $clusterWorkloadStatsList = $rubrikObjCapacity |
+      Where { $_.'Object Type' -eq $clusterWorkload -and $_.'Cluster Name' -eq $cluster }
+    # Calculate each stat - Data Transferred, Stored, and Archived
+    # Each time, also add to the cluster totals
+    $clusterDataTransSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
+    $clusterDataTransSumMetric = [math]::Round($clusterDataTransSumMetric, 3)
+    $clusterTotals."Bytes Transferred ($capacityDisplay)" += $clusterDataTransSumMetric
+    $clusterDataStoredSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Local Storage' -sum).sum / $capacityMetric
+    $clusterDataStoredSumMetric = [math]::Round($clusterDataStoredSumMetric, 3)
+    $clusterTotals."Local Storage ($capacityDisplay)" += $clusterDataStoredSumMetric
+    $clusterDataArchivalSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
+    $clusterDataArchivalSumMetric = [math]::Round($clusterDataArchivalSumMetric, 3)
+    $clusterTotals."Archival Storage ($capacityDisplay)" += $clusterDataArchivalSumMetric
+    $clusterTotals."Object Count" += $clusterWorkloadStatsList.count
+    # Object to hold the per cluster, per workload stats
+    $clusterWorkloadItem = [PSCustomObject] @{
+      "Cluster" = $cluster
+      "Object Type" = $clusterWorkload
+      "Object Count" = $clusterWorkloadStatsList.count
+      "Bytes Transferred ($capacityDisplay)" = $clusterDataTransSumMetric
+      "Local Storage ($capacityDisplay)" = $clusterDataStoredSumMetric
+      "Archival Storage ($capacityDisplay)" = $clusterDataArchivalSumMetric
+    }
+    # Add the per cluster, per workload totals to the stats array
+    $statsArray += $clusterWorkloadItem
+  }
+  # Add the per cluster totals to the stats array
+  $statsArray += $clusterTotals
 }
 
-# Calculate total number of objects
-$sumObjectCount = $RubrikObjCapacity.count
+# Get a sorted list of the workloads across all clusters
+$workloadList = $rubrikObjCapacity | select -expandProperty 'Object Type' -Unique | Sort
 
-# Calculate all data transferred across all objects
-$sumAllDataTransferredMetric = ($RubrikObjCapacity | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
-$sumAllDataTransferredMetric = [math]::Round($sumAllDataTransferredMetric, 3)
+# Contains the totals across all clusters
+$allTotals = [PSCustomObject] @{
+  "Cluster" = 'All'
+  "Object Type" = 'Total'
+  "Object Count" = 0
+  "Bytes Transferred ($capacityDisplay)" = 0
+  "Local Storage ($capacityDisplay)" = 0
+  "Archival Storage ($capacityDisplay)" = 0
+}
 
-# Calculate all data stored across all objects
-# $rubrikStoredObjects = $RubrikObjCapacity | Where { $_.'Object Type' -ne 'ManagedVolume' -and $_.'Object Type' -ne 'ActiveDirectoryDomainController' }
-$sumAllDataStoredMetric = ($RubrikObjCapacity | Measure -Property 'Local Storage' -sum).sum / $capacityMetric
-$sumAllDataStoredMetric = [math]::Round($sumAllDataStoredMetric, 3)
-
-# Calculate all arhival stored across all jobs
-$sumAllArchivalStoredMetric = ($RubrikObjCapacity | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
-$sumAllArchivalStoredMetric = [math]::Round($sumAllArchivalStoredMetric, 3)
+# For each workload across all clusters, calculate the stats
+foreach ($workload in $workloadList)
+{
+  # Get all objects that match the workload we are interested in
+  $workloadStatsList = $rubrikObjCapacity | Where 'Object Type' -eq $workload
+  # Calculate each stat - Data Transferred, Stored, and Archived
+  # Each time, also add to the totals
+  $dataTransSumMetric = ($workloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
+  $dataTransSumMetric = [math]::Round($dataTransSumMetric, 3)
+  $allTotals."Bytes Transferred ($capacityDisplay)" += $dataTransSumMetric
+  $dataStoredSumMetric = ($workloadStatsList | Measure -Property 'Local Storage' -sum).sum / $capacityMetric
+  $dataStoredSumMetric = [math]::Round($dataStoredSumMetric, 3)
+  $allTotals."Local Storage ($capacityDisplay)" += $dataStoredSumMetric
+  $dataArchivalSumMetric = ($workloadStatsList | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
+  $dataArchivalSumMetric = [math]::Round($dataArchivalSumMetric, 3)
+  $allTotals."Archival Storage ($capacityDisplay)" += $dataArchivalSumMetric
+  $allTotals."Object Count" += $workloadStatsList.count
+  # Object to hold the per workload stats across all clusters
+  $workloadItem = [PSCustomObject] @{
+    "Cluster" = "All"
+    "Object Type" = $workload
+    "Object Count" = $workloadStatsList.count
+    "Bytes Transferred ($capacityDisplay)" = $dataTransSumMetric
+    "Local Storage ($capacityDisplay)" = $dataStoredSumMetric
+    "Archival Storage ($capacityDisplay)" = $dataArchivalSumMetric
+  }
+  # Add the per workload totals across all clusters to the stats array
+  $statsArray += $workloadItem
+}
+# Add the totals across all clusters to the array of all calculated stats
+$statsArray += $allTotals
 
 Write-Host ""
 Write-Host "Current date: $date" -foregroundcolor green
 Write-Host ""
-Write-Host "Sum of capacity per object type" -foregroundcolor green
-Write-Host ""
-$objectSummary | format-table
-Write-Host ""
-Write-Host "Sum of Object Count: $sumObjectCount" -foregroundcolor green
-Write-Host "Sum of Bytes Transferred ($capacityDisplay): $sumAllDataTransferredMetric" -foregroundcolor green
-Write-Host "Sum of Local Storage ($capacityDisplay): $sumAllDataStoredMetric" -foregroundcolor green
-Write-Host "Sum of Archival Stored ($capacityDisplay): $sumAllDataStoredMetric" -foregroundcolor green
+$statsArray | format-table
+
+if ($saveCSV) {
+  Write-Host "Saving report to: $csvResultsFilename" -foregroundcolor green
+  $statsArray | Export-CSV -path $csvResultsFilename
+}
 
 # Send an email with CSV attachment
 if ($sendEmail) {
-  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Port $SMTPPort
+  $htmlReport = ""
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvResultsFilename
 }
