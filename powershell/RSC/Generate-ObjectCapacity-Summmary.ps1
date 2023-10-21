@@ -17,7 +17,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 10/5/23
-Updated: 10/18/23
+Updated: 10/20/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -293,13 +293,13 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
   if ($saveCSV) {
     Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
-    $rubrikObjCapacity | Export-CSV -path $csvFileName
+    $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
   }
 } else {
   $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
   if ($saveCSV) {
     Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
-    $rubrikObjCapacity | Export-CSV -path $csvFileName
+    $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
   }
 }
 Write-Host "Downloaded the Protection Task Report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
@@ -329,8 +329,8 @@ foreach ($cluster in $clusterList)
   foreach ($clusterWorkload in $clusterWorkloadList)
   {
     # Get all objects that match the cluster name and workload we are interested in
-    $clusterWorkloadStatsList = $rubrikObjCapacity |
-      Where { $_.'Object Type' -eq $clusterWorkload -and $_.'Cluster Name' -eq $cluster }
+    $clusterWorkloadStatsList = @($rubrikObjCapacity |
+      Where { $_.'Object Type' -eq $clusterWorkload -and $_.'Cluster Name' -eq $cluster })
     # Calculate each stat - Data Transferred, Stored, and Archived
     # Each time, also add to the cluster totals
     $clusterDataTransSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
@@ -376,7 +376,7 @@ $allTotals = [PSCustomObject] @{
 foreach ($workload in $workloadList)
 {
   # Get all objects that match the workload we are interested in
-  $workloadStatsList = $rubrikObjCapacity | Where 'Object Type' -eq $workload
+  $workloadStatsList = @($rubrikObjCapacity | Where 'Object Type' -eq $workload)
   # Calculate each stat - Data Transferred, Stored, and Archived
   # Each time, also add to the totals
   $dataTransSumMetric = ($workloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
@@ -411,7 +411,7 @@ $statsArray | format-table
 
 if ($saveCSV) {
   Write-Host "Saving report to: $csvResultsFilename" -foregroundcolor green
-  $statsArray | Export-CSV -path $csvResultsFilename
+  $statsArray | Export-CSV -path $csvResultsFilename -NoTypeInformation
 }
 
 # Send an email with CSV attachment
