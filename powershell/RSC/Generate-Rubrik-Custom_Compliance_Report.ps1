@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 9/13/23
+Updated: 10/20/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -432,23 +432,16 @@ $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Success' }
   Sort-Object -property $sortOrder -Descending
 
 # Calculate cluster totals for tasks
-$clusterTotal.SuccessCount = 0
-$clusterTotal.PartiallySucceededCount = 0
-$clusterTotal.CanceledCount = 0
-$clusterTotal.FailedCount = 0
-
-$clusterTotal.SuccessCount += $($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
-$clusterTotal.PartiallySucceededCount += $($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
-$clusterTotal.CanceledCount += $($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
-$clusterTotal.FailedCount += $($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
+$clusterTotal.SuccessCount = @($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
+$clusterTotal.PartiallySucceededCount = @($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
+$clusterTotal.CanceledCount = @($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
+$clusterTotal.FailedCount = @($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
 $clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
 $clusterTotal.SuccessRate = [math]::round(($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount) / ($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.FailedCount) * 100, 1)
 
 # Filter for objects that are In Compliance and separately, Out of Compliance
-$objectsInCompliance = @()
-$objectsOutCompliance = @()
-$objectsInCompliance += $rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' }
-$objectsOutCompliance += $rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' }
+$objectsInCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' })
+$objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' })
 
 # Calculate cluster totals for compliance
 $clusterTotal.InCompliance = $objectsInCompliance.count
@@ -478,10 +471,8 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
   # Fix the count here
-  $value.InCompliance = 0
-  $value.OutCompliance = 0
-  $value.InCompliance += $($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
-  $value.OutCompliance += $($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
+  $value.InCompliance = @($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
+  $value.OutCompliance = @($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
   $value.TotalCompliance = $value.InCompliance + $value.OutCompliance
   if ($value.TotalCompliance -gt 0) {
     $value.ComplianceRate = [math]::round($value.InCompliance / $value.TotalCompliance * 100, 1)
