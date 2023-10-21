@@ -298,12 +298,12 @@ $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDdailyTaskReport
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
   if ($saveCSV) {
-    $rubrikTasks | Export-CSV -path $csvFileName
+    $rubrikTasks | Export-CSV -path $csvFileName -NoTypeInformation
   }
 } else {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
   if ($saveCSV) {
-    $rubrikTasks | Export-CSV -path $csvFileName
+    $rubrikTasks | Export-CSV -path $csvFileName -NoTypeInformation
   }
 }
 Write-Host "Downloaded the Daily Task Report CSV: $($rubrikTasks.count) tasks" -foregroundcolor green
