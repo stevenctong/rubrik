@@ -374,7 +374,7 @@ foreach ($i in $rubrikTasks)
     $clusterCountHash[$i.'Cluster Name'].'PartiallySucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
     $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
-  } elseif ($i.'TaskStatus' -match 'Canceled') {
+  } elseif ($i.'Task Status' -match 'Canceled') {
     $clusterCountHash[$i.'Cluster Name'].'CanceledCount' += 1
   }
   # Update the timestamps to Powershell 'datetime' format so we can do comparisons
