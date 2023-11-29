@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 10/20/23
+Updated: 11/24/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -70,9 +70,14 @@ $utcDate = $date.ToUniversalTime()
 # Whether to list successful tasks or not in the report
 $showSuccess = $true
 
+# Whether to also highlight objects that are out of replication or archival compliance
+# Will not be added to the summary tables, just the list of objects
+$allCompliance = $true
+
 # Whether save the report CSV for each run or not
 $saveCSV = $true
-$csvFileName = "./csvReports/rubrik_compliance_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvReportTasks = "./csvReports/rubrik_tasks_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvReportCompliance = "./csvReports/rubrik_compliance_csv-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 # Whether to export the html as a file along with file path
 $exportHTML = $true
@@ -298,12 +303,12 @@ $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDdailyTaskReport
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
   if ($saveCSV) {
-    $rubrikTasks | Export-CSV -path $csvFileName -NoTypeInformation
+    $rubrikTasks | Export-CSV -path $csvReportTasks -NoTypeInformation
   }
 } else {
   $rubrikTasks = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
   if ($saveCSV) {
-    $rubrikTasks | Export-CSV -path $csvFileName -NoTypeInformation
+    $rubrikTasks | Export-CSV -path $csvReportTasks -NoTypeInformation
   }
 }
 Write-Host "Downloaded the Daily Task Report CSV: $($rubrikTasks.count) tasks" -foregroundcolor green
@@ -312,8 +317,14 @@ Write-Host "Downloaded the Daily Task Report CSV: $($rubrikTasks.count) tasks" -
 $complianceCSVLink = Get-ReportCSVLink -reportID $reportIDdailyComplianceReport
 if ($PSVersionTable.PSVersion.Major -le 5) {
   $rubrikCompliance = $(Invoke-WebRequest -Uri $complianceCSVLink).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikCompliance | Export-CSV -path $csvReportCompliance -NoTypeInformation
+  }
 } else {
   $rubrikCompliance = $(Invoke-WebRequest -Uri $complianceCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+  if ($saveCSV) {
+    $rubrikCompliance | Export-CSV -path $csvReportCompliance -NoTypeInformation
+  }
 }
 Write-Host "Downloaded the Object Compliance CSV: $($rubrikCompliance.count) objects" -foregroundcolor green
 
@@ -479,6 +490,13 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
   } else {
     $value.ComplianceRate = "-"
   }
+}
+
+# If we want to build list with objects also out of replication and archival compliance
+if ($allCompliance = $true) {
+  $objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' -or
+    $_.'Replication compliance status' -match 'Out of compliance' -or
+    $_.'Archival compliance status' -match 'Out of compliance'})
 }
 
 # Process each object out of compliance
@@ -685,10 +703,16 @@ $HTMLTaskSummaryTable += $HTMLTaskSummaryTableStart + $HTMLTaskSummaryTableMiddl
 $HTMLOutComplianceTable = $null
 $HTMLOutComplianceTableMiddle = $null
 
+if ($allCompliance = $false) {
+  $complianceTableHeader = "Daily Object Out of Compliance List - Backups"
+} else {
+  $complianceTableHeader = "Daily Object Out of Compliance List - Backups, Replication, Archival"
+}
+
 $HTMLOutComplianceTableStart = @"
   <table class="table2">
     <tr>
-      <th colspan="6">Daily Object Out of Compliance Report</th>
+      <th colspan="7">$complianceTableHeader</th>
     </tr>
     <tr>
       <th>Name</th>
@@ -697,6 +721,7 @@ $HTMLOutComplianceTableStart = @"
       <th>Local Days Behind</th>
       <th>Last Local Backup</th>
       <th>Last Replicated Backup</th>
+      <th>Last Archived Backup</th>
     </tr>
 "@
 
@@ -708,14 +733,41 @@ $HTMLOutComplianceTableEnd = @"
 # Loop through each out of compliance object and create a row
 foreach ($obj in $objectsOutCompliance)
 {
+  # Formats display based on whether backups are compliant or not
+  if ($obj.'Compliance status' -match 'Out of Compliance') {
+    $backupColor = 'orange'
+    $backupLocalDaysBehind = $obj.'Local Days Behind'
+    $backupLastLocal = $obj.'Last local snapshot'
+  } else {
+    $backupColor = 'white'
+    $backupLocalDaysBehind = ''
+    $backupLastLocal = ''
+  }
+  # Formats display based on whether replication is compliant or not
+  if ($obj.'Replication compliance status' -match 'Out of Compliance') {
+    $replicationColor = 'orange'
+    $replicationLastSnapshot = $obj.'Last replication snapshot'
+  } else {
+    $replicationColor = 'white'
+    $replicationLastSnapshot = ''
+  }
+  # Formats display based on whether archival is compliant or not
+  if ($obj.'Archival compliance status' -match 'Out of Compliance') {
+    $archivalColor = 'orange'
+    $archivalLastSnapshot = $obj.'Last archival snapshot'
+  } else {
+    $archivalColor = 'white'
+    $archivalLastSnapshot = ''
+  }
   $HTMLOutComplianceTableRow = @"
   <tr>
     <td style=text-align:left>$($obj.'Object Name')</td>
     <td style=text-align:left>$($obj.'Location')</td>
     <td style=text-align:left>$($obj.'Cluster Name')</td>
-    <td style=background:orange>$($obj.'Local Days Behind')</td>
-    <td>$($obj.'Last local snapshot')</td>
-    <td>$($obj.'Last replication snapshot')</td>
+    <td style=background:$backupColor>$backupLocalDaysBehind</td>
+    <td>$backupLastLocal</td>
+    <td style=background:$replicationColor>$replicationLastSnapshot</td>
+    <td style=background:$archivalColor>$archivalLastSnapshot</td>
   </tr>
 "@
   $HTMLOutComplianceTableMiddle += $HTMLOutComplianceTableRow
