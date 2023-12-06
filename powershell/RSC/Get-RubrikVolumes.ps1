@@ -12,6 +12,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 11/22/23
+Updated: 12/5/23
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -21,7 +22,10 @@ For authentication, use a RSC Service Account:
 
 .EXAMPLE
 ./Get-RubrikVolumes.ps1
-Runs the script generate a list of all Windows Volume Groups.
+Runs the script generate a list of all Windows volumes.
+
+./Get-RubrikVolumes.ps1 -unprotectedOnly $true
+Runs the script generate a list of all UNPROTECTED Windows volumes.
 
 #>
 
