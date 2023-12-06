@@ -27,13 +27,13 @@ Runs the script generate a list of all Windows Volume Groups.
 
 ### Variables section - please fill out as needed
 
-# param (
-#   [CmdletBinding()]
-#
-#   # Filename of CSV to output
-#   [Parameter(Mandatory=$false)]
-#   [string]$csvOutput = ''
-# )
+param (
+  [CmdletBinding()]
+
+  # To only get UNPROTECTED volumes, set to $true
+  [Parameter(Mandatory=$false)]
+  [bool]$unprotectedOnly = $false
+)
 
 # File location of the RSC service account json
 $serviceAccountPath = "./rsc-service-account-rr.json"
@@ -188,21 +188,16 @@ Function Get-VolumeGroups {
           id
           name
         }
-        isArchived
-        effectiveSlaDomain {
-          id
-          name
-        }
         primaryClusterLocation {
           id
         }
+        isArchived
         osType
         osName
         vfdState
         connectionStatus {
           connectivity
           timestampMillis
-          __typename
         }
         hostVolumes {
           mountPoints
@@ -210,9 +205,7 @@ Function Get-VolumeGroups {
           size
           volumeId
           volumeGroupId
-          __typename
         }
-        __typename
         physicalChildConnection(typeFilter: [VolumeGroup], filter: `$childFilter) {
           count
           edges {
@@ -242,7 +235,6 @@ Function Get-VolumeGroups {
               }
               primaryClusterLocation {
                 id
-                __typename
               }
               ... on VolumeGroup {
                 isRelic
@@ -286,10 +278,14 @@ do {
   $objCount += $vgs.count
   $vgList += $vgs.edges.node
   $afterCursor = $vgs.pageInfo.endCursor
-  Write-Host "$objCount objects found so far..." -foregroundcolor green
+  Write-Host "$objCount hosts found so far..." -foregroundcolor green
 } while ($vgs.pageInfo.hasNextPage)
 
-Write-Host "$objCount total objects found" -foregroundcolor green
+Write-Host "$objCount total hosts found" -foregroundcolor green
+
+# Count of volumes
+$volCount = 0
+$unprotectedVolCount = 0
 
 # List of volumes
 $vgFinalList = @()
@@ -297,20 +293,51 @@ $vgFinalList = @()
 # Loop through host to build a list of volumes
 foreach ($vgHost in $vgList) {
   foreach ($vgHostVolume in $vgHost.hostVolumes) {
+    # For each volume in a host, it will either be part of a "Volume Group ID"
+    # or null value. If null value it means it's Unprotected. If part of a
+    # Volume Group ID, then we need to find the SLA on the physical descendent
+    # for the Host which contains the effective SLA for the Volume Groups that
+    # have a SLA.
+    if ($vgHostVolume.volumeGroupId -eq $null -or
+        $vgHostVolume.volumeGroupId -eq '') {
+      $volSLA = "UNPROTECTED"
+    } else {
+      $volSLA = $vgHost.physicalChildConnection.edges.node.effectiveSlaDomain.name
+    }
     $vgInfo = [PSCustomObject] @{
       "Cluster" = $vgHost.cluster.name
       "Host" = $vgHost.name
       "MountPoint" = $vgHostVolume.mountPoints[0]
       "Size" = $vgHostVolume.size
       "Size$capacityDisplay" = [math]::Round($vgHostVolume.size / $capacityMetric, 3)
+      "SLA" = $volSLA
       "OS" = $vgHost.osName
-      "SLA" = $vgHost.effectiveSlaDomain.name
       "Type" = $vgHostVolume.fileSystemType
       "UID" = $vgHost.id
     }
+    $volCount += 1
+    if ($vgInfo.SLA -match "UNPROTECTED") {
+      $unprotectedVolCount += 1
+    }
+    # If flag to only get UNPROTECTED volumes
+    if ($unprotectedOnly -eq $true) {
+      if ($vgInfo.SLA -match "UNPROTECTED") {
+        $vgFinalList += $vgInfo
+      }
+    } else {
+      $vgFinalList += $vgInfo
+    }
   }
-  $vgFinalList += $vgInfo
 }
+
+Write-Host ""
+if ($unprotectedOnly) {
+  Write-Host "Filtered by volumes with UNPROTECTED SLA" -foregroundcolor green
+} else {
+  Write-Host "$volCount total volumes found" -foregroundcolor green
+}
+
+Write-Host "$unprotectedVolCount UNPROTECTED volumes found" -foregroundcolor green
 
 # Export the list to a CSV file
 $vgFinalList | Export-Csv -NoTypeInformation -Path $csvOutput
