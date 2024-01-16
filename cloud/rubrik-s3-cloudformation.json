@@ -1,0 +1,202 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "This template creates/updates roles and resources required for integration with Rubrik Security Cloud.",
+  "Mappings": {
+    "regionTopicMap": {
+      "ap-northeast-1": {
+        "TopicArn": "arn:aws:sns:ap-northeast-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-abb3514d-e2a5-4ab4-a696-d799d547e4b4"
+      },
+      "ap-northeast-2": {
+        "TopicArn": "arn:aws:sns:ap-northeast-2:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-ec4ad68c-c604-4cff-9bf6-04820da5bb7a"
+      },
+      "ap-south-1": {
+        "TopicArn": "arn:aws:sns:ap-south-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-72558ab3-679a-43e5-92d4-f6bde1791bc1"
+      },
+      "ap-southeast-1": {
+        "TopicArn": "arn:aws:sns:ap-southeast-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-3b175559-9c80-44ba-8d40-61e7325340aa"
+      },
+      "ap-southeast-2": {
+        "TopicArn": "arn:aws:sns:ap-southeast-2:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-bf36a981-8366-44c5-a99a-aeb23d08aa54"
+      },
+      "ca-central-1": {
+        "TopicArn": "arn:aws:sns:ca-central-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-d8434e5d-73ab-4fbe-b969-ba3653feb449"
+      },
+      "eu-central-1": {
+        "TopicArn": "arn:aws:sns:eu-central-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-b11d4315-8f71-48e7-9982-d0957e0309f2"
+      },
+      "eu-north-1": {
+        "TopicArn": "arn:aws:sns:eu-north-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-eaefb705-fbf3-47ff-90b3-3ceab21f1773"
+      },
+      "eu-west-1": {
+        "TopicArn": "arn:aws:sns:eu-west-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-849bc65c-e4af-4265-aa85-b9ffea4a9b06"
+      },
+      "eu-west-2": {
+        "TopicArn": "arn:aws:sns:eu-west-2:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-80bfb845-e8de-4e12-87a7-57f7ac029370"
+      },
+      "eu-west-3": {
+        "TopicArn": "arn:aws:sns:eu-west-3:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-25c4fbdc-f275-4ca2-a8ef-2d4feb095f4f"
+      },
+      "sa-east-1": {
+        "TopicArn": "arn:aws:sns:sa-east-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-bfc5430b-2aee-4891-8a5e-1d37dc05aace"
+      },
+      "us-east-1": {
+        "TopicArn": "arn:aws:sns:us-east-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-13144263-f922-4be4-8cda-09d69a394743"
+      },
+      "us-east-2": {
+        "TopicArn": "arn:aws:sns:us-east-2:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-49e3130c-50d3-4571-8352-4e6924322fcd"
+      },
+      "us-west-1": {
+        "TopicArn": "arn:aws:sns:us-west-1:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-015d2560-0003-4e61-b115-cef5b5c12589"
+      },
+      "us-west-2": {
+        "TopicArn": "arn:aws:sns:us-west-2:389263825261:spark-cloud-accounts-prod-000-rubrik-gaia-next-7680b1d5-da3f-473b-94ac-e5f5128f538f"
+      }
+    }
+  },
+  "Outputs": {
+    "RoleARN": {
+      "Description": "Cross account role ARN used by Rubrik to access feature specific resources.",
+      "Value": {
+        "Fn::GetAtt": [
+          "CrossAccountRole",
+          "Arn"
+        ]
+      }
+    },
+    "StackARN": {
+      "Description": "The ARN of the stack created as a result of this cloud formation script",
+      "Value": {
+        "Ref": "AWS::StackId"
+      }
+    }
+  },
+  "Resources": {
+    "CrossAccountRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "sts:ExternalId": [
+                    {
+                      "Fn::Select": [
+                        2,
+                        {
+                          "Fn::Split": [
+                            "/",
+                            {
+                              "Ref": "AWS::StackId"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": "arn:aws:iam::389263825261:user/rubrik-gaia-next-1ca60"
+              }
+            },
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "backup.amazonaws.com"
+              }
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "s3:ListAllMyBuckets",
+                    "s3:ListBucket",
+                    "s3:GetObject",
+                    "s3:GetBucketTagging",
+                    "s3:PutObject",
+                    "s3:AbortMultipartUpload",
+                    "s3:GetBucketLocation",
+                    "s3:CreateBucket",
+                    "s3:ListBucketMultipartUploads",
+                    "s3:PutBucketTagging",
+                    "s3:GetObjectAttributes",
+                    "s3:GetObjectTagging",
+                    "s3:PutObjectTagging",
+                    "s3:ListMultipartUploadParts",
+                    "s3:GetObjectAcl",
+                    "s3:PutObjectAcl"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ]
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "S3ProtectionPolicy"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "RubrikSecurityCloudNotifier": {
+      "Properties": {
+        "AccountId": {
+          "Ref": "AWS::AccountId"
+        },
+        "MetaData": {
+          "Fn::Sub": [
+            "{\"CustomerAccountName\":\"rubrik-gaia-next\",\"ExternalId\":\"${ExternalId}\",\"featureMap\":{\"CLOUD_NATIVE_S3_PROTECTION\":1001}}",
+            {
+              "ExternalId": {
+                "Fn::Select": [
+                  2,
+                  {
+                    "Fn::Split": [
+                      "/",
+                      {
+                        "Ref": "AWS::StackId"
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "MetaDataVersion": "1",
+        "RoleArn": {
+          "Fn::GetAtt": [
+            "CrossAccountRole",
+            "Arn"
+          ]
+        },
+        "ServiceToken": {
+          "Fn::FindInMap": [
+            "regionTopicMap",
+            {
+              "Ref": "AWS::Region"
+            },
+            "TopicArn"
+          ]
+        }
+      },
+      "Type": "Custom::cloudAccountCustomResource",
+      "Version": "2012-10-17"
+    }
+  }
+}
