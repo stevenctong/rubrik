@@ -122,6 +122,126 @@
               "Statement": [
                 {
                   "Action": [
+                    "eks:DeleteCluster",
+                    "autoscaling:DeleteAutoScalingGroup"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/rk_component": "Cloud Native Protection"
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "ExocomputeDeleteClusterSid"
+                },
+                {
+                  "Action": [
+                    "autoscaling:DeleteLaunchConfiguration"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "arn:*:autoscaling:*:*:launchConfiguration:*:launchConfigurationName/Rubrik-*"
+                  ],
+                  "Sid": "ExocomputeDeleteLaunchConfigSid"
+                },
+                {
+                  "Action": [
+                    "ec2:DeleteLaunchTemplate"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/rk_component": "Cloud Native Protection"
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "ExocomputeDeleteLaunchTemplateSid"
+                },
+                {
+                  "Action": [
+                    "autoscaling:CreateAutoScalingGroup",
+                    "autoscaling:CreateLaunchConfiguration",
+                    "ec2:CreateLaunchTemplate",
+                    "ec2:DescribeLaunchTemplateVersions",
+                    "autoscaling:DescribeAutoScalingGroups",
+                    "autoscaling:DescribeLaunchConfigurations",
+                    "eks:CreateCluster",
+                    "eks:DescribeCluster",
+                    "eks:TagResource",
+                    "ec2:CreateSecurityGroup",
+                    "ec2:CreateTags",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeSubnets",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeVpcs",
+                    "iam:CreateServiceLinkedRole"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "ExocomputeSid"
+                },
+                {
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Condition": {
+                    "StringLike": {
+                      "iam:PassedToService": [
+                        "eks.amazonaws.com"
+                      ]
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": "arn:*:iam::*:role/*",
+                  "Sid": "ExocomputeMasterPassIamRoleSid"
+                },
+                {
+                  "Action": [
+                    "iam:PassRole"
+                  ],
+                  "Condition": {
+                    "StringLike": {
+                      "iam:PassedToService": [
+                        "ec2.amazonaws.com"
+                      ]
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": "arn:*:iam::*:role/*",
+                  "Sid": "ExocomputeWorkerPassIamRoleSid"
+                },
+                {
+                  "Action": [
+                    "ec2:AuthorizeSecurityGroupEgress",
+                    "ec2:AuthorizeSecurityGroupIngress"
+                  ],
+                  "Condition": {
+                    "StringLike": {
+                      "ec2:ResourceTag/rk_managed": "*"
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "ExocomputeSecurityGroupSid"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "ExocomputePolicy"
+          },
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
                     "s3:ListAllMyBuckets",
                     "s3:ListBucket",
                     "s3:GetObject",
@@ -148,6 +268,154 @@
               "Version": "2012-10-17"
             },
             "PolicyName": "S3ProtectionPolicy"
+          },
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "eks:DescribeCluster",
+                    "eks:ListClusters"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "kubernetesReadPermissions"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "KubernetesProtectionPolicy"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "ExocomputeEKSMasterNodeRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "eks.amazonaws.com"
+              },
+              "Sid": "ClusterAssumeRolePolicyDocumentSid"
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+        ],
+        "Path": "/"
+      },
+      "Type": "AWS::IAM::Role"
+    },
+    "ExocomputeEKSWorkerNodeInstanceProfile": {
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "ExocomputeEKSWorkerNodeRole"
+          }
+        ]
+      },
+      "Type": "AWS::IAM::InstanceProfile"
+    },
+    "ExocomputeEKSWorkerNodeRole": {
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Action": [
+                "sts:AssumeRole"
+              ],
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Sid": "WorkerNodeAssumeRolePolicyDocumentSid"
+            }
+          ],
+          "Version": "2012-10-17"
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+          "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+          "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly",
+          "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+        ],
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "autoscaling:DescribeAutoScalingGroups",
+                    "autoscaling:DescribeAutoScalingInstances",
+                    "autoscaling:DescribeLaunchConfigurations",
+                    "autoscaling:DescribeTags",
+                    "autoscaling:SetDesiredCapacity",
+                    "autoscaling:TerminateInstanceInAutoScalingGroup"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "NodeRoleAutoscalingPolicyDocumentSid"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "NodeRoleAutoscalingPolicy"
+          },
+          {
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:DescribeKey",
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey",
+                    "kms:GenerateDataKeyWithoutPlaintext",
+                    "kms:ReEncryptTo",
+                    "kms:ReEncryptFrom"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "NodeRoleKMSPolicyDocumentSid"
+                },
+                {
+                  "Action": "kms:CreateGrant",
+                  "Condition": {
+                    "Bool": {
+                      "kms:GrantIsForAWSResource": true
+                    },
+                    "StringLike": {
+                      "kms:ViaService": [
+                        "ec2.*.amazonaws.com"
+                      ]
+                    }
+                  },
+                  "Effect": "Allow",
+                  "Resource": [
+                    "*"
+                  ],
+                  "Sid": "NodeRoleKMSGrantPolicyDocumentSid"
+                }
+              ],
+              "Version": "2012-10-17"
+            },
+            "PolicyName": "NodeRoleKMSPolicy"
           }
         ]
       },
@@ -158,9 +426,27 @@
         "AccountId": {
           "Ref": "AWS::AccountId"
         },
+        "ExocomputeEKSMasterNodeRole": {
+          "Fn::GetAtt": [
+            "ExocomputeEKSMasterNodeRole",
+            "Arn"
+          ]
+        },
+        "ExocomputeEKSWorkerNodeInstanceProfile": {
+          "Fn::GetAtt": [
+            "ExocomputeEKSWorkerNodeInstanceProfile",
+            "Arn"
+          ]
+        },
+        "ExocomputeEKSWorkerNodeRole": {
+          "Fn::GetAtt": [
+            "ExocomputeEKSWorkerNodeRole",
+            "Arn"
+          ]
+        },
         "MetaData": {
           "Fn::Sub": [
-            "{\"CustomerAccountName\":\"rubrik-gaia-next\",\"ExternalId\":\"${ExternalId}\",\"featureMap\":{\"CLOUD_NATIVE_S3_PROTECTION\":1001}}",
+            "{\"CustomerAccountName\":\"rubrik-gaia-next\",\"ExternalId\":\"${ExternalId}\",\"featureMap\":{\"CLOUD_NATIVE_S3_PROTECTION\":1001,\"EXOCOMPUTE\":7,\"KUBERNETES_PROTECTION\":1},\"ResourceVersionMap\":{\"ExocomputeEKSMasterNodeRole\":\"4\",\"ExocomputeEKSWorkerNodeInstanceProfile\":\"1\",\"ExocomputeEKSWorkerNodeRole\":\"3\"}}",
             {
               "ExternalId": {
                 "Fn::Select": [
