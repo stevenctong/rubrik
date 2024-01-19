@@ -761,7 +761,7 @@ foreach ($obj in $objectsOutCompliance)
   }
   $HTMLOutComplianceTableRow = @"
   <tr>
-    <td style=text-align:left>$($obj.'Object Name')</td>
+    <td style=text-align:left>$($obj.'Object')</td>
     <td style=text-align:left>$($obj.'Location')</td>
     <td style=text-align:left>$($obj.'Cluster')</td>
     <td style=background:$backupColor>$backupLocalDaysBehind</td>
@@ -825,7 +825,7 @@ foreach ($task in $rubrikTasksSorted)
   if ($showSucceeded -eq $true)
   {
     $HTMLTaskTableRow += @"
-      <td style=text-align:left>$($task.'Object Name')</td>
+      <td style=text-align:left>$($task.'Object')</td>
       <td style=text-align:left>$($task.'Location')</td>
       <td style=text-align:left>$($task.'Cluster')</td>
       <td>$($task.'Task Status')</td>
