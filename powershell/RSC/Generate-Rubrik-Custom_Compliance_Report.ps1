@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 11/24/23
+Updated: 1/18/24
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -67,8 +67,8 @@ $reportIDdailyTaskReport = 52
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
-# Whether to list successful tasks or not in the report
-$showSuccess = $true
+# Whether to list Succeeded tasks or not in the report
+$showSucceeded = $true
 
 # Whether to also highlight objects that are out of replication or archival compliance
 # Will not be added to the summary tables, just the list of objects
@@ -329,20 +329,20 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
 Write-Host "Downloaded the Object Compliance CSV: $($rubrikCompliance.count) objects" -foregroundcolor green
 
 
-# Get unique cluster names
-$clusterList = $rubrikTasks | Select-Object 'Cluster Name' -unique -expandProperty 'Cluster Name'
+# Get unique Clusters
+$clusterList = $rubrikTasks | Select-Object 'Cluster' -unique -expandProperty 'Cluster'
 
 # Create a hash table to keep the task status and compliance counts for each cluster
 $clusterCountHash = @{}
 foreach ($cluster in $clusterList)
 {
   $clusterObj = [PSCustomObject] @{
-    "SuccessCount" = 0
-    "PartiallySucceededCount" = 0
+    "SucceededCount" = 0
+    "SucceededWithWarningsCount" = 0
     "CanceledCount" = 0
     "FailedCount" = 0
     "TotalCount" = 0
-    "SuccessRate" = [float]0
+    "SucceededRate" = [float]0
     "InCompliance" = 0
     "OutCompliance" = 0
     "TotalCompliance" = 0
@@ -353,13 +353,13 @@ foreach ($cluster in $clusterList)
 
 # PSCustomObject to keep track of all counts for all clusters
 $clusterTotal = [PSCustomObject] @{
-  "SuccessCount" = 0
-  "PartiallySucceededCount" = 0
+  "SucceededCount" = 0
+  "SucceededWithWarningsCount" = 0
   "CanceledCount" = 0
   "FailedCount" = 0
   "TotalCount" = 0
-  "PartiallySucceededRate" = [float]0
-  "SuccessRate" = [float]0
+  "SucceededWithWarningsRate" = [float]0
+  "SucceededRate" = [float]0
   "InCompliance" = 0
   "OutCompliance" = 0
   "TotalCompliance" = 0
@@ -378,15 +378,15 @@ foreach ($i in $rubrikTasks)
   }
   $count += 1
   # Track the task status counts for each cluster
-  $clusterCountHash[$i.'Cluster Name'].'TotalCount' += 1
-  if ($i.'Task Status' -match 'Success') {
-    $clusterCountHash[$i.'Cluster Name'].'SuccessCount' += 1
-  } elseif ($i.'Task Status' -match 'Partially Succeeded') {
-    $clusterCountHash[$i.'Cluster Name'].'PartiallySucceededCount' += 1
+  $clusterCountHash[$i.'Cluster'].'TotalCount' += 1
+  if ($i.'Task Status' -contains 'Succeeded') {
+    $clusterCountHash[$i.'Cluster'].'SucceededCount' += 1
+  } elseif ($i.'Task Status' -match 'Succeeded with Warnings') {
+    $clusterCountHash[$i.'Cluster'].'SucceededWithWarningsCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
-    $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
+    $clusterCountHash[$i.'Cluster'].'FailedCount' += 1
   } elseif ($i.'Task Status' -match 'Canceled') {
-    $clusterCountHash[$i.'Cluster Name'].'CanceledCount' += 1
+    $clusterCountHash[$i.'Cluster'].'CanceledCount' += 1
   }
   # Update the timestamps to Powershell 'datetime' format so we can do comparisons
   $i.'Start Time' = ([datetime]($i.'Start Time'.replace("UTC", "GMT"))).ToUniversalTime()
@@ -419,11 +419,11 @@ foreach ($i in $rubrikTasks)
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
-  $value.SuccessRate = [math]::round(($value.SuccessCount + $value.PartiallySucceededCount) /
-    ($value.SuccessCount + $value.PartiallySucceededCount + $value.FailedCount) * 100, 1)
+  $value.SucceededRate = [math]::round(($value.SucceededCount + $value.SucceededWithWarningsCount) /
+    ($value.SucceededCount + $value.SucceededWithWarningsCount + $value.FailedCount) * 100, 1)
 }
 
-# Create a table of tasks, with Failed tasks followed by Canceled, followed by Successul taks
+# Create a table of tasks, with Failed tasks followed by Canceled, followed by Succeeded taks
 # Within each grouping, sorted by "Duration" in descending order
 Write-Host "Sorting tasks" -foreground green
 
@@ -436,19 +436,19 @@ $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Fail' } |
 $rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Cancel' } |
   Sort-Object -property $sortOrder -Descending
 
-$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' } |
+$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Succeeded with Warnings' } |
   Sort-Object -property $sortOrder -Descending
 
-$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -match 'Success' } |
+$rubrikTasksSorted += $rubrikTasks | Where { $_.'Task status' -contains 'Succeeded' } |
   Sort-Object -property $sortOrder -Descending
 
 # Calculate cluster totals for tasks
-$clusterTotal.SuccessCount = @($rubrikTasks | Where { $_.'Task status' -match 'Success' }).count
-$clusterTotal.PartiallySucceededCount = @($rubrikTasks | Where { $_.'Task status' -match 'Partially Succeeded' }).count
+$clusterTotal.SucceededCount = @($rubrikTasks | Where { $_.'Task status' -contains 'Succeeded' }).count
+$clusterTotal.SucceededWithWarningsCount = @($rubrikTasks | Where { $_.'Task status' -match 'Succeeded with Warnings' }).count
 $clusterTotal.CanceledCount = @($rubrikTasks | Where { $_.'Task status' -match 'Cancel' }).count
 $clusterTotal.FailedCount = @($rubrikTasks | Where { $_.'Task status' -match 'Fail' }).count
-$clusterTotal.TotalCount = $clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
-$clusterTotal.SuccessRate = [math]::round(($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount) / ($clusterTotal.SuccessCount + $clusterTotal.PartiallySucceededCount + $clusterTotal.FailedCount) * 100, 1)
+$clusterTotal.TotalCount = $clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount + $clusterTotal.CanceledCount + $clusterTotal.FailedCount
+$clusterTotal.SucceededRate = [math]::round(($clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount) / ($clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount + $clusterTotal.FailedCount) * 100, 1)
 
 # Filter for objects that are In Compliance and separately, Out of Compliance
 $objectsInCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' })
@@ -560,7 +560,7 @@ $HTMLStart = @"
     color: black;
     background-color: yellow;
   }
-  table.table2 tr#success {
+  table.table2 tr#succeeded {
     color: black;
     background-color: $HTMLGreenColor;
   }
@@ -653,11 +653,11 @@ $HTMLTaskSummaryTableStart = @"
     <tr>
       <th>Cluster</th>
       <th>Total</th>
-      <th>Success</th>
-      <th>Partially Succeeded</th>
+      <th>Succeeded</th>
+      <th>Succeeded with Warnings</th>
       <th>Failed</th>
       <th>Canceled</th>
-      <th>Success Rate</th>
+      <th>Succeeded Rate</th>
     </tr>
 "@
 
@@ -673,11 +673,11 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator() | Sort-Object -Prop
   <tr>
     <td style=text-align:right>$($clusterStatus.Name)</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'TotalCount')</b></td>
-    <td style=color:black;background:$HTMLGreenColor>$($value.'SuccessCount')</td>
-    <td style=color:black;background:$HTMLGreenColor>$($value.'PartiallySucceededCount')</td>
+    <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededCount')</td>
+    <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededWithWarningsCount')</td>
     <td style=color:white;background:$HTMLRedColor>$($value.'FailedCount')</td>
     <td style=color:black;background:yellow>$($value.'CanceledCount')</td>
-    <td style=color:$HTMLRubrikColor><b>$($value.'SuccessRate')</b></td>
+    <td style=color:$HTMLRubrikColor><b>$($value.'SucceededRate')</b></td>
   </tr>
 "@
   $HTMLTaskSummaryTableMiddle += $HTMLTaskSummaryTableRow
@@ -687,11 +687,11 @@ $HTMLTaskSummaryTableMiddle += @"
   <tr style=color:white;background:blue>
     <td>Total</td>
     <td>$($clusterTotal.TotalCount)</td>
-    <td>$($clusterTotal.SuccessCount)</td>
+    <td>$($clusterTotal.SucceededCount)</td>
     <td>$($clusterTotal.PartiallySucceededCount)</td>
     <td>$($clusterTotal.FailedCount)</td>
     <td>$($clusterTotal.CanceledCount)</td>
-    <td>$($clusterTotal.SuccessRate)</td>
+    <td>$($clusterTotal.SucceededRate)</td>
   </tr>
 "@
 
@@ -763,7 +763,7 @@ foreach ($obj in $objectsOutCompliance)
   <tr>
     <td style=text-align:left>$($obj.'Object Name')</td>
     <td style=text-align:left>$($obj.'Location')</td>
-    <td style=text-align:left>$($obj.'Cluster Name')</td>
+    <td style=text-align:left>$($obj.'Cluster')</td>
     <td style=background:$backupColor>$backupLocalDaysBehind</td>
     <td>$backupLastLocal</td>
     <td style=background:$replicationColor>$replicationLastSnapshot</td>
@@ -816,18 +816,18 @@ foreach ($task in $rubrikTasksSorted)
     $HTMLTaskTableRow = @"
     <tr id="canceled">
 "@
-  } elseif ($showSuccess -eq $true)
+  } elseif ($showSucceeded -eq $true)
   {
     $HTMLTaskTableRow = @"
-    <tr id="success">
+    <tr id="succeeded">
 "@
   }
-  if ($showSuccess -eq $true)
+  if ($showSucceeded -eq $true)
   {
     $HTMLTaskTableRow += @"
       <td style=text-align:left>$($task.'Object Name')</td>
       <td style=text-align:left>$($task.'Location')</td>
-      <td style=text-align:left>$($task.'Cluster Name')</td>
+      <td style=text-align:left>$($task.'Cluster')</td>
       <td>$($task.'Task Status')</td>
       <td>$($task.'Data Trans GB')</td>
       <td>$($task.'Start Time')</td>
