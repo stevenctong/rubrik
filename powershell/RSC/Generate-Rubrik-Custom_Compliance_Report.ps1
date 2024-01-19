@@ -688,7 +688,7 @@ $HTMLTaskSummaryTableMiddle += @"
     <td>Total</td>
     <td>$($clusterTotal.TotalCount)</td>
     <td>$($clusterTotal.SucceededCount)</td>
-    <td>$($clusterTotal.PartiallySucceededCount)</td>
+    <td>$($clusterTotal.SucceededWithWarningsCount)</td>
     <td>$($clusterTotal.FailedCount)</td>
     <td>$($clusterTotal.CanceledCount)</td>
     <td>$($clusterTotal.SucceededRate)</td>
