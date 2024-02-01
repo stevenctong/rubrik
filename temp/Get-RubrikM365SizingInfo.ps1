@@ -4,14 +4,13 @@
 .DESCRIPTION
     Get-RubrikM365SizingInfo.ps1 returns statistics on number of accounts, sites and how much storage they are using in a Micosoft 365 Tenant
     In this script, Rubrik uses Microsoft Graph APIs to return data from the customer's M365 Tenant. Data is collected via the Graph API
-    and then downloaded to the customer's machine. The downloaded reports can be found in the customers $systemTempFolder folder. This data is left
-    behind and never sent to Rubrik or viewed by Rubrik.
+    and then downloaded to the customer's machine. This data is left behind and never sent to Rubrik or viewed by Rubrik.
 
 .EXAMPLE
-    PS C:\> .\Get-RubrikM365SizingInfo.ps1
+    PS C:\> .\Get-RubrikM365SizingInfo.ps1 -Period 180
     Will connect to customer's M365 Tenant. A browser page will open up linking to the customer's M365 Tenant authorization page. The
-    customer will need to provide authorization. The script will gather data for 180 days. Once this is done output will be written to the current working directory as a file called
-    RubrikM365Sizing.txt
+    customer will need to provide authorization. The script will gather data for 180 days. Once this is done output will be written to
+    the current working directory as a file called RubrikM365Sizing.html.
 .INPUTS
     Inputs (if any)
 .OUTPUTS
@@ -19,38 +18,41 @@
 .NOTES
     Author:         Chris Lumnah
     Created Date:   6/17/2021
+    Updated: 1/28/24
+    By: Steven Tong
 #>
 
 [CmdletBinding()]
 param (
     [Parameter()]
     [bool]$EnableDebug = $false,
-    # Parameter help description
     [Parameter()]
     [String]$AzureAdGroupName,
     [Parameter()]
-    [bool]$SkipArchiveMailbox = $True, # Temporary set to True as the default while API stablitity is addressed
+    [bool]$SkipArchiveMailbox = $false, # Temporary set to True as the default while API stablitity is addressed
+    [Parameter()]
+    [String]$ADGroupCSVFilename = './adgrouplist.csv',
+    # Number of days to get historical stats for: 7, 30, 90, 180
+    [Parameter()]
+    [Int]$Period = 180,
     $OutputObject
 )
 
 $date = Get-Date
 $dateString = $date.ToString("yyyy-MM-dd_HHmm")
 
-$Period = '180'
-
-$Version = "v4.5"
+$Version = "v5.0"
 Write-Output "[INFO] Starting the Rubrik Microsoft 365 sizing script ($Version)."
 
 # Provide OS agnostic temp folder path for raw reports
 # $systemTempFolder = [System.IO.Path]::GetTempPath()
-$systemTempFolder = './'
+$systemTempFolder = '.'
 
 $ProgressPreference = 'SilentlyContinue'
 
 $ExchangeHTMLTitle = "User"
 $ExchangeUserMailboxCount = 0
 $ExchangeSharedMailboxCount = 0
-
 
 function Get-MgReport {
   [CmdletBinding()]
@@ -90,162 +92,98 @@ function Measure-AverageGrowth {
     [Parameter(Mandatory)]
     [string]$ReportCSV,
     [Parameter(Mandatory)]
-    [string]$ReportName
+    [string]$ReportName,
+    [Parameter(Mandatory)]
+    [float]$CurrentUsageSize
   )
-  if ($ReportName -eq 'getOneDriveUsageStorage') {
-    $UsageReport = Import-Csv -Path $ReportCSV | Where-Object { $_.'Site Type' -eq 'OneDrive' } | Sort-Object -Property "Report Date"
-  }
-  else {
-    $UsageReport = Import-Csv -Path $ReportCSV | Sort-Object -Property "Report Date"
-  }
-  $Record = 1
-  $StorageUsage = @()
-  foreach ($item in $UsageReport) {
-    if ($Record -eq 1) {
-      $StorageUsed = $Item."Storage Used (Byte)"
-    }
-    else {
-
-      if ( $StorageUsed -eq 0 ) {
-        $StorageUsage += (
-          New-Object psobject -Property @{
-            Growth = 0
-          }
-        )
-      }
-      else {
-
-        $StorageUsage += (
-          New-Object psobject -Property @{
-            Growth = [math]::Round(((($Item.'Storage Used (Byte)' / $StorageUsed) - 1) * 100), 2)
-          }
-        )
-      }
-      $StorageUsed = $Item."Storage Used (Byte)"
-    }
-    $Record = $Record + 1
-  }
-  $AverageGrowth = ($StorageUsage | Measure-Object -Property Growth -Average).Average
-  # AverageGrowth is based on 180 days. This is not annual growth. To provide an annual growth we will take the value of AverageGrowth * 2 and then round up to the nearest whole percentage. While this is not exact, it should be close enough for our purposes.
-  $AverageGrowth = [math]::Ceiling(($AverageGrowth * 2))
-  return $AverageGrowth
+  $UsageReport = Import-Csv -Path $ReportCSV | Sort-Object -Property "Report Date" -Descending
+  $ReportDays = $UsageReport[0].'Report Period'
+  $LatestUsageGB = [math]::Round($UsageReport[0].'Storage Used (Byte)' / 1GB, 2)
+  $EarliestUsageGB = [math]::Round($UsageReport[-1].'Storage Used (Byte)' / 1GB, 2)
+  $GrowthOverPeriod = [math]::Round($CurrentUsageSize - $EarliestUsageGB, 2)
+  $AvgGrowthPerDay = $GrowthOverPeriod / $ReportDays
+  $GrowthPerYearGB = [math]::Round($AvgGrowthPerDay * 365, 2)
+  $GrowthPerYearPct = [math]::Round($GrowthPerYearGB / $CurrentUsageSize, 2)
+  Write-Host "[INFO] $ReportName usage:"
+  Write-Host "  - Current usage: $CurrentUsageSize"
+  Write-Host "  - Usage on $($UsageReport[0].'Report Date'): $LatestUsageGB GB"
+  Write-Host "  - Usage on $($UsageReport[-1].'Report Date'): $EarliestUsageGB GB"
+  Write-Host "  - Growth over $ReportDays days: $GrowthOverPeriod GB"
+  Write-Host "  - Growth annualized per year: $GrowthPerYearGB GB, $($GrowthPerYearPct * 100)%"
+  return $GrowthPerYearPct
 }
 
 function ProcessUsageReport {
   param (
     [Parameter(Mandatory)]
-    [string]$ReportCSV,
-    [Parameter(Mandatory)]
-    [string]$ReportName,
+    [PSCustomObject]$ReportDetail,
     [Parameter(Mandatory)]
     [string]$Section
   )
-  $ReportDetail = Import-Csv -Path $ReportCSV | Where-Object { $_.'Is Deleted' -eq 'FALSE' }
-  if (($AzureAdRequired) -and ($Section -ne "SharePoint")) {
-    # The OneDrive and Exchange Usage reports have different column names that need to be accounted for.
-    if ($Section -eq "OneDrive") {
-      $FilterByField = "Owner Principal Name"
-    }
-    else {
-      $FilterByField = "User Principal Name"
-    }
-    $SummarizedData = $ReportDetail | Where-Object { $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName } | Measure-Object -Property 'Storage Used (Byte)' -Sum -Average
-  }
-  else {
-    $SummarizedData = $ReportDetail | Measure-Object -Property 'Storage Used (Byte)' -Sum -Average
-  }
-  switch ($Section) {
-    'SharePoint' { $M365Sizing.$($Section).NumberOfSites = $SummarizedData.Count }
-    Default {
-      if ($Section -eq "Exchange") {
-
-        if ($AzureAdRequired) {
-          $TotalUserMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' -and $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
-          $TotalSharedMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' -and $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
-        }
-        else {
-          $TotalUserMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
-          $TotalSharedMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' }
-        }
-
-        if ($TotalSharedMailbox.Count -ge $TotalUserMailbox.Count) {
-          # Total number of Shared Mailboxes is > than User mailboxes so we need to
-          # include those in the licensing
-          $M365Sizing.$($Section).NumberOfUsers = $TotalSharedMailbox.Count
-          #Update the Exchange Section wording to reflect Shared Mailbox is included in the script
-          $script:ExchangeHTMLTitle = "Mailboxes"
-          # Set variable to be shown in HTML source code for "Advanced" info
-          $script:ExchangeSharedMailboxCount = $TotalSharedMailbox.Count
-
-        }
-        else {
-          $M365Sizing.$($Section).NumberOfUsers = $TotalUserMailbox.Count
-          # Set variable to be shown in HTML source code for "Advanced" info
-          $script:ExchangeUserMailboxCount = $TotalUserMailbox.Count
-        }
-      }
-      else {
-        $M365Sizing.$($Section).NumberOfUsers = $SummarizedData.Count
-      }
-    }
-  }
+  $SummarizedData = $ReportDetail | Measure-Object -Property 'Storage Used (Byte)' -Sum -Average
   $M365Sizing.$($Section).TotalSizeGB = [math]::Round(($SummarizedData.Sum / 1GB), 2, [MidPointRounding]::AwayFromZero)
   $M365Sizing.$($Section).SizePerUserGB = [math]::Round((($SummarizedData.Average) / 1GB), 2)
-}
-
-function Get-FileCountReport {
-  #Report Refresh Date	Site Type	Total	Active	Report Date	Report Period
-  param (
-    [Parameter(Mandatory)]
-    [string]$ReportCSV
-    # [Parameter(Mandatory)]
-    # [string]$ReportName,
-    # [Parameter(Mandatory)]
-    # [string]$Section
-  )
-  # OneDrive Report Format
-  # Report Refresh Date	Site Type	Total	Active	Report Date	Report Period
-  # 11/7/23	            All	        515096	1	    11/7/23	           180
-  # 11/7/23	            All	        515094	3	    11/6/23	           180
-  # 11/7/23	            All	        515094	0	    11/5/23	           180
-  # 11/7/23	            All	        515096	0	    11/4/23	           180
-  # SharePoint Report Format
-  # Report Refresh Date	Site Type	Total	Active	Report Date	Report Period
-  # 11/7/23	            All	        143	    2	    11/7/23	           180
-  # 11/7/23	            All	        143	    3	    11/6/23	           180
-  # 11/7/23	            All	        143	    0	    11/5/23	           180
-  # 11/7/23	            All	        143	    0	    11/4/23	           180
-  try {
-    # Import the CSV file
-    $ReportDetail = Import-Csv -Path $ReportCSV
-    # Check if data is present
-    if ($ReportDetail.Length -eq 0) {
-      Write-Error "The Microsoft API did not return any File count information."
+  if ($Section -eq "Exchange") {
+    if ($AzureAdRequired) {
+      $TotalUserMailbox = $AzureAdUsersReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
+      $TotalSharedMailbox = $AzureAdUsersReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' }
+      $TotalNumberOfItems = $AzureAdUsersReportDetail | Measure-Object -Property 'Item Count' -Sum
     }
-    # Get the first object and its 'Total' property
-    return $ReportDetail[0].Total
-  }
-  catch {
-    # Catch the error and display an error message
-    Write-Error "An error occurred:" $_.Exception.Message
+    else {
+      $TotalUserMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
+      $TotalSharedMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' }
+      $TotalNumberOfItems = $ReportDetail | Measure-Object -Property 'Item Count' -Sum
+    }
+    $M365Sizing.$($Section).TotalNumberOfItems = $TotalNumberOfItems.Sum
+    if ($TotalSharedMailbox.Count -ge $TotalUserMailbox.Count) {
+      # Total number of Shared Mailboxes is > than User mailboxes so we need to
+      # include those in the licensing
+      $M365Sizing.$($Section).NumberOfUsers = $TotalSharedMailbox.Count
+      #Update the Exchange Section wording to reflect Shared Mailbox is included in the script
+      $script:ExchangeHTMLTitle = "Mailboxes"
+      # Set variable to be shown in HTML source code for "Advanced" info
+      $script:ExchangeSharedMailboxCount = $TotalSharedMailbox.Count
+    }
+    else {
+      $M365Sizing.$($Section).NumberOfUsers = $TotalUserMailbox.Count
+      # Set variable to be shown in HTML source code for "Advanced" info
+      $script:ExchangeUserMailboxCount = $TotalUserMailbox.Count
+    }
+  } elseif ($Section -eq 'OneDrive') {
+    $M365Sizing.$($Section).NumberOfUsers = $SummarizedData.Count
+    if ($AzureAdRequired) {
+      $TotalNumberOfFiles = $AzureAdUsersReportDetail | Measure-Object -Property 'File Count' -Sum
+    } else {
+      $TotalNumberOfFiles = $ReportDetail | Measure-Object -Property 'File Count' -Sum
+    }
+    $M365Sizing.$($Section).TotalNumberOfFiles = $TotalNumberOfFiles.Sum
+  } elseif ($Section -eq 'SharePoint') {
+    $M365Sizing.$($Section).NumberOfSites = $SummarizedData.Count
+    $TotalNumberOfFiles = $ReportDetail | Measure-Object -Property 'File Count' -Sum
+    $M365Sizing.$($Section).TotalNumberOfFiles = $TotalNumberOfFiles.Sum
   }
 }
 
+# Validate that Period (days) for historical reports is valid
+# Must be: 7, 30, 90, or 180
+$PeriodValues = @(7, 30, 90, 180)
+if ($Period -in $PeriodValues) {
+} else {
+    throw "Error: Period (days) needs to be: 7, 30, 90, or 180"
+}
 
 # Validate the required 'Microsoft.Graph.Reports' is installed
 # and provide a user friendly message when it's not.
 if (Get-Module -ListAvailable -Name Microsoft.Graph.Reports) {
-}
-else {
-  throw "The 'Microsoft.Graph.Reports' is required for this script. Run the follow command to install: Install-Module Microsoft.Graph.Reports"
+} else {
+  throw "The 'Microsoft.Graph.Reports' module is required for this script. Run the follow command to install: Install-Module Microsoft.Graph.Reports"
 }
 
 # Validate the required 'ExchangeOnlineManagement' is installed
 # and provide a user friendly message when it's not.
 if (Get-Module -ListAvailable -Name ExchangeOnlineManagement) {
-}
-else {
-  throw "The 'ExchangeOnlineManagement' is required for this script. Run the follow command to install: Install-Module ExchangeOnlineManagement"
+} else {
+  throw "The 'ExchangeOnlineManagement' module is required for this script. Run the follow command to install: Install-Module ExchangeOnlineManagement"
 }
 
 $AzureAdRequired = $PSBoundParameters.ContainsKey('AzureAdGroupName')
@@ -254,13 +192,12 @@ if ($AzureAdRequired) {
   # Validate the required 'Azure.Graph.Authentication' is installed
   # and provide a user friendly message when it's not.
   if (Get-Module -ListAvailable -Name Microsoft.Graph.Groups) {
-  }
-  else {
-    throw "The 'Microsoft.Graph.Groups' is required for filtering by a specific Azure AD Group. Run the follow command to install: Install-Module Microsoft.Graph.Groups"
+  } else {
+    throw "The 'Microsoft.Graph.Groups' module is required for filtering by a specific Azure AD Group. Run the follow command to install: Install-Module Microsoft.Graph.Groups"
   }
 }
 
-Write-Output "[INFO] Connecting to the Microsoft Graph API using 'Reports.Read.All', 'User.Read.All', and 'Group.Read.All' (if filtering results by Azure AD Group) permissions."
+Write-Output "[INFO] Connecting to the Microsoft Graph API using 'Reports.Read.All', 'User.Read.All', and 'Group.Read.All' permissions."
 try {
   Connect-MgGraph -Scopes "Reports.Read.All", "User.Read.All", "Group.Read.All"  | Out-Null
 }
@@ -270,11 +207,11 @@ catch {
   Write-Output "[ERROR] Unable to Connect to the Microsoft Graph PowerShell Module: $errorMessage"
 }
 
-Write-Output "[INFO] Looking up all users in the provided Azure AD Group."
 if ($AzureAdRequired) {
+  Write-Output "[INFO] Looking up all users in the provided Azure AD Group."
   $AzureAdGroupDetails = Get-MgGroup -Filter "DisplayName eq '$AzureAdGroupName'"
   if ($AzureAdGroupDetails.Count -eq 0) {
-    throw "The Azure AD Group '$AzureAdGroupName' does not exist."
+    throw "The Azure AD Group '$AzureAdGroupName' does not exist. Exiting script."
   }
   $AzureAdGroupMembersById = Get-MgGroupMember -GroupId $AzureAdGroupDetails.Id -All
   if ($EnableDebug) {
@@ -286,11 +223,12 @@ if ($AzureAdRequired) {
       $AzureAdGroupMembersByUserPrincipalName += $_.AdditionalProperties["userPrincipalName"]
     }
   }
-  Write-Output "[INFO] Discovered $($AzureAdGroupMembersByUserPrincipalName.Count) users in the provided Azure AD Group."
-  $AzureAdGroupMembersByUserPrincipalName | ForEach-Object { [PSCustomObject]@{ Value = $_ } } | Export-Csv -Path "./adgrouplist-$AzureAdGroupName.csv" -NoTypeI
   if ($AzureAdGroupMembersByUserPrincipalName.Count -eq 0) {
     throw "The Azure AD Group '$AzureAdGroupName' does not contain any User Principal Names."
   }
+  Write-Output "[INFO] Discovered $($AzureAdGroupMembersByUserPrincipalName.Count) users in the provided Azure AD Group: $AzureAdGroupName"
+  Write-Output "[INFO] Exporting AD Group user principal names to: $ADGroupCSVFilename"
+  $AzureAdGroupMembersByUserPrincipalName | Out-File -Path $ADGroupCSVFilename
 }
 
 if ($EnableDebug) {
@@ -313,6 +251,8 @@ $M365Sizing = [ordered]@{
     AverageGrowthPercentage      = 0
     OneYearStorageForecastInGB   = 0
     ThreeYearStorageForecastInGB = 0
+    TotalNumberOfItems           = 0
+    ItemsPerUser                 = 0
   }
   OneDrive           = [ordered]@{
     NumberOfUsers                = 0
@@ -322,6 +262,7 @@ $M365Sizing = [ordered]@{
     OneYearStorageForecastInGB   = 0
     ThreeYearStorageForecastInGB = 0
     TotalNumberOfFiles           = 0
+    FilesPerUser                 = 0
   }
   SharePoint         = [ordered]@{
     NumberOfSites                = 0
@@ -331,6 +272,13 @@ $M365Sizing = [ordered]@{
     OneYearStorageForecastInGB   = 0
     ThreeYearStorageForecastInGB = 0
     TotalNumberOfFiles           = 0
+    FilesPerUser                 = 0
+  }
+  Teams           = [ordered]@{
+      NumberOfUsers           = 0
+      TotalSizeGB             = 0
+      SizePerUserGB           = 0
+      AverageGrowthPercentage = 0
   }
   Licensing          = [ordered]@{
     # Commented out for now, but we can get the number of licensed users if required (Not just activated).
@@ -340,32 +288,69 @@ $M365Sizing = [ordered]@{
     # Teams            = 0
   }
   TotalDataToProtect = [ordered]@{
+    TotalSizeGB = 0
+    TotalItemsFiles = 0
     OneYearInGB   = 0
     ThreeYearInGB = 0
   }
-  # Teams = @{
-  #     NumberOfUsers = 0
-  #     TotalSizeGB = 0
-  #     SizePerUserGB = 0
-  #     AverageGrowthPercentage = 0
-  # }
 }
 
 #region Usage Detail Reports
 # Run Usage Detail Reports for different sections to get counts, total size of each section and average size.
 # We will only capture data that [Is Deleted] is equal to false. If [Is Deleted] is equal to True then that account has been deleted
 # from the customers M365 Tenant. It should not be counted in the sizing reports as We will not backup those objects.
-$UsageDetailReports = @{}
+$UsageDetailReports = [Ordered]@{}
 $UsageDetailReports.Add('Exchange', 'getMailboxUsageDetail')
 $UsageDetailReports.Add('OneDrive', 'getOneDriveUsageAccountDetail')
 $UsageDetailReports.Add('SharePoint', 'getSharePointSiteUsageDetail')
 
-Write-Output "[INFO] Retrieving the Total Storage Consumed for ..."
-foreach ($Section in $UsageDetailReports.Keys) {
-  $ReportCSV = Get-MgReport -ReportName $UsageDetailReports[$Section] -Period $Period
-  Write-Output " - $Section"
-  ProcessUsageReport -ReportCSV $ReportCSV -ReportName $UsageDetailReports[$Section] -Section $Section
+# Getting Exchange usage report and then processing it
+Write-Output "[INFO] Retrieving usage info for ..."
+Write-Output " - Exchange"
+$ReportCSV = Get-MgReport -ReportName 'getMailboxUsageDetail' -Period $Period
+Write-Output " - Usage report for Exchange output to: $ReportCSV"
+$ExchangeReportDetail = Import-Csv -Path $ReportCSV | Where-Object { $_.'Is Deleted' -eq 'FALSE' }
+if ($AzureAdRequired) {
+  $FilterByField = "User Principal Name"
+  $ExchangeReportDetail = $ExchangeReportDetail | Where-Object { $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
+  # If we didn't get any usage for the Azure AD group users, it might be because the reports are masking User IDs
+  if ($AzureAdUsersReportDetail.count -eq 0) {
+    Write-Output "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
+    Write-Output "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
+    Write-Output "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
+    throw "Error running script with Azure AD group option. Exiting script."
+  }
+  Write-Output "[INFO] For Exchange, found $($AzureAdUsersReportDetail.count) M365 users in the provided Azure AD Group"
 }
+ProcessUsageReport -ReportDetail $ExchangeReportDetail -Section 'Exchange'
+
+# Getting OneDrive usage report and then processing it
+Write-Output "[INFO] Retrieving usage info for ..."
+Write-Output " - OneDrive"
+$ReportCSV = Get-MgReport -ReportName 'getOneDriveUsageAccountDetail' -Period $Period
+Write-Output " - Usage report for OneDrive output to: $ReportCSV"
+$OneDriveReportDetail = Import-Csv -Path $ReportCSV | Where-Object { $_.'Is Deleted' -eq 'FALSE' }
+if ($AzureAdRequired) {
+  $FilterByField = "Owner Principal Name"
+  $OneDriveReportDetail = $OneDriveReportDetail | Where-Object { $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
+  # If we didn't get any usage for the Azure AD group users, it might be because the reports are masking User IDs
+  if ($AzureAdUsersReportDetail.count -eq 0) {
+    Write-Output "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
+    Write-Output "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
+    Write-Output "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
+    throw "Error running script with Azure AD group option. Exiting script."
+  }
+  Write-Output "[INFO] For OneDrive, found $($AzureAdUsersReportDetail.count) M365 users in the provided Azure AD Group"
+}
+ProcessUsageReport -ReportDetail $OneDriveReportDetail -Section 'OneDrive'
+
+# Getting OneDrive usage report and then processing it
+Write-Output "[INFO] Retrieving usage info for ..."
+Write-Output " - SharePoint"
+$ReportCSV = Get-MgReport -ReportName 'getSharePointSiteUsageDetail' -Period $Period
+Write-Output " - Usage report for SharePoint output to: $ReportCSV"
+$SharePointReportDetail = Import-Csv -Path $ReportCSV | Where-Object { $_.'Is Deleted' -eq 'FALSE' }
+ProcessUsageReport -ReportDetail $SharePointReportDetail -Section 'SharePoint'
 
 #endregion
 
@@ -377,166 +362,76 @@ $StorageUsageReports = @{}
 $StorageUsageReports.Add('Exchange', 'getMailboxUsageStorage')
 $StorageUsageReports.Add('OneDrive', 'getOneDriveUsageStorage')
 $StorageUsageReports.Add('SharePoint', 'getSharePointSiteUsageStorage')
-Write-Output "[INFO] Retrieving the Average Storage Growth Forecast for ..."
 
+Write-Output "[INFO] Retrieving historical usage reports"
+Write-Output "[INFO] Current usage data and historical reports may differ pending deletions"
 foreach ($Section in $StorageUsageReports.Keys) {
-  Write-Output " - $Section"
   $ReportCSV = Get-MgReport -ReportName $StorageUsageReports[$Section] -Period $Period
-  $AverageGrowth = Measure-AverageGrowth -ReportCSV $ReportCSV -ReportName $StorageUsageReports[$Section]
+  $AverageGrowth = Measure-AverageGrowth -ReportCSV $ReportCSV -ReportName $Section -CurrentUsageSize $($M365Sizing[$Section].TotalSizeGB)
   $M365Sizing.$($Section).AverageGrowthPercentage = [math]::Round($AverageGrowth, 2)
   Remove-Item -Path $ReportCSV
 }
-
+Write-Output "[NOTE] If the growth looks odd, try using a different period (-Period 7, 30, 90, 180) days"
 #endregion
-
-#region File Count Report
-$FileCountUsageReports = @{}
-$FileCountUsageReports.Add('SharePoint', 'getSharePointSiteUsageSiteCounts')
-$FileCountUsageReports.Add('OneDrive', 'getOneDriveUsageFileCounts')
-Write-Output "[INFO] Retrieving the File Counts for OneDrive and SharePoint ..."
-
-foreach ($Section in $FileCountUsageReports.Keys) {
-
-  Write-Output " - $Section"
-  $ReportCSV = Get-MgReport -ReportName $FileCountUsageReports[$Section] -Period $Period
-  $FileCount = Get-FileCountReport -ReportCSV $ReportCSV
-  $M365Sizing.$($Section).TotalNumberOfFiles = $FileCount
-
-  Remove-Item -Path $ReportCSV
-}
-
-
-
-#endregion
-
 
 Write-Output "[INFO] Disconnecting from the Microsoft Graph API."
 Disconnect-MgGraph
 
-# The Microsoft Exchange Reports do not contain In-Place Archive sizing information so we also need to connect to the Exchange Online module to
-# get this information
+# The Microsoft Exchange Reports do not contain In-Place Archive sizing information.DESCRIPTION
+# We need to connect to the Exchange Online module to get this information
 
 if ($SkipArchiveMailbox -eq $true) {
-  # Do Nothing
+  $ArchiveMailboxesCount = 'Skipped'
+  $TotalArchiveSizeGb = '-'
+  $TotalArchiveItems = '-'
 }
 else {
   Write-Output "[INFO] Switching to the Microsoft Exchange Online Module for more detailed reporting capabilities."
   Connect-ExchangeOnline -ShowBanner:$false
-}
-
-$ManualUserPrincipalName = $null
-$ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
-$ActionRequiredPromptMessage = "Enter the User Principal Name"
-
-
-
-$FirstInterval = 500
-$SkipInternval = $FirstInterval
-$ArchiveMailboxSizeGb = 0
-$LargeAmountofArchiveMailboxCount = 5000
-
-if ($SkipArchiveMailbox -eq $false) {
-  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing."
-  try {
-
-    if ($AzureAdRequired) {
-      $ArchiveMailboxes = @()
-      foreach ($AdGroupUser in $AzureAdGroupMembersByUserPrincipalName) {
-
-        try {
-          # $ArchiveMailboxes += Get-ExoMailbox -Archive -Identity $AdGroupUser
-          $ArchiveMailboxes += Get-ExoMailbox -Archive -Identity $AdGroupUser -ErrorAction Stop
-        }
-        catch {
-          # Write-Output "ERRRROR ERRRROR ERRRROR ERRRROR ERRRROR"
-          $errorException = $_.Exception
-          $errorMessage = $errorException.Message
-          # Write-Output $errorMessage.Message
-          # exit
-          # Write-Output "asdlfkja;lfkajdsf;lkasj;lkadsjfa;lsdfjkads;lfkjadsf;ladskjfad;slfkjads;lfjkadsf;lakdsfja;ldskfjadsfak;sdlfakdslj;fjadsfads;f"
-          if ($errorMessage.Contains("couldn't be found")) {
-            # User does not have an archive mailbox. Can ignore error.
-
-          }
-          else {
-            Write-Output "[ERROR] There was an issue retrieving Archive Mailbox details for $AdGroupUser. ($errorMessage)"
-
-
-          }
-        }
-
-      }
-
+  $ConnectionUserPrincipalName = $(Get-ConnectionInformation).UserPrincipalName
+  # $ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
+  # $ActionRequiredPromptMessage = "Enter the User Principal Name"
+  $FirstInterval = 500
+  $SkipInternval = $FirstInterval
+  $ArchiveMailboxSizeGb = 0
+  $LargeAmountofArchiveMailboxCount = 5000
+  $FilterByField = 'User Principal Name'
+  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing"
+  # Get a list of all users with In Place Archive mailboxes in the tenant
+  $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
+  # If we only need to get an Azure AD group, restrict the results to that
+  # if ($AzureAdRequired) {
+  #   $ExchangeReportDetail | Where-Object { $_.'Has Archive' -eq 'TRUE' }
+  #   $matching = $ArchiveMailboxes | Where-Object { $objID = $_.UserPrincipalName;  = $_; $array2 -contains { $_.ID -eq $object2.ID } }
+  # }
+  $ArchiveMailboxesCount = $ArchiveMailboxes.Count
+  $ArchiveMailboxList = @()
+  $CurrentMailboxNum = 0
+  Write-Output "[INFO] Found $ArchiveMailboxesCount mailboxes with In Place Archives"
+  do {
+    if ( ($CurrentMailboxNum % 10) -eq 0 ) {
+      Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
     }
-    else {
-      $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
+    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
+    $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
+    $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
+    $ArchiveSize = [int]($Matches[1] -replace ',', '')
+    $ArchiveStats = [PSCustomObject] @{
+      "UserPrincipalName" = $CurrentUser
+      "ArchiveSizeGB" = $ArchiveSize / 1GB
+      "ArchiveItems" = $ArchiveMailboxStats.ItemCount
     }
-
-
-    $ArchiveMailboxesCount = @($ArchiveMailboxes).Count
-
-    $ArchiveMailboxesFolders = @()
-    # Process the first N number of Archive Mailboxes. Where N = $FirstInterval
-    $ArchiveMailboxesFirstInverval = $ArchiveMailboxes | Select-Object -First $FirstInterval
-    if ($ArchiveMailboxesCount -le $LargeAmountofArchiveMailboxCount) {
-      $ArchiveMailboxesFolders += $ArchiveMailboxesFirstInverval | Get-EXOMailboxFolderStatistics -Archive | Select-Object name, FolderAndSubfolderSize
-
-    }
-    else {
-      Write-Output "[INFO] Detected a large number of Archive Mailboxes. Implementing additional logic to account for Microsoft API performance limits. This may take some time."
-      Write-Output ""
-      Write-Output $ActionRequiredLogMessage
-      Write-Output ""
-      $ManualUserPrincipalName = Read-Host -Prompt $ActionRequiredPromptMessage
-      $ArchiveMailboxesFolders += Start-RobustCloudCommand -UserPrincipalName $ManualUserPrincipalName -IdentifyingProperty "DisplayName" -recipients $ArchiveMailboxesFirstInverval -logfile "$systemTempFolder\archiveMailbox.log" -ScriptBlock { Get-EXOMailboxFolderStatistics -Identity $input.UserPrincipalName -Archive | Select-Object name, FolderAndSubfolderSize }
-      Write-Output ""
-
-    }
-    # Process any remaining Archive Mailboxes at the pre-defined $FirstInterval
-    if ($ArchiveMailboxesCount -ge $FirstInterval) {
-
-      while ($ArchiveMailboxesCount -ge 0) {
-        $ArchiveMailboxesCount = $ArchiveMailboxesCount - $FirstInterval
-        $ArchiveMailboxesSecondaryInverval = $ArchiveMailboxes | Select-Object -Skip $SkipInternval -First $FirstInterval
-
-        if ($ArchiveMailboxesCount -le $LargeAmountofArchiveMailboxCount) {
-          $ArchiveMailboxesFolders += $ArchiveMailboxesSecondaryInverval | Get-EXOMailboxFolderStatistics -Archive | Select-Object name, FolderAndSubfolderSize
-        }
-        else {
-          $ArchiveMailboxesFolders += Start-RobustCloudCommand -UserPrincipalName $ManualUserPrincipalName -IdentifyingProperty "DisplayName" -recipients $ArchiveMailboxesSecondaryInverval -logfile "$systemTempFolder\archiveMailbox.log" -ScriptBlock { Get-EXOMailboxFolderStatistics -Identity $input.UserPrincipalName -Archive | Select-Object name, FolderAndSubfolderSize }
-          Write-Output ""
-        }
-        $SkipInternval = $SkipInternval + $FirstInterval
-      }
-    }
-    # Remove the Start-RobustCloudCommand log file if it exists
-    Remove-Item -Path "$systemTempFolder\archiveMailbox.log" -ErrorAction SilentlyContinue
-    foreach ($Folder in $ArchiveMailboxesFolders) {
-      $FolderSize = $Folder.FolderAndSubfolderSize.ToString().split("(") | Select-Object -Index 1
-      $FolderSizeBytes = $FolderSize.split("bytes") | Select-Object -Index 0
-
-      $FolderSizeInGb = [math]::Round(([int64]$FolderSizeBytes / 1GB), 3, [MidPointRounding]::AwayFromZero)
-
-      $ArchiveMailboxSizeGb += $FolderSizeInGb
-    }
-    # Divided by two because the listed folders contain Top of Information Store which shows overall size of all the folders in side the mailbox.
-    $ArchiveMailboxSizeGb = $ArchiveMailboxSizeGb / 2
-
-    $M365Sizing.Exchange.TotalSizeGB += $ArchiveMailboxSizeGb
-    $M365Sizing.Exchange.SizePerUserGB = [math]::Round(($M365Sizing.Exchange.TotalSizeGB / $M365Sizing.Exchange.NumberOfUsers), 2)
-
-  }
-  catch {
-    $errorException = $_.Exception
-    $errorMessage = $errorException.Message
-    Write-Output "[ERROR] Unable to retrieve In-Place Archive sizing. $errorMessage "
-  }
-}
-
-if ($SkipArchiveMailbox -eq $true) {
-  # Do Nothing
-}
-else {
+    $ArchiveMailboxList += $ArchiveStats
+    $CurrentMailboxNum += 1
+  } while ($CurrentMailboxNum -lt $ArchiveMailboxesCount)
+  $ArchiveMeasurementSize = $ArchiveMailboxList | Measure-Object -Property 'ArchiveSizeGB' -Sum -Average
+  $ArchiveMeasurementItems = $ArchiveMailboxList | Measure-Object -Property 'ArchiveItems' -Sum -Average
+  $TotalArchiveSizeGb = [math]::Round($($ArchiveMeasurementSize.Sum), 2)
+  $TotalArchiveItems = $ArchiveMeasurementItems.Sum
+  Write-Output "[INFO] Finished gathering stats on mailboxes with In Place Archive"
+  Write-Output "[INFO] Total # of mailboxes with In Place Archive: $ArchiveMailboxesCount"
+  Write-Output "[INFO] Total size of mailboxes with In Place Archive: $TotalArchiveSizeGb"
+  Write-Output "[INFO] Total # of items of mailboxes with In Place Archive: $TotalArchiveItems"
   Write-Output "[INFO] Disconnecting from the Microsoft Exchange Online Module"
   Disconnect-ExchangeOnline -Confirm:$false -InformationAction Ignore -ErrorAction SilentlyContinue
 }
@@ -544,29 +439,36 @@ else {
 Write-Output "[INFO] Calculating the forecasted total storage need for Rubrik."
 foreach ($Section in $M365Sizing | Select-Object -ExpandProperty Keys) {
   if ( $Section -NotIn @("Licensing", "TotalDataToProtect") ) {
-    $M365Sizing.$($Section).OneYearStorageForecastInGB = $M365Sizing.$($Section).TotalSizeGB * (1.0 + (($M365Sizing.$($Section).AverageGrowthPercentage / 100) * 1))
-    $M365Sizing.$($Section).ThreeYearStorageForecastInGB = $M365Sizing.$($Section).TotalSizeGB * (1.0 + (($M365Sizing.$($Section).AverageGrowthPercentage / 100) * 3))
-
-    $M365Sizing.TotalDataToProtect.OneYearInGB = $M365Sizing.TotalDataToProtect.OneYearInGB + $M365Sizing.$($Section).OneYearStorageForecastInGB
-    $M365Sizing.TotalDataToProtect.ThreeYearInGB = $M365Sizing.TotalDataToProtect.ThreeYearInGB + $M365Sizing.$($Section).ThreeYearStorageForecastInGB
+    $M365Sizing.$($Section).OneYearStorageForecastInGB = $M365Sizing.$($Section).TotalSizeGB * (1.0 + (($M365Sizing.$($Section).AverageGrowthPercentage) * 1))
+    $M365Sizing.$($Section).ThreeYearStorageForecastInGB = $M365Sizing.$($Section).TotalSizeGB * (1.0 + (($M365Sizing.$($Section).AverageGrowthPercentage) * 3))
+    $M365Sizing.TotalDataToProtect.TotalSizeGB += $M365Sizing.$($Section).TotalSizeGB
+    $M365Sizing.TotalDataToProtect.TotalItemsFiles += $M365Sizing.$($Section).TotalNumberOfItems
+    $M365Sizing.TotalDataToProtect.TotalItemsFiles += $M365Sizing.$($Section).TotalNumberOfFiles
+    $M365Sizing.TotalDataToProtect.OneYearInGB += $M365Sizing.$($Section).OneYearStorageForecastInGB
+    $M365Sizing.TotalDataToProtect.ThreeYearInGB += $M365Sizing.$($Section).ThreeYearStorageForecastInGB
   }
+}
+
+if ($SkipArchiveMailbox -eq $false) {
+  $M365Sizing.TotalDataToProtect.TotalSizeGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.TotalItemsFiles += $TotalArchiveItems
+  $M365Sizing.TotalDataToProtect.OneYearInGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.ThreeYearInGB += $TotalArchiveSizeGb
 }
 
 if ($M365Sizing.Exchange.NumberOfUsers -gt $M365Sizing.OneDrive.NumberOfUsers) {
   $UserLicensesRequired = $M365Sizing.Exchange.NumberOfUsers
-}
-else {
+} else {
   $UserLicensesRequired = $M365Sizing.OneDrive.NumberOfUsers
 }
 
 $Calculate_Users_Required = [math]::ceiling($UserLicensesRequired)
-$Calculate_Storage_Required = [math]::ceiling($($M365Sizing[4].OneYearInGB))
-$Calculated_Per_User_Size = [math]::round($($M365Sizing[4].OneYearInGB) / $UserLicensesRequired, 2)
+$Calculate_Storage_Required = [math]::ceiling($($M365Sizing[5].OneYearInGB))
+$Calculated_Per_User_Size = [math]::round($($M365Sizing[5].OneYearInGB) / $UserLicensesRequired, 2)
 
 # Query M365Licsolver Azure Function
 # If less than 76GB Average per user then query the azure function that calculates the best mix of subscription types. If more than 76 then Unlimited is the best option.
 if (($Calculate_Storage_Required) / $Calculate_Users_Required -le 76) {
-
   # Query the M365Licsolver Azure Function
   $SolverQuery = '{"users":"' + $Calculate_Users_Required + '","data":"' + $Calculate_Storage_Required + '"}'
   try {
@@ -1025,6 +927,7 @@ $HTML_CODE = @"
                         <th>Average Growth Forecast (Yearly)</th>
                         <th>One Year Storage Forecast</th>
                         <th>Three Year Storage Forecast</th>
+                        <th>Number of Items</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1032,9 +935,26 @@ $HTML_CODE = @"
                         <td>$($M365Sizing[0].NumberOfUsers)</td>
                         <td>$($M365Sizing[0].TotalSizeGB) GB</td>
                         <td>$($M365Sizing[0].SizePerUserGB) GB</td>
-                        <td>$($M365Sizing[0].AverageGrowthPercentage)%</td>
+                        <td>$($M365Sizing[0].AverageGrowthPercentage * 100)%</td>
                         <td>$($M365Sizing[0].OneYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[0].ThreeYearStorageForecastInGB) GB</td>
+                        <td>$($M365Sizing[0].TotalNumberOfItems)</td>
+                    </tr>
+                </tbody>
+            </table>
+            <table class="styled-table">
+                <thead>
+                    <tr>
+                        <th>Number of In Place Archives</th>
+                        <th>Total Size</th>
+                        <th>Number of Items</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>$ArchiveMailboxesCount</td>
+                        <td>$TotalArchiveSizeGb GB</td>
+                        <td>$TotalArchiveItems</td>
                     </tr>
                 </tbody>
             </table>
@@ -1084,7 +1004,7 @@ $HTML_CODE = @"
                         <td>$($M365Sizing[1].NumberOfUsers)</td>
                         <td>$($M365Sizing[1].TotalSizeGB) GB</td>
                         <td>$($M365Sizing[1].SizePerUserGB) GB</td>
-                        <td>$($M365Sizing[1].AverageGrowthPercentage)%</td>
+                        <td>$($M365Sizing[1].AverageGrowthPercentage * 100)%</td>
                         <td>$($M365Sizing[1].OneYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[1].ThreeYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[1].TotalNumberOfFiles)</td>
@@ -1153,7 +1073,7 @@ $HTML_CODE = @"
                         <td>$($M365Sizing[2].NumberOfSites)</td>
                         <td>$($M365Sizing[2].TotalSizeGB) GB</td>
                         <td>$($M365Sizing[2].SizePerUserGB) GB</td>
-                        <td>$($M365Sizing[2].AverageGrowthPercentage)%</td>
+                        <td>$($M365Sizing[2].AverageGrowthPercentage * 100)%</td>
                         <td>$($M365Sizing[2].OneYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[2].ThreeYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[2].TotalNumberOfFiles)</td>
@@ -1181,6 +1101,8 @@ $HTML_CODE = @"
                     <thead>
                         <tr>
                             <th>Required Number of Licenses</th>
+                            <th>Total Size</th>
+                            <th>Total # of Items & Files</th>
                             <th>Per User Size (Year One)</th>
                             <th>One Year Storage Forecast</th>
                             <th>Three Year Storage Forecast</th>
@@ -1189,9 +1111,11 @@ $HTML_CODE = @"
                     <tbody>
                         <tr>
                             <td>$UserLicensesRequired</td>
+                            <td>$($M365Sizing[5].TotalSizeGB) GB</td>
+                            <td>$($M365Sizing[5].TotalItemsFiles)</td>
                             <td>$Calculated_Per_User_Size GB</td>
-                            <td>$($M365Sizing[4].OneYearInGB) GB</td>
-                            <td>$($M365Sizing[4].ThreeYearInGB) GB</td>
+                            <td>$($M365Sizing[5].OneYearInGB) GB</td>
+                            <td>$($M365Sizing[5].ThreeYearInGB) GB</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1508,8 +1432,6 @@ $HTML_CODE = @"
 </body>
 </html>
 "@
-
-
 #endregion
 
 #region Start-RobustCloudCommand
@@ -1967,13 +1889,11 @@ Function Get-EstimatedTimeToCompletion {
     # Return number of objects processed so that the variable in incremented
     return $ProcessedCount
 }
-
 #endregion
+
 # Remove any previously created files
 Remove-Item -Path .\Rubrik-M365-Sizing.html -ErrorAction SilentlyContinue
 Write-Output $HTML_CODE | Format-Table -AutoSize | Out-File -FilePath .\Rubrik-M365-Sizing.html -Append
-
-
 
 Write-Output "`n`nM365 Sizing information has been written to $((Get-ChildItem Rubrik-M365-Sizing.html).FullName)`n`n"
 if ($OutputObject) {
