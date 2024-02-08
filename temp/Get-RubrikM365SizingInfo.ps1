@@ -29,13 +29,12 @@ param (
     [Parameter()]
     [String]$AzureAdGroupName,
     [Parameter()]
-    [bool]$SkipArchiveMailbox = $false, # Temporary set to True as the default while API stablitity is addressed
+    [bool]$SkipArchiveMailbox = $false,
     [Parameter()]
     [String]$ADGroupCSVFilename = './adgrouplist.csv',
     # Number of days to get historical stats for: 7, 30, 90, 180
     [Parameter()]
-    [Int]$Period = 180,
-    $OutputObject
+    [Int]$Period = 180
 )
 
 $date = Get-Date
@@ -105,7 +104,7 @@ function Measure-AverageGrowth {
   $GrowthPerYearGB = [math]::Round($AvgGrowthPerDay * 365, 2)
   $GrowthPerYearPct = [math]::Round($GrowthPerYearGB / $CurrentUsageSize, 2)
   Write-Host "[INFO] $ReportName usage:"
-  Write-Host "  - Current usage: $CurrentUsageSize"
+  Write-Host "  - Current usage (calculated with per-user stats): $CurrentUsageSize GB"
   Write-Host "  - Usage on $($UsageReport[0].'Report Date'): $LatestUsageGB GB"
   Write-Host "  - Usage on $($UsageReport[-1].'Report Date'): $EarliestUsageGB GB"
   Write-Host "  - Growth over $ReportDays days: $GrowthOverPeriod GB"
@@ -314,13 +313,13 @@ if ($AzureAdRequired) {
   $FilterByField = "User Principal Name"
   $ExchangeReportDetail = $ExchangeReportDetail | Where-Object { $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
   # If we didn't get any usage for the Azure AD group users, it might be because the reports are masking User IDs
-  if ($AzureAdUsersReportDetail.count -eq 0) {
-    Write-Output "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
-    Write-Output "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
-    Write-Output "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
-    throw "Error running script with Azure AD group option. Exiting script."
+  if ($ExchangeReportDetail.count -eq 0) {
+    Write-Host "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
+    Write-Host "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
+    Write-Host "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
+    # throw "Error running script with Azure AD group option - could not find any matching users. Exiting script."
   }
-  Write-Output "[INFO] For Exchange, found $($AzureAdUsersReportDetail.count) M365 users in the provided Azure AD Group"
+  Write-Output "[INFO] For Exchange, found $($ExchangeReportDetail.count) M365 users in the provided Azure AD Group"
 }
 ProcessUsageReport -ReportDetail $ExchangeReportDetail -Section 'Exchange'
 
@@ -334,13 +333,13 @@ if ($AzureAdRequired) {
   $FilterByField = "Owner Principal Name"
   $OneDriveReportDetail = $OneDriveReportDetail | Where-Object { $_.$FilterByField -in $AzureAdGroupMembersByUserPrincipalName }
   # If we didn't get any usage for the Azure AD group users, it might be because the reports are masking User IDs
-  if ($AzureAdUsersReportDetail.count -eq 0) {
-    Write-Output "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
-    Write-Output "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
-    Write-Output "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
-    throw "Error running script with Azure AD group option. Exiting script."
+  if ($OneDriveReportDetail.count -eq 0) {
+    Write-Host "[ERROR] Did not match any Azure AD group users to the usage reports" -foregroundcolor red
+    Write-Host "[ERROR] Check the mailbox csv to see if User IDs are being masked" -foregroundcolor red
+    Write-Host "[ERROR] See: https://learn.microsoft.com/en-us/microsoft-365/troubleshoot/miscellaneous/reports-show-anonymous-user-name" -foregroundcolor red
+    # throw "Error running script with Azure AD group option. Exiting script."
   }
-  Write-Output "[INFO] For OneDrive, found $($AzureAdUsersReportDetail.count) M365 users in the provided Azure AD Group"
+  Write-Output "[INFO] For OneDrive, found $($OneDriveReportDetail.count) M365 users in the provided Azure AD Group"
 }
 ProcessUsageReport -ReportDetail $OneDriveReportDetail -Section 'OneDrive'
 
@@ -369,72 +368,10 @@ foreach ($Section in $StorageUsageReports.Keys) {
   $ReportCSV = Get-MgReport -ReportName $StorageUsageReports[$Section] -Period $Period
   $AverageGrowth = Measure-AverageGrowth -ReportCSV $ReportCSV -ReportName $Section -CurrentUsageSize $($M365Sizing[$Section].TotalSizeGB)
   $M365Sizing.$($Section).AverageGrowthPercentage = [math]::Round($AverageGrowth, 2)
-  Remove-Item -Path $ReportCSV
+  # Remove-Item -Path $ReportCSV
 }
-Write-Output "[NOTE] If the growth looks odd, try using a different period (-Period 7, 30, 90, 180) days"
+Write-Output "[NOTE] If the growth looks odd, try using a different period (parameter: -Period 7, 30, 90, 180) days"
 #endregion
-
-Write-Output "[INFO] Disconnecting from the Microsoft Graph API."
-Disconnect-MgGraph
-
-# The Microsoft Exchange Reports do not contain In-Place Archive sizing information.DESCRIPTION
-# We need to connect to the Exchange Online module to get this information
-
-if ($SkipArchiveMailbox -eq $true) {
-  $ArchiveMailboxesCount = 'Skipped'
-  $TotalArchiveSizeGb = '-'
-  $TotalArchiveItems = '-'
-}
-else {
-  Write-Output "[INFO] Switching to the Microsoft Exchange Online Module for more detailed reporting capabilities."
-  Connect-ExchangeOnline -ShowBanner:$false
-  $ConnectionUserPrincipalName = $(Get-ConnectionInformation).UserPrincipalName
-  # $ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
-  # $ActionRequiredPromptMessage = "Enter the User Principal Name"
-  $FirstInterval = 500
-  $SkipInternval = $FirstInterval
-  $ArchiveMailboxSizeGb = 0
-  $LargeAmountofArchiveMailboxCount = 5000
-  $FilterByField = 'User Principal Name'
-  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing"
-  # Get a list of all users with In Place Archive mailboxes in the tenant
-  $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
-  # If we only need to get an Azure AD group, restrict the results to that
-  # if ($AzureAdRequired) {
-  #   $ExchangeReportDetail | Where-Object { $_.'Has Archive' -eq 'TRUE' }
-  #   $matching = $ArchiveMailboxes | Where-Object { $objID = $_.UserPrincipalName;  = $_; $array2 -contains { $_.ID -eq $object2.ID } }
-  # }
-  $ArchiveMailboxesCount = $ArchiveMailboxes.Count
-  $ArchiveMailboxList = @()
-  $CurrentMailboxNum = 0
-  Write-Output "[INFO] Found $ArchiveMailboxesCount mailboxes with In Place Archives"
-  do {
-    if ( ($CurrentMailboxNum % 10) -eq 0 ) {
-      Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
-    }
-    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
-    $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
-    $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
-    $ArchiveSize = [int]($Matches[1] -replace ',', '')
-    $ArchiveStats = [PSCustomObject] @{
-      "UserPrincipalName" = $CurrentUser
-      "ArchiveSizeGB" = $ArchiveSize / 1GB
-      "ArchiveItems" = $ArchiveMailboxStats.ItemCount
-    }
-    $ArchiveMailboxList += $ArchiveStats
-    $CurrentMailboxNum += 1
-  } while ($CurrentMailboxNum -lt $ArchiveMailboxesCount)
-  $ArchiveMeasurementSize = $ArchiveMailboxList | Measure-Object -Property 'ArchiveSizeGB' -Sum -Average
-  $ArchiveMeasurementItems = $ArchiveMailboxList | Measure-Object -Property 'ArchiveItems' -Sum -Average
-  $TotalArchiveSizeGb = [math]::Round($($ArchiveMeasurementSize.Sum), 2)
-  $TotalArchiveItems = $ArchiveMeasurementItems.Sum
-  Write-Output "[INFO] Finished gathering stats on mailboxes with In Place Archive"
-  Write-Output "[INFO] Total # of mailboxes with In Place Archive: $ArchiveMailboxesCount"
-  Write-Output "[INFO] Total size of mailboxes with In Place Archive: $TotalArchiveSizeGb"
-  Write-Output "[INFO] Total # of items of mailboxes with In Place Archive: $TotalArchiveItems"
-  Write-Output "[INFO] Disconnecting from the Microsoft Exchange Online Module"
-  Disconnect-ExchangeOnline -Confirm:$false -InformationAction Ignore -ErrorAction SilentlyContinue
-}
 
 Write-Output "[INFO] Calculating the forecasted total storage need for Rubrik."
 foreach ($Section in $M365Sizing | Select-Object -ExpandProperty Keys) {
@@ -449,12 +386,8 @@ foreach ($Section in $M365Sizing | Select-Object -ExpandProperty Keys) {
   }
 }
 
-if ($SkipArchiveMailbox -eq $false) {
-  $M365Sizing.TotalDataToProtect.TotalSizeGB += $TotalArchiveSizeGb
-  $M365Sizing.TotalDataToProtect.TotalItemsFiles += $TotalArchiveItems
-  $M365Sizing.TotalDataToProtect.OneYearInGB += $TotalArchiveSizeGb
-  $M365Sizing.TotalDataToProtect.ThreeYearInGB += $TotalArchiveSizeGb
-}
+Write-Output "[INFO] Disconnecting from the Microsoft Graph API."
+Disconnect-MgGraph
 
 if ($M365Sizing.Exchange.NumberOfUsers -gt $M365Sizing.OneDrive.NumberOfUsers) {
   $UserLicensesRequired = $M365Sizing.Exchange.NumberOfUsers
@@ -503,6 +436,8 @@ else {
   $TotalAmountUsers = $UnlimitedGBUsers
   $TotalAmountStorage = "Unlimited"
 }
+
+
 
 #region HTML Code for Output
 $HTML_CODE = @"
@@ -942,22 +877,6 @@ $HTML_CODE = @"
                     </tr>
                 </tbody>
             </table>
-            <table class="styled-table">
-                <thead>
-                    <tr>
-                        <th>Number of In Place Archives</th>
-                        <th>Total Size</th>
-                        <th>Number of Items</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>$ArchiveMailboxesCount</td>
-                        <td>$TotalArchiveSizeGb GB</td>
-                        <td>$TotalArchiveItems</td>
-                    </tr>
-                </tbody>
-            </table>
         </div>
     </div>
 
@@ -1077,7 +996,6 @@ $HTML_CODE = @"
                         <td>$($M365Sizing[2].OneYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[2].ThreeYearStorageForecastInGB) GB</td>
                         <td>$($M365Sizing[2].TotalNumberOfFiles)</td>
-
                     </tr>
                 </tbody>
             </table>
@@ -1434,468 +1352,72 @@ $HTML_CODE = @"
 "@
 #endregion
 
-#region Start-RobustCloudCommand
-# Source: https://github.com/Canthv0/RobustCloudCommand
-# MIT License
-
-# Copyright (c) 2019 Canthv0
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-# SOFTWARE.
-Function Start-RobustCloudCommand {
-
-    <#
-
-.SYNOPSIS
-Generic wrapper script that tries to ensure that a script block successfully finishes execution in O365 against a large object count.
-
-Works well with intense operations that may cause throttling
-
-.DESCRIPTION
-Wrapper script that tries to ensure that a script block successfully finishes execution in O365 against a large object count.
-
-It accomplishs this by doing the following:
-* Monitors the health of the Remote powershell session and restarts it as needed.
-* Restarts the session every X number seconds to ensure a valid connection.
-* Attempts to work past session related errors and will skip objects that it can't process.
-* Attempts to calculate throttle exhaustion and sleep a sufficient time to allow throttle recovery
-
-.PARAMETER ActiveThrottle
-Calculated value based on your tenants powershell recharge rate.
-You tenant recharge rate can be calculated using a Micro Delay Warning message.
-
-Look for the following line in your Micro Delay Warning Message
-Balance: -1608289/2160000/-3000000
-
-The middle value is the recharge rate.
-Divide this value by the number of milliseconds in an hour (3600000)
-And subtract the result from 1 to get your AutomaticThrottle value
-
-1 - (2160000 / 3600000) = 0.4
-
-Default Value is .25
-
-.PARAMETER IdentifyingProperty
-What property of the objects we are processing that will be used to identify them in the log file and host
-If the value is not set by the user the script will attempt to determine if one of the following properties is present
-"DisplayName","Name","Identity","PrimarySMTPAddress","Alias","GUID"
-
-If the value is not set and we are not able to match a well known property the script will generate an error and terminate.
-
-.PARAMETER LogFile
-Location and file name for the log file.
-
-.PARAMETER ManualThrottle
-Manual delay of X number of milliseconds to sleep between each cmdlets call.
-Should only be used if the AutomaticThrottle isn't working to introduce sufficent delay to prevent Micro Delays
-
-.PARAMETER NonInteractive
-Suppresses output to the screen.  All output will still be in the log file.
-
-.PARAMETER Recipients
-Array of objects to operate on. This can be mailboxes or any other set of objects.
-Input must be an array!
-Anything comming in from the array can be accessed in the script block using $input.property
-
-.PARAMETER ResetSeconds
-How many seconds to run the script block before we rebuild the session with O365.
-
-.PARAMETER ScriptBlock
-The script that you want to robustly execute against the array of objects.  The Recipient objects will be provided to the cmdlets in the script block
-and can be accessed with $input as if you were pipelining the object.
-
-.PARAMETER UserPrincipalName
-UPN of the user that will be connecting to Exchange online.  Required so that sessions can automatically be set up using cached tokens.
-
-.LINK
-https://github.com/Canthv0/RobustCloudCommand
-
-.OUTPUTS
-Creates the log file specified in -logfile.  Logfile contains a record of all actions taken by the script.
-
-.EXAMPLE
-invoke-command -scriptblock {Get-mailbox -resultsize unlimited | select-object -property Displayname,PrimarySMTPAddress,Identity} -session (get-pssession) | export-csv c:\temp\mbx.csv
-
-$mbx = import-csv c:\temp\mbx.csv
-
-$cred = get-Credential
-
-.\Start-RobustCloudCommand.ps1 -UserPrincipalName admin@contoso.com -recipients $mbx -logfile C:\temp\out.log -ScriptBlock {Set-Clutter -identity $input.PrimarySMTPAddress.tostring() -enable:$false}
-
-Gets all mailboxes from the service returning only Displayname,Identity, and PrimarySMTPAddress.  Exports the results to a CSV
-Imports the CSV into a variable
-Gets your O365 Credential
-Executes the script setting clutter to off using Legacy Credentials
-
-.EXAMPLE
-invoke-command -scriptblock {Get-mailbox -resultsize unlimited | select-object -property Displayname,PrimarySMTPAddress,Identity} -session (get-pssession) | export-csv c:\temp\recipients.csv
-
-$recipients = import-csv c:\temp\recipients.csv
-
-Start-RobustCloudCommand -UserPrincipalName admin@contoso.com -recipients $recipients -logfile C:\temp\out.log -ScriptBlock {Get-MobileDeviceStatistics -mailbox $input.PrimarySMTPAddress.tostring() | Select-Object -Property @{Name = "PrimarySMTPAddress";Expression={$input.PrimarySMTPAddress.tostring()}},DeviceType,LastSuccessSync,FirstSyncTime | Export-Csv c:\temp\stats.csv -Append }
-
-Gets All Recipients and exports them to a CSV (for restart ability)
-Imports the CSV into a variable
-Executes the script to gather EAS Device statistics and output them to a csv file using ADAL with support for MFA
-
-
-#>
-
-    Param(
-        [Parameter(Mandatory = $true)]
-        [string]$LogFile,
-        [Parameter(Mandatory = $true)]
-        $Recipients,
-        [Parameter(Mandatory = $true)]
-        [ScriptBlock]$ScriptBlock,
-        [Parameter(Mandatory = $true)]
-        [String]$UserPrincipalName,
-        [int]$ManualThrottle = 0,
-        [double]$ActiveThrottle = .25,
-        [int]$ResetSeconds = 870,
-        [string]$IdentifyingProperty,
-        [Switch]$NonInteractive
-    )
-
-    # Turns on strict mode https://technet.microsoft.com/library/03373bbe-2236-42c3-bf17-301632e0c428(v=wps.630).aspx
-    Set-StrictMode -Version 2
-    $InformationPreference = "Continue"
-    $Global:ErrorActionPreference = "Stop"
-    Write-Log ("Error Action Preference: " + $Global:ErrorActionPreference)
-    Write-Log ("Information Preference: " + $InformationPreference)
-
-    # Log the script block for debugging purposes
-    Write-log $ScriptBlock
-
-    # Setup our first session to O365
-    $ErrorCount = 0
-    New-CleanO365Session
-
-    # Get when we started the script for estimating time to completion
-    $ScriptStartTime = Get-Date
-    [int]$ObjectsProcessed = 0
-    [int]$ObjectCount = $Recipients.count
-
-    # If we don't have an identifying property then try to find one
-    if ([string]::IsNullOrEmpty($IdentifyingProperty)) {
-        # Call our function for finding an identifying property and pass in the first recipient object
-        $IdentifyingProperty = Get-ObjectIdentificationProperty -object $Recipients[0]
-    }
-
-    # Go thru each recipient object and execute the script block
-    foreach ($object in $Recipients) {
-
-        # Set our initial while statement values
-        $TryCommand = $true
-        $errorcount = 0
-        $Global:Error.clear()
-
-        # Try the command 3 times and exit out if we can't get it to work
-        # Record the error and restart the session each time it errors out
-        while ($TryCommand) {
-            Write-log ("Running scriptblock for " + ($object.$IdentifyingProperty).tostring())
-
-            # Test our connection and rebuild if needed
-            Test-O365Session
-
-            # Invoke the script block
-            try {
-                Invoke-Command -InputObject $object -ScriptBlock $ScriptBlock -ErrorAction Stop
-
-                # Since we didn't get an error don't run again
-                $TryCommand = $false
-
-                # Increment the object processed count / Estimate time to completion
-                $ObjectsProcessed = Get-EstimatedTimeToCompletion -ProcessedCount $ObjectsProcessed -TotalObjects $ObjectCount -StartTime $ScriptStartTime
-            }
-            catch {
-
-                # Handle if we keep failing on the object
-                if ($errorcount -ge 3) {
-                    Write-Log ("[ERROR] - Object `"" + ($object.$IdentifyingProperty).tostring() + "`" has failed three times!")
-                    Write-Log ("[ERROR] - Skipping Object")
-
-                    # Increment the object processed count / Estimate time to completion
-                    $ObjectsProcessed = Get-EstimatedTimeToCompletion -ProcessedCount $ObjectsProcessed -StartTime $ScriptStartTime
-
-                    # Set trycommand to false so we abort the while loop
-                    $TryCommand = $false
-                }
-                # Otherwise try the command again
-                else {
-                    if ($null -eq $Global:Error) {
-                        Write-Log "Global Error Null"
-                        Write-Log ("Local Error: " + $Error)
-                    }
-                    else {
-                        Write-Log $Global:Error
-                    }
-
-                    Write-Log ("Rebuilding session and trying again")
-                    $ErrorCount++
-                    # Create a new session in case the error was due to a session issue
-                    New-CleanO365Session
-                }
-            }
-        }
-    }
-
-    Write-Log "Script Complete Destroying PS Sessions"
-    # Destroy any outstanding PS Session
-    Get-PSSession | Remove-PSSession -Confirm:$false
-
-    $Global:ErrorActionPreference = "Continue"
-    Write-Log ("Error Action Preference: " + $Global:ErrorActionPreference)
-
-
-}
-
-# Writes output to a log file with a time date stamp
-Function Write-Log {
-    Param ([string]$string)
-
-    # Get the current date
-    [string]$date = Get-Date -Format G
-
-    # Write everything to our log file
-    ( "[" + $date + "] - " + $string) | Out-File -FilePath $LogFile -Append
-
-    # If NonInteractive true then suppress host output
-    if (!($NonInteractive)) {
-        Write-Information ( "[" + $date + "] - " + $string)
-    }
-}
-
-# Sleeps X seconds and displays a progress bar
-Function Start-SleepWithProgress {
-    Param([int]$sleeptime)
-
-    # Loop Number of seconds you want to sleep
-    For ($i = 0; $i -le $sleeptime; $i++) {
-        $timeleft = ($sleeptime - $i);
-
-        # Progress bar showing progress of the sleep
-        Write-Progress -Activity "Sleeping" -CurrentOperation "$Timeleft More Seconds" -PercentComplete (($i / $sleeptime) * 100) -Status " "
-
-        # Sleep 1 second
-        start-sleep 1
-    }
-
-    Write-Progress -Completed -Activity "Sleeping" -Status " "
-}
-
-# Setup a new O365 Powershell Session
-Function New-CleanO365Session {
-
-    # Destroy any outstanding PS Session
-    Write-Log "Removing all PS Sessions"
-    Get-PSSession | Remove-PSSession -Confirm:$false
-
-    # Force Garbage collection just to try and keep things more agressively cleaned up due to some issue with large memory footprints
-    [System.GC]::Collect()
-
-    # Sleep 15s to allow the sessions to tear down fully
-    Write-Log ("Sleeping 15 seconds for Session Tear Down")
-    Start-SleepWithProgress -SleepTime 15
-
-    # Clear out all errors
-    $Error.Clear()
-
-    # Create the session
-    Write-Log "Connecting to Exchange Online"
-    Connect-ExchangeOnline -UserPrincipalName $UserPrincipalName -ShowBanner:$false
-
-    # Check for an error while creating the session
-    if ($Error.Count -gt 0) {
-
-        Write-Log "[ERROR] - Error while setting up session"
-        Write-log $Error
-
-        # Increment our error count so we abort after so many attempts to set up the session
-        $ErrorCount++
-
-        # if we have failed to setup the session > 3 times then we need to abort because we are in a failure state
-        if ($ErrorCount -gt 3) {
-
-            Write-log "[ERROR] - Failed to setup session after multiple tries"
-            Write-log "[ERROR] - Aborting Script"
-            exit
-
-        }
-
-        # If we are not aborting then sleep 60s in the hope that the issue is transient
-        Write-Log "Sleeping 60s so that issue can potentially be resolved"
-        Start-SleepWithProgress -sleeptime 60
-
-        # Attempt to set up the sesion again
-        New-CleanO365Session
-    }
-
-    # If the session setup worked then we need to set $errorcount to 0
-    else {
-        $ErrorCount = 0
-    }
-
-    # Set the Start time for the current session
-    Set-Variable -Scope script -Name SessionStartTime -Value (Get-Date)
-}
-
-# Verifies that the connection is healthy
-# Goes ahead and resets it every $ResetSeconds number of seconds either way
-Function Test-O365Session {
-
-    # Get the time that we are working on this object to use later in testing
-    $ObjectTime = Get-Date
-
-    # Reset and regather our session information
-    $SessionInfo = $null
-    $SessionInfo = Get-PSSession
-
-    # Make sure we found a session
-    if ($null -eq $SessionInfo) {
-        Write-Log "[ERROR] - No Session Found"
-        Write-log "Recreating Session"
-        New-CleanO365Session
-    }
-    # Make sure it is in an opened state if not log and recreate
-    elseif ($SessionInfo.State -ne "Opened") {
-        Write-Log "[ERROR] - Session not in Open State"
-        Write-log ($SessionInfo | Format-List | Out-String )
-        Write-log "Recreating Session"
-        New-CleanO365Session
-    }
-    # If we have looped thru objects for an amount of time gt our reset seconds then tear the session down and recreate it
-    elseif (($ObjectTime - $SessionStartTime).totalseconds -gt $ResetSeconds) {
-        Write-Log ("Session Has been active for greater than " + $ResetSeconds + " seconds" )
-        Write-Log "Rebuilding Connection"
-
-        # Estimate the throttle delay needed since the last session rebuild
-        # Amount of time the session was allowed to run * our activethrottle value
-        # Divide by 2 to account for network time, script delays, and a fudge factor
-        # Subtract 15s from the results for the amount of time that we spend setting up the session anyway
-        [int]$DelayinSeconds = ((($ResetSeconds * $ActiveThrottle) / 2) - 15)
-
-        # If the delay is >15s then sleep that amount for throttle to recover
-        if ($DelayinSeconds -gt 0) {
-
-            Write-Log ("Sleeping " + $DelayinSeconds + " addtional seconds to allow throttle recovery")
-            Start-SleepWithProgress -SleepTime $DelayinSeconds
-        }
-        # If the delay is <15s then the sleep already built into New-CleanO365Session should take care of it
-        else {
-            Write-Log ("Active Delay calculated to be " + ($DelayinSeconds + 15) + " seconds no addtional delay needed")
-        }
-
-        # new O365 session and reset our object processed count
-        New-CleanO365Session
-    }
-    else {
-        # If session is active and it hasn't been open too long then do nothing and keep going
-    }
-
-    # If we have a manual throttle value then sleep for that many milliseconds
-    if ($ManualThrottle -gt 0) {
-        Write-log ("Sleeping " + $ManualThrottle + " milliseconds")
-        Start-SleepWithProgress -Milliseconds $ManualThrottle
-    }
-}
-
-# If the $identifyingProperty has not been set then we attempt to locate a value for tracking modified objects
-Function Get-ObjectIdentificationProperty {
-    Param($object)
-
-    Write-Log "Trying to identify a property for displaying per object progress"
-
-    # Common properties to check
-    [array]$PropertiesToCheck = "DisplayName", "Name", "Identity", "PrimarySMTPAddress", "Alias", "GUID"
-
-    # Set our counter to 0
-    $i = 0
-    [string]$PropertiesString = $null
-    [bool]$Found = $false
-
-    # While we haven't found an ID property continue checking
-    while ($found -eq $false) {
-
-        # If we have gone thru the list then we need to throw an error because we don't have Identity information
-        # Set the string to bogus just to ensure we will exit the while loop
-        if ($i -gt ($PropertiesToCheck.length - 1)) {
-            Write-Log "[ERROR] - Unable to find a common identity parameter in the input object"
-
-            # Create an error message that has all of the valid property names that we are looking for
-            ForEach ($value in $PropertiesToCheck) { [string]$PropertiesString = $PropertiesString + "`"" + $value + "`", " }
-            $PropertiesString = $PropertiesString.TrimEnd(", ")
-            [string]$errorstring = "Objects does not contain a common identity parameter " + $PropertiesString + " please use -IdentifyingProperty to set the identity value"
-
-            # Throw error
-            Write-Error -Message $errorstring -ErrorAction Stop
-        }
-
-        # Get the property we are testing out of our array
-        [string]$Property = $PropertiesToCheck[$i]
-
-        # Check the properties of the object to see if we have one that matches a well known name
-        # If we have found one set the value to that property
-        if ($null -ne $object.$Property) {
-            Write-log ("Found " + $Property + " to use for displaying per object progress")
-            $found = $true
-            Return $Property
-        }
-
-        # Increment our position counter
-        $i++
-
-    }
-}
-
-# Gather and print out information about how fast the script is running
-Function Get-EstimatedTimeToCompletion {
-    param([int]$ProcessedCount, [int]$TotalObjects, [datetime]$StartTime)
-
-    # Increment our count of how many objects we have processed
-    $ProcessedCount++
-
-    # Every 100 we need to estimate our completion time and write that out
-    if (($ProcessedCount % 100) -eq 0) {
-
-        # Get the current date
-        $CurrentDate = Get-Date
-
-        # Average time per object in seconds
-        $AveragePerObject = (((($CurrentDate) - $StartTime).totalseconds) / $ProcessedCount)
-
-        # Write out session stats and estimated time to completion
-        Write-Log ("[STATS] - Total Number of Objects:     " + $TotalObjects)
-        Write-Log ("[STATS] - Number of Objects processed: " + $ProcessedCount)
-        Write-Log ("[STATS] - Average seconds per object:  " + $AveragePerObject)
-        Write-Log ("[STATS] - Estimated completion time:   " + $CurrentDate.addseconds((($TotalObjects - $ProcessedCount) * $AveragePerObject)))
-    }
-
-    # Return number of objects processed so that the variable in incremented
-    return $ProcessedCount
-}
-#endregion
-
 # Remove any previously created files
 Remove-Item -Path .\Rubrik-M365-Sizing.html -ErrorAction SilentlyContinue
 Write-Output $HTML_CODE | Format-Table -AutoSize | Out-File -FilePath .\Rubrik-M365-Sizing.html -Append
 
 Write-Output "`n`nM365 Sizing information has been written to $((Get-ChildItem Rubrik-M365-Sizing.html).FullName)`n`n"
-if ($OutputObject) {
-    return $M365Sizing
+
+
+# The Microsoft Exchange Reports do not contain In-Place Archive sizing information.DESCRIPTION
+# We need to connect to the Exchange Online module to get this information
+
+if ($SkipArchiveMailbox -eq $true) {
+  Write-Output "Skipping gathering In Place Archive usage"
+}
+else {
+  Write-Output "Now gathering In Place Archive usage"
+  Write-Output "This may take awhile since stats need to be gathered per user"
+  Write-Output "Progress will be written as they are gathered"
+  Write-Output "[INFO] Switching to the Microsoft Exchange Online Module for more detailed reporting capabilities."
+  Connect-ExchangeOnline -ShowBanner:$false
+  $ConnectionUserPrincipalName = $(Get-ConnectionInformation).UserPrincipalName
+  # $ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
+  # $ActionRequiredPromptMessage = "Enter the User Principal Name"
+  $FirstInterval = 500
+  $SkipInternval = $FirstInterval
+  $ArchiveMailboxSizeGb = 0
+  $LargeAmountofArchiveMailboxCount = 5000
+  $FilterByField = 'User Principal Name'
+  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing"
+  # Get a list of all users with In Place Archive mailboxes in the tenant
+  # $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
+  $ArchiveMailboxes = $ExchangeReportDetail | Where-Object { $_.'Has Archive' -eq 'TRUE' }
+  $ArchiveMailboxesCount = $ArchiveMailboxes.Count
+  $ArchiveMailboxList = @()
+  $CurrentMailboxNum = 0
+  Write-Output "[INFO] Found $ArchiveMailboxesCount mailboxes with In Place Archives"
+  do {
+    if ( ($CurrentMailboxNum % 10) -eq 0 ) {
+      Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
+    }
+    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
+    $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
+    $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
+    $ArchiveSize = [long]($Matches[1] -replace ',', '')
+    $ArchiveStats = [PSCustomObject] @{
+      "UserPrincipalName" = $CurrentUser
+      "ArchiveSizeGB" = $ArchiveSize / 1GB
+      "ArchiveItems" = $ArchiveMailboxStats.ItemCount
+    }
+    $ArchiveMailboxList += $ArchiveStats
+    $CurrentMailboxNum += 1
+  } while ($CurrentMailboxNum -lt $ArchiveMailboxesCount)
+  $ArchiveMeasurementSize = $ArchiveMailboxList | Measure-Object -Property 'ArchiveSizeGB' -Sum -Average
+  $ArchiveMeasurementItems = $ArchiveMailboxList | Measure-Object -Property 'ArchiveItems' -Sum -Average
+  $TotalArchiveSizeGb = [math]::Round($($ArchiveMeasurementSize.Sum), 2)
+  $TotalArchiveItems = $ArchiveMeasurementItems.Sum
+  Write-Output "[INFO] Finished gathering stats on mailboxes with In Place Archive"
+  Write-Output "[INFO] Total # of mailboxes with In Place Archive: $ArchiveMailboxesCount"
+  Write-Output "[INFO] Total size of mailboxes with In Place Archive: $TotalArchiveSizeGb GB"
+  Write-Output "[INFO] Total # of items of mailboxes with In Place Archive: $TotalArchiveItems"
+  Write-Output "[INFO] Disconnecting from the Microsoft Exchange Online Module"
+  Disconnect-ExchangeOnline -Confirm:$false -InformationAction Ignore -ErrorAction SilentlyContinue
+}
+
+if ($SkipArchiveMailbox -eq $false) {
+  $M365Sizing.TotalDataToProtect.TotalSizeGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.TotalItemsFiles += $TotalArchiveItems
+  $M365Sizing.TotalDataToProtect.OneYearInGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.ThreeYearInGB += $TotalArchiveSizeGb
 }
