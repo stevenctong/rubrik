@@ -389,6 +389,70 @@ foreach ($Section in $M365Sizing | Select-Object -ExpandProperty Keys) {
 Write-Output "[INFO] Disconnecting from the Microsoft Graph API."
 Disconnect-MgGraph
 
+
+# The Microsoft Exchange Reports do not contain In-Place Archive sizing information.DESCRIPTION
+# We need to connect to the Exchange Online module to get this information
+
+if ($SkipArchiveMailbox -eq $true) {
+  Write-Output "Skipping gathering In Place Archive usage"
+}
+else {
+  Write-Output "Now gathering In Place Archive usage"
+  Write-Output "This may take awhile since stats need to be gathered per user"
+  Write-Output "Progress will be written as they are gathered"
+  Write-Output "[INFO] Switching to the Microsoft Exchange Online Module for more detailed reporting capabilities."
+  Connect-ExchangeOnline -ShowBanner:$false
+  $ConnectionUserPrincipalName = $(Get-ConnectionInformation).UserPrincipalName
+  # $ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
+  # $ActionRequiredPromptMessage = "Enter the User Principal Name"
+  $FirstInterval = 500
+  $SkipInternval = $FirstInterval
+  $ArchiveMailboxSizeGb = 0
+  $LargeAmountofArchiveMailboxCount = 5000
+  $FilterByField = 'User Principal Name'
+  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing"
+  # Get a list of all users with In Place Archive mailboxes in the tenant
+  # $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
+  $ArchiveMailboxes = $ExchangeReportDetail | Where-Object { $_.'Has Archive' -eq 'TRUE' }
+  $ArchiveMailboxesCount = $ArchiveMailboxes.Count
+  $ArchiveMailboxList = @()
+  $CurrentMailboxNum = 0
+  Write-Output "[INFO] Found $ArchiveMailboxesCount mailboxes with In Place Archives"
+  do {
+    if ( ($CurrentMailboxNum % 10) -eq 0 ) {
+      Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
+    }
+    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
+    $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
+    $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
+    $ArchiveSize = [long]($Matches[1] -replace ',', '')
+    $ArchiveStats = [PSCustomObject] @{
+      "UserPrincipalName" = $CurrentUser
+      "ArchiveSizeGB" = $ArchiveSize / 1GB
+      "ArchiveItems" = $ArchiveMailboxStats.ItemCount
+    }
+    $ArchiveMailboxList += $ArchiveStats
+    $CurrentMailboxNum += 1
+  } while ($CurrentMailboxNum -lt $ArchiveMailboxesCount)
+  $ArchiveMeasurementSize = $ArchiveMailboxList | Measure-Object -Property 'ArchiveSizeGB' -Sum -Average
+  $ArchiveMeasurementItems = $ArchiveMailboxList | Measure-Object -Property 'ArchiveItems' -Sum -Average
+  $TotalArchiveSizeGb = [math]::Round($($ArchiveMeasurementSize.Sum), 2)
+  $TotalArchiveItems = $ArchiveMeasurementItems.Sum
+  Write-Output "[INFO] Finished gathering stats on mailboxes with In Place Archive"
+  Write-Output "[INFO] Total # of mailboxes with In Place Archive: $ArchiveMailboxesCount"
+  Write-Output "[INFO] Total size of mailboxes with In Place Archive: $TotalArchiveSizeGb GB"
+  Write-Output "[INFO] Total # of items of mailboxes with In Place Archive: $TotalArchiveItems"
+  Write-Output "[INFO] Disconnecting from the Microsoft Exchange Online Module"
+  Disconnect-ExchangeOnline -Confirm:$false -InformationAction Ignore -ErrorAction SilentlyContinue
+}
+
+if ($SkipArchiveMailbox -eq $false) {
+  $M365Sizing.TotalDataToProtect.TotalSizeGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.TotalItemsFiles += $TotalArchiveItems
+  $M365Sizing.TotalDataToProtect.OneYearInGB += $TotalArchiveSizeGb
+  $M365Sizing.TotalDataToProtect.ThreeYearInGB += $TotalArchiveSizeGb
+}
+
 if ($M365Sizing.Exchange.NumberOfUsers -gt $M365Sizing.OneDrive.NumberOfUsers) {
   $UserLicensesRequired = $M365Sizing.Exchange.NumberOfUsers
 } else {
@@ -1357,67 +1421,3 @@ Remove-Item -Path .\Rubrik-M365-Sizing.html -ErrorAction SilentlyContinue
 Write-Output $HTML_CODE | Format-Table -AutoSize | Out-File -FilePath .\Rubrik-M365-Sizing.html -Append
 
 Write-Output "`n`nM365 Sizing information has been written to $((Get-ChildItem Rubrik-M365-Sizing.html).FullName)`n`n"
-
-
-# The Microsoft Exchange Reports do not contain In-Place Archive sizing information.DESCRIPTION
-# We need to connect to the Exchange Online module to get this information
-
-if ($SkipArchiveMailbox -eq $true) {
-  Write-Output "Skipping gathering In Place Archive usage"
-}
-else {
-  Write-Output "Now gathering In Place Archive usage"
-  Write-Output "This may take awhile since stats need to be gathered per user"
-  Write-Output "Progress will be written as they are gathered"
-  Write-Output "[INFO] Switching to the Microsoft Exchange Online Module for more detailed reporting capabilities."
-  Connect-ExchangeOnline -ShowBanner:$false
-  $ConnectionUserPrincipalName = $(Get-ConnectionInformation).UserPrincipalName
-  # $ActionRequiredLogMessage = "[ACTION REQUIRED] In order to periodically refresh the connection to Microsoft, we need the User Principal Name used during the authentication process."
-  # $ActionRequiredPromptMessage = "Enter the User Principal Name"
-  $FirstInterval = 500
-  $SkipInternval = $FirstInterval
-  $ArchiveMailboxSizeGb = 0
-  $LargeAmountofArchiveMailboxCount = 5000
-  $FilterByField = 'User Principal Name'
-  Write-Output "[INFO] Retrieving all Exchange Mailbox In-Place Archive sizing"
-  # Get a list of all users with In Place Archive mailboxes in the tenant
-  # $ArchiveMailboxes = Get-ExoMailbox -Archive -ResultSize Unlimited
-  $ArchiveMailboxes = $ExchangeReportDetail | Where-Object { $_.'Has Archive' -eq 'TRUE' }
-  $ArchiveMailboxesCount = $ArchiveMailboxes.Count
-  $ArchiveMailboxList = @()
-  $CurrentMailboxNum = 0
-  Write-Output "[INFO] Found $ArchiveMailboxesCount mailboxes with In Place Archives"
-  do {
-    if ( ($CurrentMailboxNum % 10) -eq 0 ) {
-      Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
-    }
-    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
-    $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
-    $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
-    $ArchiveSize = [long]($Matches[1] -replace ',', '')
-    $ArchiveStats = [PSCustomObject] @{
-      "UserPrincipalName" = $CurrentUser
-      "ArchiveSizeGB" = $ArchiveSize / 1GB
-      "ArchiveItems" = $ArchiveMailboxStats.ItemCount
-    }
-    $ArchiveMailboxList += $ArchiveStats
-    $CurrentMailboxNum += 1
-  } while ($CurrentMailboxNum -lt $ArchiveMailboxesCount)
-  $ArchiveMeasurementSize = $ArchiveMailboxList | Measure-Object -Property 'ArchiveSizeGB' -Sum -Average
-  $ArchiveMeasurementItems = $ArchiveMailboxList | Measure-Object -Property 'ArchiveItems' -Sum -Average
-  $TotalArchiveSizeGb = [math]::Round($($ArchiveMeasurementSize.Sum), 2)
-  $TotalArchiveItems = $ArchiveMeasurementItems.Sum
-  Write-Output "[INFO] Finished gathering stats on mailboxes with In Place Archive"
-  Write-Output "[INFO] Total # of mailboxes with In Place Archive: $ArchiveMailboxesCount"
-  Write-Output "[INFO] Total size of mailboxes with In Place Archive: $TotalArchiveSizeGb GB"
-  Write-Output "[INFO] Total # of items of mailboxes with In Place Archive: $TotalArchiveItems"
-  Write-Output "[INFO] Disconnecting from the Microsoft Exchange Online Module"
-  Disconnect-ExchangeOnline -Confirm:$false -InformationAction Ignore -ErrorAction SilentlyContinue
-}
-
-if ($SkipArchiveMailbox -eq $false) {
-  $M365Sizing.TotalDataToProtect.TotalSizeGB += $TotalArchiveSizeGb
-  $M365Sizing.TotalDataToProtect.TotalItemsFiles += $TotalArchiveItems
-  $M365Sizing.TotalDataToProtect.OneYearInGB += $TotalArchiveSizeGb
-  $M365Sizing.TotalDataToProtect.ThreeYearInGB += $TotalArchiveSizeGb
-}
