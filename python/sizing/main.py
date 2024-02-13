@@ -5,10 +5,10 @@ from input import TOTAL_FETB, DATA_REDUCTION_RATIO, TOTAL_NON_COMPRESSIBLE_FETB,
     MONTHLY_FREQUENCY, MONTHLY_RETENTION_MONTHS, MONTHLY_CHANGE_RATE_PERCENT, \
     QUARTERLY_FREQUENCY, QUARTERLY_RETENTION_QUARTERS, QUARTERLY_CHANGE_RATE_PERCENT, \
     YEARLY_FREQUENCY, YEARLY_RETENTION_YEARS, YEARLY_CHANGE_RATE_PERCENT
-from sla import Sla
+from capacitycore import CapacityCore
 
 def main():
-    my_sla = Sla(total_fetb = TOTAL_FETB,
+    my_capacity_core = CapacityCore(total_fetb = TOTAL_FETB,
         data_reduction_ratio = DATA_REDUCTION_RATIO,
         total_non_compressible_fetb = TOTAL_NON_COMPRESSIBLE_FETB,
         hourly_frequency=HOURLY_FREQUENCY,
@@ -30,35 +30,35 @@ def main():
         yearly_retention=YEARLY_RETENTION_YEARS,
         yearly_change_rate=YEARLY_CHANGE_RATE_PERCENT
     )
-    print("FETB: %d" % my_sla.total_fetb)
-    print("FETB non-compressible: %d" %my_sla.total_non_compressible_fetb)
-    print("Data reduction ratio: %f" % my_sla.data_reduction_ratio)
-    print("First full: %f" % my_sla.first_full)
+    print("FETB: %d" % my_capacity_core.total_fetb)
+    print("FETB non-compressible: %d" %my_capacity_core.total_non_compressible_fetb)
+    print("Data reduction ratio: %f" % my_capacity_core.data_reduction_ratio)
+    print("First full: %f" % my_capacity_core.first_full)
     print("")
-    print("Hourly retention days: %f" % my_sla.hourlyRetentionDays)
-    print("Hourly incremental size: %f" % my_sla.hourlyIncrementalSize)
-    print("Hourly total size: %f" % my_sla.hourlyTotalSize)
-    print("Hourlies retained: %f" % my_sla.hourlyRetained)
-    print("Daily retention days: %f" % my_sla.dailyRetentionDays)
-    print("Daily incremental size: %f" % my_sla.dailyIncrementalSize)
-    print("Daily total size: %f" % my_sla.dailyTotalSize)
-    print("Dailies retained: %f" % my_sla.dailyRetained)
-    print("Weekly retention days: %f" % my_sla.weeklyRetentionDays)
-    print("Weekly incremental size: %f" % my_sla.weeklyIncrementalSize)
-    print("Weekly total size: %f" % my_sla.weeklyTotalSize)
-    print("Weeklies retained: %f" % my_sla.weeklyRetained)
-    print("Monthly retention days: %f" % my_sla.monthlyRetentionDays)
-    print("Monthly incremental size: %f" % my_sla.monthlyIncrementalSize)
-    print("Monthly total size: %f" % my_sla.monthlyTotalSize)
-    print("Monthlies retained: %f" % my_sla.monthlyRetained)
-    print("Yearly retention days: %f" % my_sla.yearlyRetentionDays)
-    print("Yearly incremental size: %f" % my_sla.yearlyIncrementalSize)
-    print("Yearly total size: %f" % my_sla.yearlyTotalSize)
-    print("Yearlies retained: %f" % my_sla.yearlyRetained)
+    print("Hourly retention days: %f" % my_capacity_core.hourlyRetentionDays)
+    print("Hourly incremental size: %f" % my_capacity_core.hourlyIncrementalSize)
+    print("Hourly total size: %f" % my_capacity_core.hourlyTotalSize)
+    print("Hourlies retained: %f" % my_capacity_core.hourlyRetained)
+    print("Daily retention days: %f" % my_capacity_core.dailyRetentionDays)
+    print("Daily incremental size: %f" % my_capacity_core.dailyIncrementalSize)
+    print("Daily total size: %f" % my_capacity_core.dailyTotalSize)
+    print("Dailies retained: %f" % my_capacity_core.dailyRetained)
+    print("Weekly retention days: %f" % my_capacity_core.weeklyRetentionDays)
+    print("Weekly incremental size: %f" % my_capacity_core.weeklyIncrementalSize)
+    print("Weekly total size: %f" % my_capacity_core.weeklyTotalSize)
+    print("Weeklies retained: %f" % my_capacity_core.weeklyRetained)
+    print("Monthly retention days: %f" % my_capacity_core.monthlyRetentionDays)
+    print("Monthly incremental size: %f" % my_capacity_core.monthlyIncrementalSize)
+    print("Monthly total size: %f" % my_capacity_core.monthlyTotalSize)
+    print("Monthlies retained: %f" % my_capacity_core.monthlyRetained)
+    print("Yearly retention days: %f" % my_capacity_core.yearlyRetentionDays)
+    print("Yearly incremental size: %f" % my_capacity_core.yearlyIncrementalSize)
+    print("Yearly total size: %f" % my_capacity_core.yearlyTotalSize)
+    print("Yearlies retained: %f" % my_capacity_core.yearlyRetained)
     print("")
-    for days in my_sla.days_size_table:
-        print("Days - %d: %f" % (days, my_sla.days_size_table[days]))
-    return my_sla
+    for days in my_capacity_core.days_size_table:
+        print("Days - %d: %f" % (days, my_capacity_core.days_size_table[days]))
+    return my_capacity_core
 
 main()
 

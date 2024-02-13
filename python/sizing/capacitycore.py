@@ -3,7 +3,7 @@ from error import InputError
 from constants.global_constants import HOURS_IN_DAY, DAYS_IN_WEEK, \
     DAYS_IN_MONTH, DAYS_IN_YEAR, DAYS_IN_QUARTER
 
-class Sla:
+class CapacityCore:
     def __init__(self,
                  total_fetb: int = None,
                  data_reduction_ratio: float = None,
