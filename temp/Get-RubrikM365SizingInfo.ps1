@@ -27,7 +27,7 @@ param (
     [Parameter()]
     [bool]$EnableDebug = $false,
     [Parameter()]
-    [String]$AzureAdGroupName,
+    [String]$ADGroup,
     [Parameter()]
     [bool]$SkipArchiveMailbox = $false,
     [Parameter()]
@@ -124,9 +124,9 @@ function ProcessUsageReport {
   $M365Sizing.$($Section).SizePerUserGB = [math]::Round((($SummarizedData.Average) / 1GB), 2)
   if ($Section -eq "Exchange") {
     if ($AzureAdRequired) {
-      $TotalUserMailbox = $AzureAdUsersReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
-      $TotalSharedMailbox = $AzureAdUsersReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' }
-      $TotalNumberOfItems = $AzureAdUsersReportDetail | Measure-Object -Property 'Item Count' -Sum
+      $TotalUserMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
+      $TotalSharedMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'Shared' }
+      $TotalNumberOfItems = $ReportDetail | Measure-Object -Property 'Item Count' -Sum
     }
     else {
       $TotalUserMailbox = $ReportDetail | Where-Object { $_.'Recipient Type' -eq 'User' }
@@ -151,7 +151,7 @@ function ProcessUsageReport {
   } elseif ($Section -eq 'OneDrive') {
     $M365Sizing.$($Section).NumberOfUsers = $SummarizedData.Count
     if ($AzureAdRequired) {
-      $TotalNumberOfFiles = $AzureAdUsersReportDetail | Measure-Object -Property 'File Count' -Sum
+      $TotalNumberOfFiles = $ReportDetail | Measure-Object -Property 'File Count' -Sum
     } else {
       $TotalNumberOfFiles = $ReportDetail | Measure-Object -Property 'File Count' -Sum
     }
@@ -185,7 +185,7 @@ if (Get-Module -ListAvailable -Name ExchangeOnlineManagement) {
   throw "The 'ExchangeOnlineManagement' module is required for this script. Run the follow command to install: Install-Module ExchangeOnlineManagement"
 }
 
-$AzureAdRequired = $PSBoundParameters.ContainsKey('AzureAdGroupName')
+$AzureAdRequired = $PSBoundParameters.ContainsKey('ADGroup')
 
 if ($AzureAdRequired) {
   # Validate the required 'Azure.Graph.Authentication' is installed
@@ -208,9 +208,9 @@ catch {
 
 if ($AzureAdRequired) {
   Write-Output "[INFO] Looking up all users in the provided Azure AD Group."
-  $AzureAdGroupDetails = Get-MgGroup -Filter "DisplayName eq '$AzureAdGroupName'"
+  $AzureAdGroupDetails = Get-MgGroup -Filter "DisplayName eq '$ADGroup'"
   if ($AzureAdGroupDetails.Count -eq 0) {
-    throw "The Azure AD Group '$AzureAdGroupName' does not exist. Exiting script."
+    throw "The Azure AD Group '$ADGroup' does not exist. Exiting script."
   }
   $AzureAdGroupMembersById = Get-MgGroupMember -GroupId $AzureAdGroupDetails.Id -All
   if ($EnableDebug) {
@@ -223,9 +223,9 @@ if ($AzureAdRequired) {
     }
   }
   if ($AzureAdGroupMembersByUserPrincipalName.Count -eq 0) {
-    throw "The Azure AD Group '$AzureAdGroupName' does not contain any User Principal Names."
+    throw "The Azure AD Group '$ADGroup' does not contain any User Principal Names."
   }
-  Write-Output "[INFO] Discovered $($AzureAdGroupMembersByUserPrincipalName.Count) users in the provided Azure AD Group: $AzureAdGroupName"
+  Write-Output "[INFO] Discovered $($AzureAdGroupMembersByUserPrincipalName.Count) users in the provided Azure AD Group: $ADGroup"
   Write-Output "[INFO] Exporting AD Group user principal names to: $ADGroupCSVFilename"
   $AzureAdGroupMembersByUserPrincipalName | Out-File -Path $ADGroupCSVFilename
 }
@@ -422,7 +422,7 @@ else {
     if ( ($CurrentMailboxNum % 10) -eq 0 ) {
       Write-Output "[$CurrentMailboxNum / $ArchiveMailboxesCount] Processing mailboxes ..."
     }
-    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].UserPrincipalName
+    $CurrentUser = $ArchiveMailboxes[$CurrentMailboxNum].'User Principal Name'
     $ArchiveMailboxStats = Get-EXOMailboxStatistics -Archive -Identity $CurrentUser
     $MatchArchiveSize = $ArchiveMailboxStats.TotalItemSize -match '\(([^)]+) bytes\)'
     $ArchiveSize = [long]($Matches[1] -replace ',', '')
