@@ -19,7 +19,7 @@ Runs the script with the parameters defined within.
 # Directory path where the .zip file will be stored in
 $filePath = "."
 # Filename of the .zip file, can use wildcards
-$fileName = "RUBRIKTEeeST*"
+$fileName = "RUBRIKTEST*"
 # Staging directory to un-zip the files into
 $stagingDir = "$filePath/Staging"
 # CSV file to store results in
@@ -67,7 +67,7 @@ if ($md5History.Date -contains $fileTime) {
   $emailbody += $fileList[0]
 } else {
   # Expand the .zip file into the $stagingDir directory
-  Expand-Archive -Path $fileList[0].fullName -DestinationPath "$filePath/$stagingDir"
+  Expand-Archive -Path $fileList[0].fullName -DestinationPath "$stagingDir"
   # Get a list of all extracted files
   $extractedFiles = Get-ChildItem -Path "$stagingDir" -File
   $md5List = @()
