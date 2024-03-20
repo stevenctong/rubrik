@@ -19,7 +19,7 @@ Runs the script with the parameters defined within.
 # Directory path where the .zip file will be stored in
 $filePath = "."
 # Filename of the .zip file, can use wildcards
-$fileName = "RUBRIKTEST*"
+$fileName = "RUBRIKTEeeST*"
 # Staging directory to un-zip the files into
 $stagingDir = "$filePath/Staging"
 # CSV file to store results in
@@ -40,8 +40,20 @@ Write-Host "Importing existing MD5 history CSV" -ForegroundColor Green
 $md5History = Import-CSV -Path $csvOutput
 
 Write-Host "Getting a list of all files in designated directory" -ForegroundColor Green
-$fileList = Get-ChildItem -Path "./" -Filter "$fileName" |
+$fileList = Get-ChildItem -Path "$filePath/" -Filter "$fileName" |
   Sort-Object -Property 'LastWriteTime' -Descending
+
+if ($fileList.count -eq 0) {
+  Write-Error "No file found in path: $filePath, name: $fileName"
+  Write-Error "Exiting..."
+  if ($sendEmail)
+  {
+    $emailBody = "No file found in path: $filePath, name: $fileName"
+    Write-Host "Sending email to: $emailTo, from: $emailFrom, subject: $emailSubject" -ForegroundColor Green
+    Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $emailbody -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
+  }
+  exit
+}
 
 Write-Host "Newest file is:" -ForegroundColor Green
 $fileList[0]
@@ -86,6 +98,6 @@ if ($md5History.Date -contains $fileTime) {
 # Send an email
 if ($sendEmail)
 {
-  Write-Host "Sending email to: $emailTo, from: $emailFrom" -ForegroundColor Green
+  Write-Host "Sending email to: $emailTo, from: $emailFrom, subject: $emailSubject" -ForegroundColor Green
   Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $emailbody -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
 }
