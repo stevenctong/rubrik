@@ -70,6 +70,16 @@ if ($md5History.Date -contains $fileTime) {
   Expand-Archive -Path $fileList[0].fullName -DestinationPath "$stagingDir"
   # Get a list of all extracted files
   $extractedFiles = Get-ChildItem -Path "$stagingDir" -File
+  if ($extractedFiles.count -eq 0) {
+    Write-Error "No files were extracted... Exiting"
+    if ($sendEmail)
+    {
+      $emailBody = "No files were extracted... Exiting"
+      Write-Host "Sending email to: $emailTo, from: $emailFrom, subject: $emailSubject" -ForegroundColor Green
+      Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $emailbody -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
+    }
+    exit
+  }
   $md5List = @()
   # Calculate the md5 of each file and add to $md5List
   foreach ($file in $extractedFiles) {
