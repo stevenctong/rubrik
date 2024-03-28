@@ -17,7 +17,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 10/5/23
-Updated: 10/20/23
+Updated: 3/27/24
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -308,7 +308,7 @@ Write-Host "Downloaded the Protection Task Report CSV: $($RubrikObjCapacity.coun
 $statsArray = @()
 
 # Generate a list of clusters to calculate stats for
-$clusterList = $rubrikObjCapacity | select -expandProperty 'Cluster Name' -Unique
+$clusterList = $rubrikObjCapacity | select -expandProperty 'Cluster' -Unique
 
 # Loop through each cluster and calculate stats
 foreach ($cluster in $clusterList)
