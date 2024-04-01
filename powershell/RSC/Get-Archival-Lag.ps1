@@ -1,0 +1,436 @@
+# https://www.rubrik.com/api
+<#
+.SYNOPSIS
+This script calculates archival lag.
+
+.DESCRIPTION
+This script calculates archival lag.
+
+
+Split out by cluster
+
+
+Requires PowerShell 7
+
+.NOTES
+Written by Steven Tong for community usage
+GitHub: stevenctong
+Date: 3/29/24
+
+For authentication, use a RSC Service Account:
+** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
+** Download the service account JSON
+** Define the service account JSON path in the script: $serviceAccountPath
+
+
+If you want the report to be emails, fill out the SMTP information and set
+the variable $sendEmail to $true.
+
+.EXAMPLE
+./Get-Replication-Lag.ps1
+Runs the script to calculate replication lag
+#>
+
+### Variables section - please fill out as needed
+
+# File location of the RSC service account json
+$serviceAccountPath = "./rsc-service-account-rr.json"
+
+# Report ID for the RSC Compliance Report
+$reportIDCompliance = 53
+
+# Report ID for the RSC Object Capacity Report
+$reportIDObjectCapacity = 123
+
+$date = Get-Date
+$utcDate = $date.ToUniversalTime()
+
+# Path to export CSV to
+$csvOutputObjectList = "./Rubrik-Archival_Lag-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
+
+$CSVCompliance = './Compliance-Report_2024-03-27_ee5ec04b3aecd64dbe1cdbbde4bb57b7.csv'
+$CSVObjCapacity = './Object-Capacity-Report_2024-03-27_4df29e3f1205c5870d29d07cf3160a0c.csv'
+
+$throttleLimit = 16
+
+$useRSC = $false
+
+# SMTP configuration if you want to send an email at the end of this script
+# $emailTo = @('')
+# $emailFrom = ''
+# $SMTPServer = ''
+# $SMTPPort = '25'
+# $emailSubject = "Rubrik Object Capacity Summary - " + $date.ToString("yyyy-MM-dd HH:MM")
+
+# Set to $true to send out email at the end of this script
+# $sendEmail = $false
+
+# Define the capacity metric conversions
+$GB = 1000000000
+$GiB = 1073741824
+$TB = 1000000000000
+$TiB = 1099511627776
+
+# Set which capacity metric to use
+$capacityMetric = $TB
+$capacityDisplay = 'TB'
+
+### End Variables section
+
+
+###### RUBRIK AUTHENTICATION - BEGIN ######
+Write-Information -Message "Info: Attempting to read the Service Account file located at $serviceAccountPath"
+try {
+  $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
+}
+catch {
+  $errorMessage = $_.Exception | Out-String
+  if($errorMessage.Contains('because it does not exist')) {
+    throw "The Service Account JSON secret file was not found. Ensure the file is location at $serviceAccountPath."
+  }
+  throw $_.Exception
+}
+
+$payload = @{
+  grant_type = "client_credentials";
+  client_id = $serviceAccountFile.client_id;
+  client_secret = $serviceAccountFile.client_secret
+}
+
+Write-Debug -Message "Determing if the Service Account file contains all required variables."
+$missingServiceAccount = @()
+if ($serviceAccountFile.client_id -eq $null) {
+  $missingServiceAccount += "'client_id'"
+}
+
+if ($serviceAccountFile.client_secret -eq $null) {
+  $missingServiceAccount += "'client_secret'"
+}
+
+if ($serviceAccountFile.access_token_uri -eq $null) {
+  $missingServiceAccount += "'access_token_uri'"
+}
+
+if ($missingServiceAccount.count -gt 0){
+  throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
+}
+
+$headers = @{
+  'Content-Type' = 'application/json';
+  'Accept' = 'application/json';
+}
+
+Write-Verbose -Message "Connecting to the RSC GraphQL API using the Service Account JSON file."
+$response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+
+$rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
+$global:rubrikConnection = @{
+  accessToken = $response.access_token;
+  rubrikURL = $rubrikURL
+}
+
+# Rubrik GraphQL API URL
+$endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
+
+$headers = @{
+  'Content-Type'  = 'application/json';
+  'Accept' = 'application/json';
+  'Authorization' = $('Bearer ' + $rubrikConnection.accessToken);
+}
+
+Write-Host "Successfully connected to: $rubrikURL."
+###### RUBRIK AUTHENTICATION - END ######
+
+###### FUNCTIONS - BEGIN ######
+
+# Trigger generating a CSV for a report
+Function Generate-ReportCSV {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "id" = $reportID
+  }
+  $query = "mutation (`$id: Int!, `$config: CustomReportCreate) {
+    downloadReportCsvAsync(input: {id: `$id, config: `$config}) {
+      jobId
+      referenceId
+      __typename
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+  if ($response.errors) {
+    Write-Error $response.errors.message
+  }
+  return $response.data.downloadReportCsvAsync
+} ### Function Generate-ReportCSV
+
+# Get the report name via report ID
+Function Get-ReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "filter" = @{
+      "focus" = $null
+      "searchTerm" = ""
+      "isHidden" = $false
+    }
+  }
+  $query = "query (`$filter: CustomReportFilterInput) {
+    reportConnection(filter: `$filter) {
+      nodes {
+        id
+        name
+        focus
+        updatedAt
+      }
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.ReportConnection.nodes
+  $reportName = $($reportList | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-ReportName
+
+# Get the CSV download status
+Function Get-DownloadStatus {
+  $query = "query {
+    getUserDownloads {
+      id
+      name
+      status
+      progress
+      identifier
+      createTime
+      completeTime
+    }
+  }"
+  $payload = @{
+    "query" = $query
+  }
+  $response = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $response.data.getUserDownloads
+} ### Get-DownloadStatus
+
+# Get the CSV link for a report that is ready to be downloaded
+Function Get-CSVDownloadLink {
+  param (
+    [CmdletBinding()]
+    # Download ID
+    [Parameter(Mandatory=$true)]
+    [int]$downloadID
+  )
+  $variables = @{
+    "downloadId" = $downloadID
+  }
+  $query = "mutation generateDownloadUrlMutation(`$downloadId: Long!) {
+    getDownloadUrl(downloadId: `$downloadId) {
+      url
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $response = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $response.data.getDownloadUrl.url
+} ### Get-CSVDownloadLink
+
+# Trigger downloading a CSV for a report and return the download link
+Function Get-ReportCSVLink {
+  param (
+    [CmdletBinding()]
+    # Report ID to get CSV for
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  # Skipping this for now, the endpoint is not returning all report types
+  $reportName = Get-ReportName -reportID $reportID
+  if ($reportName -eq $null) {
+    Write-Error "No report found for report ID: $reportID, exiting..."
+    exit
+  }
+  Write-Host "Generating CSV for report: $reportName (report ID: $reportID)" -foregroundcolor green
+  # First trigger creation of the CSV
+  $responseCreateCSV = Generate-ReportCSV -reportID $reportID
+  # Then monitor for when the CSV is ready and then download it
+  $downloadStatus = Get-DownloadStatus
+  # Temporary - removed name match
+  $jobToMonitor = $downloadStatus | Where { ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
+  # $jobToMonitor = $downloadStatus | Where { $_.name -match $reportName -and ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
+  Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.status)"
+  do {
+    Start-Sleep -seconds 10
+    $downloadStatus = Get-DownloadStatus | Where { $_.id -eq $jobToMonitor.id }
+    Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.status)"
+  } while ( $downloadStatus.status -notmatch 'COMPLETED' )
+  $downloadURL = Get-CSVDownloadLink -downloadID $jobToMonitor.id
+  return $downloadURL
+}  ### Function Get-ReportCSVLink
+
+###### FUNCTIONS - END ######
+
+
+if ($useRSC -eq $true)
+{
+  # Download the current RSC compliance report
+  $complianceCSVLink = Get-ReportCSVLink -reportID $reportIDCompliance
+  if ($PSVersionTable.PSVersion.Major -le 5) {
+    $reportCompliance = $(Invoke-WebRequest -Uri $complianceCSVLink).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      $reportCompliance | Export-CSV -path $csvReportCompliance -NoTypeInformation
+    }
+  } else {
+    $reportCompliance = $(Invoke-WebRequest -Uri $complianceCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      $reportCompliance | Export-CSV -path $csvReportCompliance -NoTypeInformation
+    }
+  }
+  Write-Host "Downloaded the RSC compliance report: $($reportCompliance.count) objects" -foregroundcolor green
+
+  # Download the current Object Capacity report
+  $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity
+  if ($PSVersionTable.PSVersion.Major -le 5) {
+    $reportObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      $reportObjCapacity | Export-CSV -path $csvReportTasks -NoTypeInformation
+    }
+  } else {
+    $reportObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      $reportObjCapacity | Export-CSV -path $csvReportTasks -NoTypeInformation
+    }
+  }
+  Write-Host "Downloaded the RSC object capacity report: $($reportObjCapacity.count) tasks" -foregroundcolor green
+} else {
+  $reportCompliance = Import-CSV -Path $CSVCompliance
+  $reportObjCapacity = Import-CSV -Path $CSVObjCapacity
+}
+
+$prodInCompReport = $reportCompliance | Where { $_.'SLA Domain' -notmatch 'Non' -and $_.'SLA Domain' -notmatch 'test' } |
+  Sort-Object -Property 'SLA Domain'
+$nonProdInCompReport = $reportCompliance | Where { $_.'SLA Domain' -match 'Non' -or $_.'SLA Domain' -match 'test' } |
+  Sort-Object -Property 'SLA Domain'
+
+$prodSLAs = $prodInCompReport | Select-Object -ExpandProperty 'SLA Domain' | Get-Unique
+$nonProdSLAs = $nonProdInCompReport | Select-Object -ExpandProperty 'SLA Domain' | Get-Unique
+
+Write-Host "Prod SLAs ($($prodSLAs.count) SLAs with $($prodInCompReport.count) objects):"
+$prodSLAs
+Write-Host ""
+Write-Host "Non-Prod SLAs ($($nonProdSLAs.count) SLAs with $($nonProdInCompReport.count) objects):"
+$nonProdSLAs
+Write-Host ""
+
+$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
+  $_.'Last Archival Snapshot' -eq '' }
+$outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
+  $_.'Last Archival Snapshot' -ne ''}
+$inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'In Compliance' -and
+  $_.'Last Archival Snapshot' -ne ''}
+
+Write-Host "Total # of Prod Objects: $($prodInCompReport.count)"
+Write-Host "# of Objects without Initial Upload: $($zeroArchivedSnapshots.count)"
+Write-Host "# of Objects Out of Archival Compliance: $($outOfComplianceArchival.count)"
+Write-Host ""
+
+Write-Host "Processing Object Capacity Report"
+$prodInObjCapacity = $reportObjCapacity | Where { $_.'SLA Domain' -notmatch 'Non' -and $_.'SLA Domain' -notmatch 'test' -and
+  $_.'SLA Domain' -notmatch 'Unprotected' } | Sort-Object -Property 'SLA Domain'
+
+foreach ($obj in $prodInObjCapacity) {
+  $objID = "$($obj.cluster)+$($obj.object)+$($obj.location)"
+  $obj | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
+}
+
+Write-Host "Adding capacity metrics to Compliance Report, this could take a few minutes..."
+$prodInCompReport | ForEach-Object -Parallel {
+  $prodInObjCapacity = $using:prodInObjCapacity
+  $capacityMetric = $using:capacityMetric
+  $capacityDisplay = $using:capacityDisplay
+  $objID = "$($_.cluster)+$($_.object)+$($_.location)"
+  $_ | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
+  $searchString = [regex]::Escape($objID)
+  $objCapacity = $prodInObjCapacity | Where-Object -Property "ID" -match $searchString
+  $_ | Add-Member -MemberType NoteProperty -Name "Object Logical Size ($capacityDisplay)" -Value $($objCapacity.'Object Logical Size' / $capacityMetric)
+  if ($objCapacity.'Used Size' -notmatch 'N/A') {
+    $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size' / $capacityMetric)
+  } else {
+    $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size')
+  }
+  $_ | Add-Member -MemberType NoteProperty -Name "Physical Size ($capacityDisplay)" -Value $($objCapacity.'Physical Size' / $capacityMetric)
+} -ThrottleLimit $throttleLimit
+
+
+$inComplianceArchivalPhysicalSum = ($inComplianceArchival | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
+Write-Host "Objects In Compliance: $($inComplianceArchival.count)"
+Write-Host "Total Physical Size In Compliance: $([Math]::Round($inComplianceArchivalPhysicalSum, 2)) $capacityDisplay"
+Write-Host ""
+
+$outOfComplianceArchivalPhysicalSum = ($outOfComplianceArchival | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
+Write-Host "Objects Out of Compliance (with first full uploaded): $($outOfComplianceArchival.count)"
+Write-Host "Total Physical Size Out of Compliance: $([Math]::Round($outOfComplianceArchivalPhysicalSum, 2)) $capacityDisplay"
+Write-Host ""
+
+$zeroArchivedSnapshotsPhysicalSum = ($zeroArchivedSnapshots | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
+Write-Host "Objects with Zero Snapshots uploaded: $($zeroArchivedSnapshots.count)"
+Write-Host "Total Physical Size not yet uploaded: $([Math]::Round($zeroArchivedSnapshotsPhysicalSum, 2)) $capacityDisplay"
+Write-Host ""
+
+$zeroArchivedSnapshots = $zeroArchivedSnapshots | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
+$outOfComplianceArchival = $outOfComplianceArchival | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
+
+$totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchivalPhysicalSum
+$totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
+Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList"
+
+$totalObjects = $($inComplianceArchival.count) + $($outOfComplianceArchival.count) + $($zeroArchivedSnapshots.count)
+$totalPhysicalSum = $inComplianceArchivalPhysicalSum + $outOfComplianceArchivalPhysicalSum + $zeroArchivedSnapshotsPhysicalSum
+
+$summaryItem = [PSCustomObject]@{
+  "Date" = $date.ToString("yyyy-MM-dd_HHmm")
+  "Total Objects" = $totalObjects
+  "Total Physical Sum ($capacityDisplay)" = [Math]::Round($totalPhysicalSum, 2)
+  "Zero Uploaded Out of Compliance" = $($zeroArchivedSnapshots.count)
+  "Zero Uploaded Physical Sum ($capacityDisplay)" = [Math]::Round($zeroArchivedSnapshotsPhysicalSum, 2)
+  "Out of Compliance" = $($outOfComplianceArchival.count)
+  "Out of Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($outOfComplianceArchivalPhysicalSum, 2)
+  "In Compliance" = $($inComplianceArchival.count)
+  "In Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($inComplianceArchivalPhysicalSum, 2)
+}
+
+$csvSummary = @()
+$csvSummary += $summaryItem
+
+try {
+  $oldSummary = Import-CSV -Path $csvOutputSummary
+  $csvSummary += $oldSummary
+} catch { }
+
+
+$csvSummary | Export-CSV -Path $csvOutputSummary
+
+
+# foreach ($obj in $prodInCompReport) {
+#   $objID = "$($obj.cluster)+$($obj.object)+$($obj.location)"
+#   $obj | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
+#   $objCapacity = $prodInObjCapacity | Where { $_.ID -match [regex]::Escape($objID) }
+#   $obj | Add-Member -MemberType NoteProperty -Name "Object Logical Capacity" -Value $objCapacity.'Object Logical Capacity'
+#   $obj | Add-Member -MemberType NoteProperty -Name "Used Size" -Value $objCapacity.'Used Size'
+#   $obj | Add-Member -MemberType NoteProperty -Name "Physical Size" -Value $objCapacity.'Physical Size'
+# }
