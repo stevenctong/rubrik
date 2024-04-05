@@ -490,7 +490,21 @@ $totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchivalPhysica
 
 $csvSummary | Export-CSV -Path $csvOutputSummary
 
-
+# Send an email with CSV attachment
+if ($sendEmail) {
+  $HTMLReport = $csvSummary
+  $mailMessage = @{
+    To = $emailTo
+    From = $emailFrom
+    Subject = $emailSubject
+    Body = $HTMLReport
+    SmtpServer = $SMTPServer
+    SmtpPort = $SMTPPort
+    Attachments = @($csvOutputObjectList, $csvOutputSummary)
+    BodyAsHtml = $true
+  }
+  Send-MailMessage @mailMessage
+}
 
 
 # foreach ($obj in $prodInCompReport) {
