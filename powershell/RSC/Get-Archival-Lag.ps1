@@ -481,12 +481,12 @@ try {
   $csvSummary += $oldSummary
 } catch { }
 
-$totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
-Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList"
-
 $zeroArchivedSnapshots = $zeroArchivedSnapshots | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
 $outOfComplianceArchival = $outOfComplianceArchival | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
 $totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchivalPhysicalSum
+
+$totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
+Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList"
 
 $csvSummary | Export-CSV -Path $csvOutputSummary
 
