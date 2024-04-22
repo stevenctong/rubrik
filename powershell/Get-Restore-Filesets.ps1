@@ -1,4 +1,8 @@
 
+$server = ''
+$token = ''
+
+Connect-Rubrik -server $server -token $token
 
 $filesetCSV = './fileset_list_v1.csv'
 $directoryCSV = './dir_list_v1.csv'
