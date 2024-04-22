@@ -3,6 +3,11 @@ Define input parameters for sizing in this file when using this
 package as standalone for sizing, where main.py is the driver.
 The contents of this file should be imported only from main.py file.
 """
+
+# Specify the workload type to size
+# Types: VMS
+WORKLOAD_TYPE = "VMS"
+
 # Specify total used Front End TB (in TB, base 10) and data reduction ratio
 TOTAL_FETB = 100
 DATA_REDUCTION_RATIO = 2.5
@@ -10,10 +15,34 @@ DATA_REDUCTION_RATIO = 2.5
 # Specify total non-compressible FETB (in TB, base 10)
 TOTAL_NON_COMPRESSIBLE_FETB = 20
 
+# Specify which days to model sizing for. Put into an array, with number of days.
+DAYS_TO_SIZE = [365, 730, 1095, 1460, 1825]
+
+# Specify the total size of DB logs that will be ingested (in TB, base 10) and data reduction ratio
+LOG_DAILY_FETB = 5
+LOG_DATA_REDUCTION_RATIO = 2
+
+# Specify total non-compressible daliy log FETB (in TB, base 10)
+LOG_DAILY_NON_COMPRESSIBLE_FETB = 2
+
+# Specify number of days to retention the DB logs for
+LOG_RETENTION_DAYS = 14
+
+# Specify the object count for the workload
+OBJECT_COUNT = 500
+
 # Specify the annual growth percentage. We model the growth by distributing
 # it on a daily basis (using compounding formula) to calculate the new full
 # and incremental size each day with this growth factor.
-ANNUAL_GROWTH_PERCENT = 0.0
+ANNUAL_GROWTH_PERCENT = 10
+
+# Specify the number of days to replicate. If no replication, use '0' days.
+# If replication is specified, you can also specify how quickly you need
+# replication first fulls to complete in (DAYS) and incrementals to complete
+# in (HOURS).
+REPLICATION_DAYS = 7
+REPLICATION_FIRST_FULL_DAYS = 2
+REPLICATION_INCREMENTAL_HOURS = 8
 
 # Hourly snapshot parameters
 # - HOURLY_FREQUENCY specifies every how many hours to take a hourly frequency
@@ -46,7 +75,7 @@ DAILY_CHANGE_RATE_PERCENT = 2
 # If no daily snapshots are taken, the size of each taken incremental snapshot
 # will be governed by this parameter.
 WEEKLY_FREQUENCY = 1
-WEEKLY_RETENTION_WEEKS = 10
+WEEKLY_RETENTION_WEEKS = 8
 WEEKLY_CHANGE_RATE_PERCENT = 4
 
 # Monthly snapshot parameters:
@@ -91,6 +120,23 @@ QUARTERLY_CHANGE_RATE_PERCENT = 20
 # yearly snapshots. It should be greater than faster frequency change rates
 # if specified. If no faster frequency snapshots are taken, the size of each
 # taken incremental snapshot will be governed by this parameter.
-YEARLY_FREQUENCY = 1
+YEARLY_FREQUENCY = 0
 YEARLY_RETENTION_YEARS = 3
 YEARLY_CHANGE_RATE_PERCENT = 30
+
+# WORKLOAD SPECIFIC INPUTS BELOW
+
+# VMS - Inputs for VMS - VMware, Hyper-V, and Nutanix AHV
+CDP_BOOL = False
+CDP_RETENTION_HOURS = 24
+CDP_TOTAL_VMS = 50
+CDP_AVG_VMDKS_PER_VM = 2
+CDP_AVG_WRITE_MBPS = 10
+CDP_PEAK_WRITE_MBPS = 40
+LM_BOOL = False
+LM_TOTAL_VMS = 25
+LM_TOTAL_SIZE_TB = 5
+LM_LARGEST_VM_TB = 10
+LM_DURATION_DAYS = 2
+
+# SQL - Inputs for SQL

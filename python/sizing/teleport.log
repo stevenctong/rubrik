@@ -1,0 +1,10 @@
+2024-02-22T05:36:32.758-0800	INFO	portal_client/main.go:21	Starting portal_client: {STABLE_RELEASE_VERSION}
+2024-02-22T05:36:32.758-0800	INFO	portalclient/config.go:89	No config file (portal_client.conf) found, assuming defaults
+2024-02-22T05:36:32.758-0800	INFO	portal_client/connect.go:43	Client cfg: &portalclient.Config{OpenID:(*openidclient.ClientCfg)(0xc0001b9db0), APIServer:"https://api-teleport.rubrik.com", Portal:"portal-teleport.rubrik.com:22", APIToken:"", CertsDir:"/Users/Steven.Tong/.ssh"}
+2024-02-22T05:36:32.758-0800	INFO	portal_client/connect.go:49	Running portal client with config: &portalclient.Config{OpenID:(*openidclient.ClientCfg)(0xc0001b9db0), APIServer:"https://api-teleport.rubrik.com", Portal:"portal-teleport.rubrik.com:22", APIToken:"", CertsDir:"/Users/Steven.Tong/.ssh"}
+2024-02-22T05:36:32.771-0800	INFO	sshlib/certificate.go:80	Failed to find a valid SSH certificate for given private key: SSH Certificate has expired
+2024-02-22T05:36:39.204-0800	INFO	openidclient/router.go:24	[36m"[0m[35;1mGET [0m[36mhttp://localhost:30301/implicit/callback?code=HOHx4rKHAbYr3IhBkRs0DMAWrYkpGWtI_Mqpx2gCW5s&state=EaFqRdJE3_h0Qw HTTP/1.1" [0mfrom 127.0.0.1:56328 - [32;1m200[0m[34;1m 95B[0m in [32m32.202µs[0m
+2024-02-22T05:36:40.280-0800	INFO	sshlib/ssh_util.go:133	Opening up SSH connection to portal-teleport.rubrik.com:22
+2024-02-22T07:11:17.977-0800	INFO	sshlib/node_connection.go:106	Waiting for shell go-routines to finish.
+2024-02-22T07:11:17.996-0800	FATAL	portal_client/main.go:52	Failed to run portal_client: waiting for shell returned an error: wait: remote command exited without exit status or exit signal
+	{"stacktrace": "main.main\n\trubrik/teleport/cmd/portal_client/main.go:52\nruntime.main\n\tGOROOT/src/runtime/proc.go:225"}
