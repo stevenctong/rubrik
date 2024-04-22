@@ -37,6 +37,8 @@ foreach ($fs in $filesets) {
     "FilesetID" = $fsInfo.id
     "LatestBackupDate" = $latestBackup.date
     "LatestBackupID" = $latestBackup.id
+    "isOnDemandSnasphot" = $latestBackup.isOnDemandSnasphot
+    "cloudState" = $latestBackup.cloudState
   }
   $objArray += $obj
 }
