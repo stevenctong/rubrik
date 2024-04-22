@@ -1,5 +1,8 @@
 
+# Rubrik cluster hostname / IP
 $server = ''
+
+# Get this from the Rubrik UI -> User icon in the right -> grab API token
 $token = ''
 
 Connect-Rubrik -server $server -token $token
@@ -7,6 +10,8 @@ Connect-Rubrik -server $server -token $token
 $filesetCSV = './fileset_list_v1.csv'
 $directoryCSV = './dir_list_v1.csv'
 
+# To get a specific fileset only, use:
+# $filesets = Get-RubrikFileset -name <name>
 $filesets = Get-RubrikFileset
 $fsCount = $filesets.Count
 
