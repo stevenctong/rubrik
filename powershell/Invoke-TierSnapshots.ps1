@@ -110,10 +110,10 @@ foreach ($obj in $allSnapshotManagement) {
       "SnapshotCount" = $obj.snapshotCount
     }
   }
+  $objCSV | Export-CSV -NoTypeInformation -path $csvFile -append
   $csvArray += $objCSV
 }
 
-$csvArray | Export-CSV -NoTypeInformation -path $csvFile
 Write-Host "CSV output to: $csvOutput"
 
 $disconnect = Disconnect-Rubrik -Confirm:$false
