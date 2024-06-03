@@ -28,6 +28,9 @@ param (
   # SLA ID
   [Parameter(Mandatory=$false)]
   [string]$slaID,
+  # Rubrik Cluster hostname/IP
+  [Parameter(Mandatory=$false)]
+  [string]$server,
   # User Note (optional)
   [Parameter(Mandatory=$false)]
   [string]$userNote
@@ -116,6 +119,8 @@ $headers = @{
 
 Write-Host "Successfully connected to: $rubrikURL."
 
+Connect-Rubrik -server $server -id $serviceAccountFile.client_id -secret $serviceAccountFile.client_secret
+
 ###### RUBRIK AUTHENTICATION - END ######
 
 ###### FUNCTIONS - BEGIN ######
@@ -171,7 +176,11 @@ if ($result.errors) {
   exit
 }
 
-Write-Host "Successfull triggered On Demand Snapshot of SQL DB ID: $sqlDBID"
+Write-Host "Successfully triggered On Demand Snapshot of SQL DB ID: $sqlDBID"
+
+$resultURL = $result.data.createOnDemandMssqlBackup.links.href
+$splitURL = $resultURL -split "v1/"
+Invoke-RubrikRESTCall -Method GET -Api '1' -Endpoint "$($splitURL[1])"
 
 # Send an email with CSV attachment
 if ($sendEmail) {
