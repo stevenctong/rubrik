@@ -120,7 +120,7 @@ $headers = @{
 
 Write-Host "Successfully connected to: $rubrikURL."
 
-Connect-Rubrik -server $server -id $serviceAccountFile.client_id -secret $serviceAccountFile.client_secret
+Connect-Rubrik -server $server -id $serviceAccountFile.client_id -secret $serviceAccountFile.client_secret -RedirectToRSC
 
 ###### RUBRIK AUTHENTICATION - END ######
 
