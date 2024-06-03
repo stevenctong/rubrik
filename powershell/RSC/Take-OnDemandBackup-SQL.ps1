@@ -9,6 +9,7 @@ This script take an on demand snapshot of a SQL DB.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 12/15/23
+Updated: 5/3/24
 
 For authentication, provide a RSC Service Account JSON defined at variable $serviceAccountPath.
 
