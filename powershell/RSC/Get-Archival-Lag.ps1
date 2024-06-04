@@ -18,7 +18,7 @@ archival lag.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/29/24
-Updated: 4/4/24
+Updated: 6/4/24 - Added Get-NGReportName to support NG report framework
 
 Requires PowerShell 7
 
@@ -55,7 +55,7 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $true
+$useRSC = $false
 $CSVCompliance = './Compliance-Report_2024-03-27_ee5ec04b3aecd64dbe1cdbbde4bb57b7.csv'
 $CSVObjCapacity = './Object-Capacity-Report_2024-03-27_4df29e3f1205c5870d29d07cf3160a0c.csv'
 
@@ -99,8 +99,7 @@ catch {
 }
 
 $payload = @{
-  grant_type = "client_credentials";
-  client_id = $serviceAccountFile.client_id;
+  client_id = $serviceAccountFile.client_id
   client_secret = $serviceAccountFile.client_secret
 }
 
@@ -213,6 +212,40 @@ Function Get-ReportName {
   return $reportName
 } ### Get-ReportName
 
+# Get the report name with NG framework via report ID
+Function Get-NGReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "polarisReportsFilters" = @(
+      @{
+        "field" = "FILTER_UNSPECIFIED"
+        "reportRooms" = @(
+          "REPORT_ROOM_NONE"
+        )
+      }
+    )
+  }
+  $query = "query (`$polarisReportsFilters: [PolarisReportsFilterInput!]) {
+    allRscReportConfigs(polarisReportsFilters: `$polarisReportsFilters) {
+      id
+      name
+      reportViewType
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  $reportName = $($reportList.data.allRscReportConfigs | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-NGReportName
+
 # Get the CSV download status
 Function Get-DownloadStatus {
   $query = "query {
@@ -268,8 +301,11 @@ Function Get-ReportCSVLink {
   # Skipping this for now, the endpoint is not returning all report types
   $reportName = Get-ReportName -reportID $reportID
   if ($reportName -eq $null) {
-    Write-Error "No report found for report ID: $reportID, exiting..."
-    exit
+    $reportName = Get-NGReportName -reportID $reportID
+    if ($reportName -eq $null) {
+      Write-Error "No report found for report ID: $reportID, exiting..."
+      exit
+    }
   }
   Write-Host "Generating CSV for report: $reportName (report ID: $reportID)" -foregroundcolor green
   # First trigger creation of the CSV
