@@ -20,7 +20,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 1/18/24
+Updated: 6/4/24 - Added new functions to support NG framework
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -62,7 +62,7 @@ $serviceAccountPath = "./rsc-service-account-rr.json"
 
 # The report IDs for the two custom reports that are created
 $reportIDdailyComplianceReport = 53
-$reportIDdailyTaskReport = 52
+$reportIDdailyTaskReport = 131
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -186,6 +186,9 @@ Function Generate-ReportCSV {
     "variables" = $variables
   }
   $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+  if ($response.errors) {
+    Write-Error $response.errors.message
+  }
   return $response.data.downloadReportCsvAsync
 } ### Function Generate-ReportCSV
 
@@ -222,6 +225,40 @@ Function Get-ReportName {
   $reportName = $($reportList | Where-Object -Property 'id' -eq $reportID).name
   return $reportName
 } ### Get-ReportName
+
+# Get the report name with NG framework via report ID
+Function Get-NGReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "polarisReportsFilters" = @(
+      @{
+        "field" = "FILTER_UNSPECIFIED"
+        "reportRooms" = @(
+          "REPORT_ROOM_NONE"
+        )
+      }
+    )
+  }
+  $query = "query (`$polarisReportsFilters: [PolarisReportsFilterInput!]) {
+    allRscReportConfigs(polarisReportsFilters: `$polarisReportsFilters) {
+      id
+      name
+      reportViewType
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  $reportName = $($reportList.data.allRscReportConfigs | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-NGReportName
 
 # Get the CSV download status
 Function Get-DownloadStatus {
@@ -277,20 +314,25 @@ Function Get-ReportCSVLink {
   )
   $reportName = Get-ReportName -reportID $reportID
   if ($reportName -eq $null) {
-    Write-Error "No report found for report ID: $reportID, exiting..."
-    exit
+    $reportName = Get-NGReportName -reportID $reportID
+    if ($reportName -eq $null) {
+      Write-Error "No report found for report ID: $reportID, exiting..."
+      exit
+    }
   }
   Write-Host "Generating CSV for report: $reportName (report ID: $reportID)" -foregroundcolor green
   # First trigger creation of the CSV
   $responseCreateCSV = Generate-ReportCSV -reportID $reportID
   # Then monitor for when the CSV is ready and then download it
   $downloadStatus = Get-DownloadStatus
-  $jobToMonitor = $downloadStatus | Where { $_.name -match $reportName -and ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
+  # Temporary - removed name match
+  $jobToMonitor = $downloadStatus | Where { ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
+  # $jobToMonitor = $downloadStatus | Where { $_.name -match $reportName -and ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
   Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.status)"
   do {
     Start-Sleep -seconds 10
     $downloadStatus = Get-DownloadStatus | Where { $_.id -eq $jobToMonitor.id }
-    Write-Host "Waiting for CSV to be ready, current status: $($downloadStatus.status)"
+    Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.status)"
   } while ( $downloadStatus.status -notmatch 'COMPLETED' )
   $downloadURL = Get-CSVDownloadLink -downloadID $jobToMonitor.id
   return $downloadURL
@@ -330,7 +372,7 @@ Write-Host "Downloaded the Object Compliance CSV: $($rubrikCompliance.count) obj
 
 
 # Get unique Clusters
-$clusterList = $rubrikTasks | Select-Object 'Cluster' -unique -expandProperty 'Cluster'
+$clusterList = $rubrikTasks | Select-Object 'Cluster Name' -unique -expandProperty 'Cluster Name'
 
 # Create a hash table to keep the task status and compliance counts for each cluster
 $clusterCountHash = @{}
@@ -378,15 +420,15 @@ foreach ($i in $rubrikTasks)
   }
   $count += 1
   # Track the task status counts for each cluster
-  $clusterCountHash[$i.'Cluster'].'TotalCount' += 1
+  $clusterCountHash[$i.'Cluster Name'].'TotalCount' += 1
   if ($i.'Task Status' -contains 'Succeeded') {
-    $clusterCountHash[$i.'Cluster'].'SucceededCount' += 1
+    $clusterCountHash[$i.'Cluster Name'].'SucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Succeeded with Warnings') {
-    $clusterCountHash[$i.'Cluster'].'SucceededWithWarningsCount' += 1
+    $clusterCountHash[$i.'Cluster Name'].'SucceededWithWarningsCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
-    $clusterCountHash[$i.'Cluster'].'FailedCount' += 1
+    $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
   } elseif ($i.'Task Status' -match 'Canceled') {
-    $clusterCountHash[$i.'Cluster'].'CanceledCount' += 1
+    $clusterCountHash[$i.'Cluster Name'].'CanceledCount' += 1
   }
   # Update the timestamps to Powershell 'datetime' format so we can do comparisons
   $i.'Start Time' = ([datetime]($i.'Start Time'.replace("UTC", "GMT"))).ToUniversalTime()
