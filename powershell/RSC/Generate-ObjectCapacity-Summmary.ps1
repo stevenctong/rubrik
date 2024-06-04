@@ -17,7 +17,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 10/5/23
-Updated: 3/27/24
+Updated: 6/4/24 - updated to use new NG report framework
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -53,7 +53,7 @@ Runs the script to generate the summary
 $serviceAccountPath = "./rsc-service-account-rr.json"
 
 # The report ID for the custom report
-$reportIDObjectCapacity = 102
+$reportIDObjectCapacity = 123
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -82,8 +82,8 @@ $TB = 1000000000000
 $TiB = 1099511627776
 
 # Set which capacity metric to use
-$capacityMetric = $GB
-$capacityDisplay = 'GB'
+$capacityMetric = $TB
+$capacityDisplay = 'TB'
 
 ### End Variables section
 
@@ -212,6 +212,41 @@ Function Get-ReportName {
   return $reportName
 } ### Get-ReportName
 
+
+# Get the report name with NG framework via report ID
+Function Get-NGReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "polarisReportsFilters" = @(
+      @{
+        "field" = "FILTER_UNSPECIFIED"
+        "reportRooms" = @(
+          "REPORT_ROOM_NONE"
+        )
+      }
+    )
+  }
+  $query = "query (`$polarisReportsFilters: [PolarisReportsFilterInput!]) {
+    allRscReportConfigs(polarisReportsFilters: `$polarisReportsFilters) {
+      id
+      name
+      reportViewType
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  $reportName = $($reportList.data.allRscReportConfigs | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-NGReportName
+
 # Get the CSV download status
 Function Get-DownloadStatus {
   $query = "query {
@@ -266,8 +301,11 @@ Function Get-ReportCSVLink {
   )
   $reportName = Get-ReportName -reportID $reportID
   if ($reportName -eq $null) {
-    Write-Error "No report found for report ID: $reportID, exiting..."
-    exit
+    $reportName = Get-NGReportName -reportID $reportID
+    if ($reportName -eq $null) {
+      Write-Error "No report found for report ID: $reportID, exiting..."
+      exit
+    }
   }
   Write-Host "Generating CSV for report: $reportName (report ID: $reportID)" -foregroundcolor green
   # First trigger creation of the CSV
@@ -314,7 +352,7 @@ $clusterList = $rubrikObjCapacity | select -expandProperty 'Cluster' -Unique
 foreach ($cluster in $clusterList)
 {
   # Get a sorted list of workloads per cluster
-  $clusterWorkloadList = $rubrikObjCapacity | Where { $_.'Cluster Name' -match $cluster } |
+  $clusterWorkloadList = $rubrikObjCapacity | Where { $_.'Cluster' -match $cluster } |
     select -expandProperty 'Object Type' -Unique | Sort
   # Contains the totals for each cluster
   $clusterTotals = [PSCustomObject] @{
@@ -330,7 +368,7 @@ foreach ($cluster in $clusterList)
   {
     # Get all objects that match the cluster name and workload we are interested in
     $clusterWorkloadStatsList = @($rubrikObjCapacity |
-      Where { $_.'Object Type' -eq $clusterWorkload -and $_.'Cluster Name' -eq $cluster })
+      Where { $_.'Object Type' -eq $clusterWorkload -and $_.'Cluster' -eq $cluster })
     # Calculate each stat - Data Transferred, Stored, and Archived
     # Each time, also add to the cluster totals
     $clusterDataTransSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
