@@ -55,9 +55,9 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $false
-$CSVCompliance = './Compliance-Report_2024-03-27_ee5ec04b3aecd64dbe1cdbbde4bb57b7.csv'
-$CSVObjCapacity = './Object-Capacity-Report_2024-03-27_4df29e3f1205c5870d29d07cf3160a0c.csv'
+$useRSC = $true
+# $CSVCompliance = './Compliance-Report_2024-03-27_ee5ec04b3aecd64dbe1cdbbde4bb57b7.csv'
+# $CSVObjCapacity = './Object-Capacity-Report_2024-03-27_4df29e3f1205c5870d29d07cf3160a0c.csv'
 
 # Parallel threads for processing the reports
 $throttleLimit = 16
