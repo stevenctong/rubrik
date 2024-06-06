@@ -18,7 +18,8 @@ archival lag.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/29/24
-Updated: 6/4/24 - Added Get-NGReportName to support NG report framework
+Updated: 6/6/24 - Updated fields to support Report NG framework,
+checking objects with zero uploaded snapshots without checking archival compliance
 
 Requires PowerShell 7
 
@@ -55,9 +56,9 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $true
-# $CSVCompliance = './Compliance-Report_2024-03-27_ee5ec04b3aecd64dbe1cdbbde4bb57b7.csv'
-# $CSVObjCapacity = './Object-Capacity-Report_2024-03-27_4df29e3f1205c5870d29d07cf3160a0c.csv'
+$useRSC = $false
+$CSVCompliance = './ReportingServer_Compliance_2024-06-05_74eb772238ed4158e8c82feb6986a792.csv'
+$CSVObjCapacity = './ReportingServer_ObjectCapacity_2024-06-05_c643742255e9934e5c5f4f7834285065.csv'
 
 # Parallel threads for processing the reports
 $throttleLimit = 16
@@ -385,14 +386,18 @@ Write-Host ""
 
 # Script focuses on objects in the Production SLAs only
 # Get the objects that have zero uploaded backups
-$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
-  $_.'Last Archival Snapshot' -eq '' }
+#### IMPORTANT - Currently the logic doesn't check archive compliance but if
+#### Zero uploaded snapshots then it adds it to the count. Previously, Archival Compliance
+#### would show Out of Compliance as well. That needs to be fixed.
+# $zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
+#   $_.'Lastest Archival Snapshot' -eq '' }
+$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Lastest Archival Snapshot' -eq $null -or $_.'Lastest Archival Snapshot' -eq '' }
 # Get the objects that are out of compliance but have at least the first full uploaded
-$outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
-  $_.'Last Archival Snapshot' -ne ''}
+$outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
+  $_.'Lastest Archival Snapshot' -ne ''}
 # Get the objects that are fully in compliance
-$inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'In Compliance' -and
-  $_.'Last Archival Snapshot' -ne ''}
+$inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'InCompliance' -and
+  $_.'Lastest Archival Snapshot' -ne ''}
 
 Write-Host "Total # of Prod Objects: $($prodInCompReport.count)"
 Write-Host "# of Objects without Initial Upload: $($zeroArchivedSnapshots.count)"
@@ -417,10 +422,13 @@ $prodInCompReport | ForEach-Object -Parallel {
   $prodInObjCapacity = $using:prodInObjCapacity
   $capacityMetric = $using:capacityMetric
   $capacityDisplay = $using:capacityDisplay
+  $globalCount = $using:globalCount
+  Write-Host "$globalCount"
   $objID = "$($_.cluster)+$($_.object)+$($_.location)"
   $_ | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
   $searchString = [regex]::Escape($objID)
   $objCapacity = $prodInObjCapacity | Where-Object -Property "ID" -match $searchString
+try {
   $_ | Add-Member -MemberType NoteProperty -Name "Object Logical Size ($capacityDisplay)" -Value $($objCapacity.'Object Logical Size' / $capacityMetric)
   if ($objCapacity.'Used Size' -notmatch 'N/A') {
     $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size' / $capacityMetric)
@@ -428,6 +436,9 @@ $prodInCompReport | ForEach-Object -Parallel {
     $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size')
   }
   $_ | Add-Member -MemberType NoteProperty -Name "Physical Size ($capacityDisplay)" -Value $($objCapacity.'Physical Size' / $capacityMetric)
+} catch {
+  write-host $objCapacity.id
+}
 } -ThrottleLimit $throttleLimit
 
 
