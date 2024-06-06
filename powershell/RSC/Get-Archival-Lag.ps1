@@ -56,7 +56,7 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $false
+$useRSC = $true
 $CSVCompliance = './ReportingServer_Compliance_2024-06-05_74eb772238ed4158e8c82feb6986a792.csv'
 $CSVObjCapacity = './ReportingServer_ObjectCapacity_2024-06-05_c643742255e9934e5c5f4f7834285065.csv'
 
@@ -422,8 +422,6 @@ $prodInCompReport | ForEach-Object -Parallel {
   $prodInObjCapacity = $using:prodInObjCapacity
   $capacityMetric = $using:capacityMetric
   $capacityDisplay = $using:capacityDisplay
-  $globalCount = $using:globalCount
-  Write-Host "$globalCount"
   $objID = "$($_.cluster)+$($_.object)+$($_.location)"
   $_ | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
   $searchString = [regex]::Escape($objID)
