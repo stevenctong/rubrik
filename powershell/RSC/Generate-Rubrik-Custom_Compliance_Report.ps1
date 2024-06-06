@@ -20,7 +20,15 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/13/23
-Updated: 6/4/24 - Added new functions to support NG framework
+Updated: 6/5/24 - Added new function to support new NG framework
+                  Updated column names for new NG framework
+
+Important: The current version currently has a workaround for a bug that
+shows 'Compliance Status', 'Archival Compliance Status', and 'Replication Compliance'
+status as either 'InCompliance' or 'NonCompliance'.
+However, the actual values should be 'In Compliance' or 'Out of Compliance'.
+This script will need to be updated again after this bug is fixed, which should
+be soon.
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -436,7 +444,7 @@ foreach ($i in $rubrikTasks)
   # Duration is in milliseconds. Calculate out the hours, min, and seconds.
   # Create a field that returns the duration as a string with hours, min, and seconds.
   $i.duration = [int]$i.duration
-  $durationSeconds = $i.Duration / 1000
+  $durationSeconds = $i.Duration
   $durationHours =  [math]::Floor($durationSeconds / 3600)
   $durationMinutes =  [math]::Floor(($durationSeconds / 60) - ($durationHours * 60))
   $durationSeconds = [math]::Floor($durationSeconds - ($durationHours * 3600) - ($durationMinutes * 60))
@@ -493,8 +501,8 @@ $clusterTotal.TotalCount = $clusterTotal.SucceededCount + $clusterTotal.Succeede
 $clusterTotal.SucceededRate = [math]::round(($clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount) / ($clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount + $clusterTotal.FailedCount) * 100, 1)
 
 # Filter for objects that are In Compliance and separately, Out of Compliance
-$objectsInCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'In compliance' })
-$objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' })
+$objectsInCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'InCompliance' })
+$objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'NonCompliance' })
 
 # Calculate cluster totals for compliance
 $clusterTotal.InCompliance = $objectsInCompliance.count
@@ -524,8 +532,8 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
   # Fix the count here
-  $value.InCompliance = @($objectsInCompliance | Where { $_ -match $clusterStatus.Name }).count
-  $value.OutCompliance = @($objectsOutCompliance | Where { $_ -match $clusterStatus.Name }).count
+  $value.InCompliance = @($objectsInCompliance | Where { $_.cluster -match $clusterStatus.Name }).count
+  $value.OutCompliance = @($objectsOutCompliance | Where { $_.cluster -match $clusterStatus.Name }).count
   $value.TotalCompliance = $value.InCompliance + $value.OutCompliance
   if ($value.TotalCompliance -gt 0) {
     $value.ComplianceRate = [math]::round($value.InCompliance / $value.TotalCompliance * 100, 1)
@@ -536,23 +544,23 @@ foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 
 # If we want to build list with objects also out of replication and archival compliance
 if ($allCompliance = $true) {
-  $objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'Out of compliance' -or
-    $_.'Replication compliance status' -match 'Out of compliance' -or
-    $_.'Archival compliance status' -match 'Out of compliance'})
+  $objectsOutCompliance = @($rubrikCompliance | Where { $_.'Compliance Status' -match 'NonCompliance' -or
+    $_.'Replication compliance status' -match 'NonCompliance' -or
+    $_.'Archival compliance status' -match 'NonCompliance'})
 }
 
 # Process each object out of compliance
 foreach ($j in $objectsOutCompliance)
 {
   try {
-    $j.'Last local snapshot' = ([datetime]($j.'Last local snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
-    $j.'Last replication snapshot' = ([datetime]($j.'Last replication snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
-    $j.'Last archival snapshot' = ([datetime]($j.'Last archival snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
+    $j.'Latest Local Snapshot' = ([datetime]($j.'Latest Local Snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
+    $j.'Latest Replication Snapshot' = ([datetime]($j.'Latest Replication Snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
+    $j.'Latest Archival Snapshot' = ([datetime]($j.'Latest Archival Snapshot'.replace("UTC", "GMT"))).ToUniversalTime()
   } catch {
     # Most likely there is no value here so ignoring the error
   }
-  if ($j.'Last local snapshot' -ne '') {
-    $localDaysBehind = [math]::round($($utcDate - $j.'Last local snapshot').totalDays, 2)
+  if ($j.'Latest local snapshot' -ne 'N/A') {
+    $localDaysBehind = [math]::round($($utcDate - $j.'Latest Local Snapshot').totalDays, 2)
     Add-Member -InputObject $j -MemberType NoteProperty -name 'Local Days Behind' -value $localDaysBehind -Force
   } else {
     Add-Member -InputObject $j -MemberType NoteProperty -name 'Local Days Behind' -value 'All' -Force
@@ -761,9 +769,9 @@ $HTMLOutComplianceTableStart = @"
       <th>Host</th>
       <th>Cluster</th>
       <th>Local Days Behind</th>
-      <th>Last Local Backup</th>
-      <th>Last Replicated Backup</th>
-      <th>Last Archived Backup</th>
+      <th>Latest Local Backup</th>
+      <th>Latest Replication Backup</th>
+      <th>Latest Archived Backup</th>
     </tr>
 "@
 
@@ -776,27 +784,27 @@ $HTMLOutComplianceTableEnd = @"
 foreach ($obj in $objectsOutCompliance)
 {
   # Formats display based on whether backups are compliant or not
-  if ($obj.'Compliance status' -match 'Out of Compliance') {
+  if ($obj.'Compliance status' -match 'NonCompliance') {
     $backupColor = 'orange'
     $backupLocalDaysBehind = $obj.'Local Days Behind'
-    $backupLastLocal = $obj.'Last local snapshot'
+    $backupLastLocal = $obj.'Latest Local Snapshot'
   } else {
     $backupColor = 'white'
     $backupLocalDaysBehind = ''
     $backupLastLocal = ''
   }
   # Formats display based on whether replication is compliant or not
-  if ($obj.'Replication compliance status' -match 'Out of Compliance') {
+  if ($obj.'Replication compliance status' -match 'NonCompliance') {
     $replicationColor = 'orange'
-    $replicationLastSnapshot = $obj.'Last replication snapshot'
+    $replicationLastSnapshot = $obj.'Latest Replication Snapshot'
   } else {
     $replicationColor = 'white'
     $replicationLastSnapshot = ''
   }
   # Formats display based on whether archival is compliant or not
-  if ($obj.'Archival compliance status' -match 'Out of Compliance') {
+  if ($obj.'Archival compliance status' -match 'NonCompliance') {
     $archivalColor = 'orange'
-    $archivalLastSnapshot = $obj.'Last archival snapshot'
+    $archivalLastSnapshot = $obj.'Latest Archival Snapshot'
   } else {
     $archivalColor = 'white'
     $archivalLastSnapshot = ''
@@ -829,9 +837,9 @@ $HTMLTaskTableStart = @"
       <th colspan="8">Daily Object Task Report</th>
     </tr>
     <tr>
-      <th>Name</th>
+      <th>Object Name</th>
       <th>Host</th>
-      <th>Cluster</th>
+      <th>Cluster Name</th>
       <th>Status</th>
       <th>Data Transferred (GB)</th>
       <th>Started</th>
@@ -867,9 +875,9 @@ foreach ($task in $rubrikTasksSorted)
   if ($showSucceeded -eq $true)
   {
     $HTMLTaskTableRow += @"
-      <td style=text-align:left>$($task.'Object')</td>
+      <td style=text-align:left>$($task.'Object Name')</td>
       <td style=text-align:left>$($task.'Location')</td>
-      <td style=text-align:left>$($task.'Cluster')</td>
+      <td style=text-align:left>$($task.'Cluster Name')</td>
       <td>$($task.'Task Status')</td>
       <td>$($task.'Data Trans GB')</td>
       <td>$($task.'Start Time')</td>
