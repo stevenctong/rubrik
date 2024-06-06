@@ -56,9 +56,9 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $true
-$CSVCompliance = './ReportingServer_Compliance_2024-06-05_74eb772238ed4158e8c82feb6986a792.csv'
-$CSVObjCapacity = './ReportingServer_ObjectCapacity_2024-06-05_c643742255e9934e5c5f4f7834285065.csv'
+$useRSC = $false
+$CSVCompliance = './edc_compliance.csv'
+$CSVObjCapacity = './edc_capacity.csv'
 
 # Parallel threads for processing the reports
 $throttleLimit = 16
@@ -390,18 +390,19 @@ Write-Host ""
 #### Zero uploaded snapshots then it adds it to the count. Previously, Archival Compliance
 #### would show Out of Compliance as well. That needs to be fixed.
 # $zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
-#   $_.'Lastest Archival Snapshot' -eq '' }
-$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Lastest Archival Snapshot' -eq $null -or $_.'Lastest Archival Snapshot' -eq '' }
+#   $_.'Latest Archival Snapshot' -eq '' }
+$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Latest Archival Snapshot' -eq 'N/A' -or $_.'Latest Archival Snapshot' -eq '' }
 # Get the objects that are out of compliance but have at least the first full uploaded
 $outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
-  $_.'Lastest Archival Snapshot' -ne ''}
+  $_.'Latest Archival Snapshot' -ne 'N/A'}
 # Get the objects that are fully in compliance
 $inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'InCompliance' -and
-  $_.'Lastest Archival Snapshot' -ne ''}
+  $_.'Latest Archival Snapshot' -ne 'N/A'}
 
 Write-Host "Total # of Prod Objects: $($prodInCompReport.count)"
 Write-Host "# of Objects without Initial Upload: $($zeroArchivedSnapshots.count)"
-Write-Host "# of Objects Out of Archival Compliance: $($outOfComplianceArchival.count)"
+Write-Host "# of Objects Out of Archival Compliance but with one Full: $($outOfComplianceArchival.count)"
+Write-Host "# of Objects In Compliance: $($inComplianceArchival.count)"
 Write-Host ""
 
 # In Object Capacity Report, first get the list of objects that are in the Prod SLAs
