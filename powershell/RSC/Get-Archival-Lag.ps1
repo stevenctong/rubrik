@@ -56,7 +56,7 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $false
+$useRSC = $true
 $CSVCompliance = './edc_compliance.csv'
 $CSVObjCapacity = './edc_capacity.csv'
 
@@ -532,7 +532,7 @@ $outOfComplianceArchival = $outOfComplianceArchival | Sort-Object -Property "Phy
 $totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchivalPhysicalSum
 
 $totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
-Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList"
+Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList" -foregroundcolor green
 
 $csvSummary | Export-CSV -Path $csvOutputSummary
 
