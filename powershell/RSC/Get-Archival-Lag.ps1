@@ -61,9 +61,9 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
-$useRSC = $true
-$CSVCompliance = './sutter-compliance-2024-06-27.csv'
-$CSVObjCapacity = './sutter-object_capacity-2024-06-27.csv'
+$useRSC = $false
+$CSVCompliance = './rubrik-compliance-2024-06-28.csv'
+$CSVObjCapacity = './rubrik-object_capacity-2024-06-28.csv'
 
 # SMTP configuration if you want to send an email at the end of this script
 # $emailTo = @('')
