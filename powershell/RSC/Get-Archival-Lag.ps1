@@ -14,12 +14,17 @@ You will need to create two reports in RSC and fill out the variables section:
 The script will pull the CSV reports from RSC and then process them to calculate
 archival lag.
 
+You can also specify two local report CSVs and set the $useRSC = $false in order
+to calculate the local reports.
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/29/24
 Updated: 6/6/24 - Updated fields to support Report NG framework,
 checking objects with zero uploaded snapshots without checking archival compliance
+Updated: 6/27/24 - Updated to fix NG fields and also some calculations for replicas.
+Made calculations much faster by using a hash table.
 
 Requires PowerShell 7
 
@@ -57,11 +62,8 @@ $csvOutputSummary = './Rubrik-Archival_Lag_Summary.csv'
 # If you don't want to use RSC but use an exported CSV directly, set $useRSC to $false
 # And define where the exported report CSVs are here
 $useRSC = $true
-$CSVCompliance = './edc_compliance.csv'
-$CSVObjCapacity = './edc_capacity.csv'
-
-# Parallel threads for processing the reports
-$throttleLimit = 16
+$CSVCompliance = './sutter-compliance-2024-06-27.csv'
+$CSVObjCapacity = './sutter-object_capacity-2024-06-27.csv'
 
 # SMTP configuration if you want to send an email at the end of this script
 # $emailTo = @('')
@@ -365,12 +367,14 @@ if ($useRSC -eq $true)
   $reportObjCapacity = Import-CSV -Path $CSVObjCapacity
 }
 
-# Get all objects in the production SLA - those that don't have 'Non' or 'Test' in the name
-$prodInCompReport = $reportCompliance | Where { $_.'SLA Domain' -notmatch 'Non' -and $_.'SLA Domain' -notmatch 'test' } |
+# Get all objects in the production SLA - those that don't have 'Non' or 'Test' in the name, and are Protected
+$prodInCompReport = $reportCompliance | Where { $_.'SLA Domain' -notmatch 'Non' -and
+  $_.'SLA Domain' -notmatch 'test' -and $_.'SLA Domain' -notmatch 'Unprotected'} |
   Sort-Object -Property 'SLA Domain'
 
-# Get the objects that are in non-prod SLAs
-$nonProdInCompReport = $reportCompliance | Where { $_.'SLA Domain' -match 'Non' -or $_.'SLA Domain' -match 'test' } |
+# Get the objects that are in non-prod SLAs or Unprotected object
+$nonProdInCompReport = $reportCompliance | Where { $_.'SLA Domain' -match 'Non' -or
+  $_.'SLA Domain' -match 'test' -or $_.'SLA Domain' -match 'Unprotected'} |
   Sort-Object -Property 'SLA Domain'
 
 # Get unique SLA names to output the found Prod and Non-Prod SLAs
@@ -389,57 +393,63 @@ Write-Host ""
 #### IMPORTANT - Currently the logic doesn't check archive compliance but if
 #### Zero uploaded snapshots then it adds it to the count. Previously, Archival Compliance
 #### would show Out of Compliance as well. That needs to be fixed.
+
+
 # $zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
 #   $_.'Latest Archival Snapshot' -eq '' }
-$zeroArchivedSnapshots = $prodInCompReport | Where { $_.'Latest Archival Snapshot' -eq 'N/A' -or $_.'Latest Archival Snapshot' -eq '' }
-# Get the objects that are out of compliance but have at least the first full uploaded
-$outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'NonCompliance' -and
+$inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'In Compliance' -and
   $_.'Latest Archival Snapshot' -ne 'N/A'}
-# Get the objects that are fully in compliance
-$inComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'InCompliance' -and
+$inComplianceArchivalwithZeroSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'In Compliance' -and
+  $_.'Latest Archival Snapshot' -eq 'N/A'}
+$outOfComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
   $_.'Latest Archival Snapshot' -ne 'N/A'}
+$outOfComplianceArchivalwithZeroSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Out of Compliance' -and
+  $_.'Latest Archival Snapshot' -eq 'N/A'}
+$unknownComplianceArchival = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Unknown' -and
+  $_.'Latest Archival Snapshot' -ne 'N/A'}
+$unknownComplianceArchivalwithZeroSnapshots = $prodInCompReport | Where { $_.'Archival Compliance Status' -match 'Unknown' -and
+  $_.'Latest Archival Snapshot' -eq 'N/A'}
 
-Write-Host "Total # of Prod Objects: $($prodInCompReport.count)"
-Write-Host "# of Objects without Initial Upload: $($zeroArchivedSnapshots.count)"
-Write-Host "# of Objects Out of Archival Compliance but with one Full: $($outOfComplianceArchival.count)"
-Write-Host "# of Objects In Compliance: $($inComplianceArchival.count)"
+# Objects with zero uploaded snapshots
+$zeroArchivedSnapshots = $inComplianceArchivalwithZeroSnapshots + $outOfComplianceArchivalwithZeroSnapshots
+
+Write-Host "Total # of Protected Objects in Prod SLAs (includes replicas): $($prodInCompReport.count)" -foregroundcolor green
+Write-Host "# of Objects without Initial Upload: $($zeroArchivedSnapshots.count)" -foregroundcolor red
+Write-Host "# of Objects Out of Archival Compliance but with one Full: $($outOfComplianceArchival.count)" -foregroundcolor yellow
+Write-Host "# of Objects In Compliance: $($inComplianceArchival.count)" -foregroundcolor green
+Write-Host "# of Objects that are Replicas: $($unknownComplianceArchival.count + $unknownComplianceArchivalwithZeroSnapshots.count)"
 Write-Host ""
 
-# In Object Capacity Report, first get the list of objects that are in the Prod SLAs
+# In Object Capacity Report, get objects that are in the Prod SLAs + Protected
 Write-Host "Processing Object Capacity Report"
 $prodInObjCapacity = $reportObjCapacity | Where { $_.'SLA Domain' -notmatch 'Non' -and $_.'SLA Domain' -notmatch 'test' -and
   $_.'SLA Domain' -notmatch 'Unprotected' } | Sort-Object -Property 'SLA Domain'
 
-# Add a unique ID to each object that consists of: Cluster+Name+Location
+# Create a hash table of the capacity objects
+$prodObjCapacityHT = @{}
+
+# For capacity objects - Add a unique ID that consists of: Cluster+Name+Location
 foreach ($obj in $prodInObjCapacity) {
   $objID = "$($obj.cluster)+$($obj.object)+$($obj.location)"
   $obj | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
+  $prodObjCapacityHT[$objID] = $obj
 }
 
 # Loop through each object in the Compliance array, search for it in the
 # Object Capacity array, and then add the capacity metrics to the Compliance array
-Write-Host "Adding capacity metrics to Compliance Report, this could take a few minutes..."
-$prodInCompReport | ForEach-Object -Parallel {
-  $prodInObjCapacity = $using:prodInObjCapacity
-  $capacityMetric = $using:capacityMetric
-  $capacityDisplay = $using:capacityDisplay
-  $objID = "$($_.cluster)+$($_.object)+$($_.location)"
-  $_ | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
-  $searchString = [regex]::Escape($objID)
-  $objCapacity = $prodInObjCapacity | Where-Object -Property "ID" -match $searchString
-try {
-  $_ | Add-Member -MemberType NoteProperty -Name "Object Logical Size ($capacityDisplay)" -Value $($objCapacity.'Object Logical Size' / $capacityMetric)
+foreach ($compObj in $prodInCompReport) {
+  $objID = "$($compObj.cluster)+$($compObj.object)+$($compObj.location)"
+  $compObj | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
+  # Lookup the object in the capacity hash table
+  $objCapacity = $prodObjCapacityHT[$objID]
+  $compObj | Add-Member -MemberType NoteProperty -Name "Object Logical Size ($capacityDisplay)" -Value $($objCapacity.'Object Logical Size' / $capacityMetric)
   if ($objCapacity.'Used Size' -notmatch 'N/A') {
-    $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size' / $capacityMetric)
+    $compObj | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size' / $capacityMetric)
   } else {
-    $_ | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size')
+    $compObj | Add-Member -MemberType NoteProperty -Name "Used Size ($capacityDisplay)" -Value $($objCapacity.'Used Size')
   }
-  $_ | Add-Member -MemberType NoteProperty -Name "Physical Size ($capacityDisplay)" -Value $($objCapacity.'Physical Size' / $capacityMetric)
-} catch {
-  write-host $objCapacity.id
+  $compObj | Add-Member -MemberType NoteProperty -Name "Physical Size ($capacityDisplay)" -Value $($objCapacity.'Physical Size' / $capacityMetric)
 }
-} -ThrottleLimit $throttleLimit
-
 
 # Get list of unique Rubrik clusters
 $clusterList = $prodInCompReport | Select-Object 'Cluster' -unique -expandProperty 'Cluster'
@@ -473,11 +483,11 @@ foreach ($cluster in $clusterList)
     "Cluster" = $cluster
     "Total Objects" = $clusterTotalObjects
     "Total Physical Sum ($capacityDisplay)" = [Math]::Round($clusterTotalPhysicalSum, 2)
-    "Zero Uploaded Out of Compliance" = $($clusterZeroArchivedSnapshots.count)
+    "Zero Uploaded Objects" = $($clusterZeroArchivedSnapshots.count)
     "Zero Uploaded Physical Sum ($capacityDisplay)" = [Math]::Round($clusterZeroArchivedSnapshotsPhysicalSum, 2)
-    "Out of Compliance" = $($clusterOutOfComplianceArchival.count)
+    "Out of Compliance Objects" = $($clusterOutOfComplianceArchival.count)
     "Out of Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($clusterOutOfComplianceArchivalPhysicalSum, 2)
-    "In Compliance" = $($clusterInComplianceArchival.count)
+    "In Compliance Objects" = $($clusterInComplianceArchival.count)
     "In Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($clusterInComplianceArchivalPhysicalSum, 2)
   }
   $csvSummary += $clusterObj
@@ -485,20 +495,20 @@ foreach ($cluster in $clusterList)
 
 # For objects In Compliance, calculate the sum of Physical capacity
 $inComplianceArchivalPhysicalSum = ($inComplianceArchival | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
-Write-Host "Objects In Compliance: $($inComplianceArchival.count)"
-Write-Host "Total Physical Size In Compliance: $([Math]::Round($inComplianceArchivalPhysicalSum, 2)) $capacityDisplay"
+Write-Host "# of Objects In Compliance: $($inComplianceArchival.count)" -foregroundcolor green
+Write-Host "Total Physical Size In Compliance: $([Math]::Round($inComplianceArchivalPhysicalSum, 2)) $capacityDisplay" -foregroundcolor green
 Write-Host ""
 
 # For objects with Zero Uploads, calculate the sum of Physical capacity
 $zeroArchivedSnapshotsPhysicalSum = ($zeroArchivedSnapshots | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
-Write-Host "Objects with Zero Snapshots uploaded: $($zeroArchivedSnapshots.count)"
-Write-Host "Total Physical Size not yet uploaded: $([Math]::Round($zeroArchivedSnapshotsPhysicalSum, 2)) $capacityDisplay"
+Write-Host "# of Objects with Zero Snapshots uploaded: $($zeroArchivedSnapshots.count)" -foregroundcolor red
+Write-Host "Total Physical Size not yet uploaded: $([Math]::Round($zeroArchivedSnapshotsPhysicalSum, 2)) $capacityDisplay" -foregroundcolor red
 Write-Host ""
 
 # For objects Out of Compliance, calculate the sum of Physical capacity
 $outOfComplianceArchivalPhysicalSum = ($outOfComplianceArchival | Measure-Object -Property "Physical Size ($capacityDisplay)" -Sum).Sum
-Write-Host "Objects Out of Compliance (with first full uploaded): $($outOfComplianceArchival.count)"
-Write-Host "Total Physical Size Out of Compliance: $([Math]::Round($outOfComplianceArchivalPhysicalSum, 2)) $capacityDisplay"
+Write-Host "Objects Out of Compliance (with first full uploaded): $($outOfComplianceArchival.count)" -foregroundcolor yellow
+Write-Host "Total Physical Size Out of Compliance: $([Math]::Round($outOfComplianceArchivalPhysicalSum, 2)) $capacityDisplay" -foregroundcolor yellow
 Write-Host ""
 
 # Calculate the total Physical capacity size
@@ -512,11 +522,11 @@ $summaryItem = [PSCustomObject]@{
   "Cluster" = "All"
   "Total Objects" = $totalObjects
   "Total Physical Sum ($capacityDisplay)" = [Math]::Round($totalPhysicalSum, 2)
-  "Zero Uploaded Out of Compliance" = $($zeroArchivedSnapshots.count)
+  "Zero Uploaded Objects" = $($zeroArchivedSnapshots.count)
   "Zero Uploaded Physical Sum ($capacityDisplay)" = [Math]::Round($zeroArchivedSnapshotsPhysicalSum, 2)
-  "Out of Compliance" = $($outOfComplianceArchival.count)
+  "Out of Compliance Objects" = $($outOfComplianceArchival.count)
   "Out of Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($outOfComplianceArchivalPhysicalSum, 2)
-  "In Compliance" = $($inComplianceArchival.count)
+  "In Compliance Objects" = $($inComplianceArchival.count)
   "In Compliance Physical Sum ($capacityDisplay)" = [Math]::Round($inComplianceArchivalPhysicalSum, 2)
 }
 
@@ -529,11 +539,12 @@ try {
 
 $zeroArchivedSnapshots = $zeroArchivedSnapshots | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
 $outOfComplianceArchival = $outOfComplianceArchival | Sort-Object -Property "Physical Size ($capacityDisplay)" -Descending
-$totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchivalPhysicalSum
+$totalOutOfCompliance = $zeroArchivedSnapshots + $outOfComplianceArchival
 
-$totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
 Write-Host "Out of Compliance CSV exported to: $csvOutputObjectList" -foregroundcolor green
+$totalOutOfCompliance | Export-CSV -Path $csvOutputObjectList
 
+Write-Host "Summary CSV exported to: $csvOutputSummary" -foregroundcolor green
 $csvSummary | Export-CSV -Path $csvOutputSummary
 
 # Send an email with CSV attachment
@@ -551,13 +562,3 @@ if ($sendEmail) {
   }
   Send-MailMessage @mailMessage
 }
-
-
-# foreach ($obj in $prodInCompReport) {
-#   $objID = "$($obj.cluster)+$($obj.object)+$($obj.location)"
-#   $obj | Add-Member -MemberType NoteProperty -Name "ID" -Value $objID
-#   $objCapacity = $prodInObjCapacity | Where { $_.ID -match [regex]::Escape($objID) }
-#   $obj | Add-Member -MemberType NoteProperty -Name "Object Logical Capacity" -Value $objCapacity.'Object Logical Capacity'
-#   $obj | Add-Member -MemberType NoteProperty -Name "Used Size" -Value $objCapacity.'Used Size'
-#   $obj | Add-Member -MemberType NoteProperty -Name "Physical Size" -Value $objCapacity.'Physical Size'
-# }
