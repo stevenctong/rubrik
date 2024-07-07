@@ -41,7 +41,31 @@ $serviceAccountPath = "./rsc-service-account-rr.json"
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
+# Provide a list of source VMs to add to a blueprint
 $sourceVMList = @( 'rp-sql19sl-01', 'rp-sql19sl-02')
+
+# Whether or not to try to first match the target compute cluster to the source
+# Compute Cluster name.
+# The logic for mapping the Compute Clusters is within the code block.
+$computeClusterMatch = $true
+
+# Default Compute Cluster to use if no match or no mapping
+$computeClusterDefault = 'perf-cluster-PaloAlto'
+
+# Whether or not to try to first match the target Datastore Cluster to the source
+# Datastore Cluster.
+# $datastoreClusterMatch = $false
+# The mapping for the datastore clusters
+$datastoreClustersMapping = @{
+  "QCPESXORA-ZA-A-DATA01-ZB-PV01" = "QCDRESXORA-A-DATA01-PV"
+  "QCPESXORA-ZA-A-DATA02-ZB-PV01" = "QCDRESXORA-A-DATA02-PV"
+  "rp-dsc-fc-01" = "rp-dsc-fc-01"
+}
+# Default Compute Cluster to use if no match or no mapping
+$datastoreClusterDefault = 'rp-dsc-fc-01'
+
+# Whether or not to try to first match the target VNET to the source VNET name.
+# $vnetMatch = $true
 
 # Whether save the report CSV for each run or not
 $saveCSV = $true
@@ -675,8 +699,9 @@ Write-Host "Found the following source datastore clusters:"
 $targetDatastoreClusters.name
 
 # Containst list of source VMs with all human readable and UIDs
-$vmDetailList = @()
+$sourceVMDetailList = @()
 
+# Builds a list of VMs with their source details
 foreach ($vm in $sourceVMs) {
   foreach ($ds in $vm.newestsnapshot.cdmWorkloadSnapshot.subObjs.subobj.vmwareVmSubObj) {
     $dsDetail = $sourceDatastores | Where { $_.id -eq $ds.currentDatastoreId }
@@ -690,9 +715,10 @@ foreach ($vm in $sourceVMs) {
   # Go through each NIC and add the VNET name
   foreach ($nic in $resourceSpec.NetworkInterfaces) {
     $vnetName = $vnets | Where { $_.moid -eq $resourceSpec.networkinterfaces.networkMoidOpt }
-    $resourceSpec.networkinterfaces | Add-Member -MemberType NoteProperty -Name "vnetName" -Value $vnetName.name
+    $resourceSpec.networkinterfaces | Add-Member -MemberType NoteProperty -Name "sourceVnetName" -Value $vnetName.name
+    $resourceSpec.networkinterfaces | Add-Member -MemberType NoteProperty -Name "sourceVnetID" -Value $vnetName.id
   }
-  $vmDetail = [PSCustomObject] @{
+  $sourceVMDetail = [PSCustomObject] @{
     "Name" = $vm.name
     "ID" = $vm.id
     "Cluster" = $vm.primaryClusterLocation.name
@@ -704,5 +730,63 @@ foreach ($vm in $sourceVMs) {
     "Datastores" = $vm.newestsnapshot.cdmWorkloadSnapshot.subObjs.subobj.vmwareVmSubObj
     "NetworkInterfaces" = $resourceSpec.NetworkInterfaces
   }
-  $vmDetailList += $vmDetail
+  $sourceVMDetailList += $sourceVMDetail
 }
+
+$targetList = @()
+
+# Go through each Source VM and create Target resources
+foreach ($vm in $sourceVMDetailList) {
+  # Create Target resources for the Compute Cluster
+  # If match is true, try to match Target Compute Cluster with Source Compute Cluster name
+  if ($computeClusterMatch -eq $true) {
+    $bpTargetComputeClusterName = $($targetComputeClusters |
+        Where { $_.computeClusterName -eq $vm.computeCluster }).Name
+    # If no match is found, use the default
+    if ($bpTargetComputeCluster.count -eq 0 -or $bpTargetComputeCluster -eq $null) {
+      $bpTargetComputeClusterName = $computeClusterDefault
+    }
+  } else {
+    # If not trying to match names, then use the following rules
+    if ($vm.name -match "SQL") {
+      $bpTargetComputeClusterName = $computeClusterDefault
+    } elseif ($vm.name -match "ORA") {
+      $bpTargetComputeClusterName = $computeClusterDefault
+    } else {
+      $bpTargetComputeClusterName = $computeClusterDefault
+    }
+  }
+  # Get the Target Compute Cluster ID
+  $bpTargetComputeClusterID = $($targetComputeClusters |
+      Where { $_.computeClusterName -eq $vm.computeCluster }).computeclusterID
+  # Get a list of Target VNETs based on Target Compute Cluster
+  $targetVnets = $(Get-VMNetworks -computeClusterID $bpTargetComputeClusterID).descendantConnection.edges.node
+  # For each NIC on the VM, try to match the VNET Name
+  foreach ($nic in $vm.NetworkInterfaces) {
+    $bpTargetVnet = $targetVnets | Where { $_.name -eq $nic.sourceVnetName }
+    $nic | Add-Member -MemberType NoteProperty -Name "targetVnetMoid" -Value $bpTargetVnet.moid
+    $nic | Add-Member -MemberType NoteProperty -Name "targetVnetName" -Value $bpTargetVnet.name
+    $nic | Add-Member -MemberType NoteProperty -Name "targetVnetID" -Value $bpTargetVnet.id
+  }
+  # Find the datastore in the Mapping List
+  $sourceDatastoreClusterName = $vm.datastores.datastoreCluster
+  $targetDatastoreClusterName = $datastoreClustersMapping."$sourceDatastoreClusterName"
+  # If Datastore Cluster mapping is not found, use the default
+  if ($targetDatastoreClusterName -eq 0 -or $targetDatastoreClusterName -eq $null) {
+    $targetDatastoreClusterName = $datastoreClusterDefault
+  }
+  $targetDatastoreCluster = $targetDatastoreClusters | Where { $_.name -eq $targetDatastoreClusterName }
+  $targetItem = [PSCustomObject] @{
+    "Name" = $vm.name
+    "ID" = $vm.id
+    "TargetComputeCluster" = $bpTargetComputeCluster
+    "TargetComputeID" = $bpTargetComputeClusterID
+    "TargetNetworkInterfaces" = $vm.NetworkInterfaces
+    "TargetDatastoreClusterName" = $targetDatastoreCluster.name
+    "TargetDatastoreClusterID" = $targetDatastoreCluster.id
+    "TargetDatastoreClusterCapacity" = $targetDatastoreCluster.capacity
+    "TargetDatastoreClusterFreeSpace" = $targetDatastoreCluster.freeSpace
+  }
+  $targetList += $targetItem
+}
+#>
