@@ -49,6 +49,10 @@ $sourceVMList = @( 'rp-sql19sl-01', 'rp-sql19sl-02')
 # The logic for mapping the Compute Clusters is within the code block.
 $computeClusterMatch = $true
 
+# Compute Cluster to use if VM name has SQL or ORA in it
+$computeSQLMatch = 'perf-cluster-PaloAlto'
+$computeORAMatch = 'perf-cluster-PaloAlto'
+
 # Default Compute Cluster to use if no match or no mapping
 $computeClusterDefault = 'perf-cluster-PaloAlto'
 
@@ -749,9 +753,9 @@ foreach ($vm in $sourceVMDetailList) {
   } else {
     # If not trying to match names, then use the following rules
     if ($vm.name -match "SQL") {
-      $bpTargetComputeClusterName = $computeClusterDefault
+      $bpTargetComputeClusterName = $computeSQLMatch
     } elseif ($vm.name -match "ORA") {
-      $bpTargetComputeClusterName = $computeClusterDefault
+      $bpTargetComputeClusterName = $computeORAMatch
     } else {
       $bpTargetComputeClusterName = $computeClusterDefault
     }
