@@ -48,6 +48,12 @@ Runs the script to generate the summary
 
 ### Variables section - please fill out as needed
 
+param (
+  [CmdletBinding()]
+  # Source Rubrik cluster for the blueprint
+  [Parameter(Mandatory=$false)]
+  [string]$sourceCluster = ''
+)
 
 # File location of the RSC service account json
 $serviceAccountPath = "./rsc-service-account-rr.json"
@@ -249,7 +255,7 @@ Function Get-NGReportName {
 
 # Get the CSV download status
 Function Get-DownloadStatus {
-  $query = "query {
+  $query = "query DownloadBarQuery {
     getUserDownloads {
       id
       name
@@ -259,12 +265,24 @@ Function Get-DownloadStatus {
       createTime
       completeTime
     }
+    allUserFiles {
+      downloads {
+        externalId
+        createdAt
+        expiresAt
+        completedAt
+        creator
+        filename
+        type
+        state
+      }
+    }
   }"
   $payload = @{
     "query" = $query
   }
   $response = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
-  return $response.data.getUserDownloads
+  return $response.data.allUserFiles.downloads
 } ### Get-DownloadStatus
 
 # Get the CSV link for a report that is ready to be downloaded
@@ -297,7 +315,10 @@ Function Get-ReportCSVLink {
     [CmdletBinding()]
     # Report ID to get CSV for
     [Parameter(Mandatory=$true)]
-    [int]$reportID
+    [int]$reportID,
+    # Rubrik URL
+    [Parameter(Mandatory=$true)]
+    [string]$rubrikURL
   )
   $reportName = Get-ReportName -reportID $reportID
   if ($reportName -eq $null) {
@@ -311,36 +332,41 @@ Function Get-ReportCSVLink {
   # First trigger creation of the CSV
   $responseCreateCSV = Generate-ReportCSV -reportID $reportID
   # Then monitor for when the CSV is ready and then download it
+  # This grabs the status of all recent downloads
   $downloadStatus = Get-DownloadStatus
-  $jobToMonitor = $downloadStatus | Where { $_.name -match $reportName -and ($_.status -match 'PENDING' -or $_.status -match 'IN_PROGRESS') }
-  Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.status)"
+  # Find the matching report that is in progress and that is the one we want to monitor
+  $jobToMonitor = $downloadStatus | Where { $_.filename -match "$reportName*" -and ($_.state -match 'PENDING' -or $_.state -match 'IN_PROGRESS') }
+  Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.state)"
   do {
     Start-Sleep -seconds 10
-    $downloadStatus = Get-DownloadStatus | Where { $_.id -eq $jobToMonitor.id }
-    Write-Host "Waiting for CSV to be ready, current status: $($downloadStatus.status)"
-  } while ( $downloadStatus.status -notmatch 'COMPLETED' )
-  $downloadURL = Get-CSVDownloadLink -downloadID $jobToMonitor.id
-  return $downloadURL
+    $downloadStatus = Get-DownloadStatus | Where { $_.externalId -eq $jobToMonitor.externalId }
+    Write-Host "Waiting for CSV to be ready, current status: $($downloadStatus.state)"
+  } while ( $downloadStatus.state -notmatch 'READY' )
+  # $downloadURL = Get-CSVDownloadLink -downloadID $responseCreateCSV.id
+  $fileURL = $rubrikURL + "/file-downloads/" + $($jobToMonitor.externalId)
+  return $fileURL
 }  ### Function Get-ReportCSVLink
 
 ###### FUNCTIONS - END ######
 
+
 # Download the current daily protection task report
-$dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity
+$dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity -rubrikURL $rubrikURL
+
 if ($PSVersionTable.PSVersion.Major -le 5) {
-  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink).content | ConvertFrom-CSV
+  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers).content | ConvertFrom-CSV
   if ($saveCSV) {
     Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
     $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
   }
 } else {
-  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -SkipCertificateCheck).content | ConvertFrom-CSV
+  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers -SkipCertificateCheck).content | ConvertFrom-CSV
   if ($saveCSV) {
     Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
     $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
   }
 }
-Write-Host "Downloaded the Protection Task Report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
+Write-Host "Downloaded the report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
 
 # Holds all the calculated stats
 $statsArray = @()
@@ -362,6 +388,7 @@ foreach ($cluster in $clusterList)
     "Bytes Transferred ($capacityDisplay)" = 0
     "Local Storage ($capacityDisplay)" = 0
     "Archival Storage ($capacityDisplay)" = 0
+    "Logical Size ($capacityDisplay)" = 0
   }
   # For each workload, calculate the stats
   foreach ($clusterWorkload in $clusterWorkloadList)
@@ -380,6 +407,9 @@ foreach ($cluster in $clusterList)
     $clusterDataArchivalSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
     $clusterDataArchivalSumMetric = [math]::Round($clusterDataArchivalSumMetric, 3)
     $clusterTotals."Archival Storage ($capacityDisplay)" += $clusterDataArchivalSumMetric
+    $clusterDataLogicalSumMetric = ($clusterWorkloadStatsList | Measure -Property 'Object Logical Size' -sum).sum / $capacityMetric
+    $clusterDataLogicalSumMetric = [math]::Round($clusterDataLogicalSumMetric, 3)
+    $clusterTotals."Logical Size ($capacityDisplay)" += $clusterDataLogicalSumMetric
     $clusterTotals."Object Count" += $clusterWorkloadStatsList.count
     # Object to hold the per cluster, per workload stats
     $clusterWorkloadItem = [PSCustomObject] @{
@@ -389,6 +419,7 @@ foreach ($cluster in $clusterList)
       "Bytes Transferred ($capacityDisplay)" = $clusterDataTransSumMetric
       "Local Storage ($capacityDisplay)" = $clusterDataStoredSumMetric
       "Archival Storage ($capacityDisplay)" = $clusterDataArchivalSumMetric
+      "Logical Size ($capacityDisplay)" = $clusterDataLogicalSumMetric
     }
     # Add the per cluster, per workload totals to the stats array
     $statsArray += $clusterWorkloadItem
@@ -408,6 +439,7 @@ $allTotals = [PSCustomObject] @{
   "Bytes Transferred ($capacityDisplay)" = 0
   "Local Storage ($capacityDisplay)" = 0
   "Archival Storage ($capacityDisplay)" = 0
+  "Logical Size ($capacityDisplay)" = 0
 }
 
 # For each workload across all clusters, calculate the stats
@@ -415,7 +447,7 @@ foreach ($workload in $workloadList)
 {
   # Get all objects that match the workload we are interested in
   $workloadStatsList = @($rubrikObjCapacity | Where 'Object Type' -eq $workload)
-  # Calculate each stat - Data Transferred, Stored, and Archived
+  # Calculate each stat - Data Transferred, Stored, Archived, and Logical Size
   # Each time, also add to the totals
   $dataTransSumMetric = ($workloadStatsList | Measure -Property 'Bytes transferred' -sum).sum / $capacityMetric
   $dataTransSumMetric = [math]::Round($dataTransSumMetric, 3)
@@ -426,6 +458,9 @@ foreach ($workload in $workloadList)
   $dataArchivalSumMetric = ($workloadStatsList | Measure -Property 'Archival Storage' -sum).sum / $capacityMetric
   $dataArchivalSumMetric = [math]::Round($dataArchivalSumMetric, 3)
   $allTotals."Archival Storage ($capacityDisplay)" += $dataArchivalSumMetric
+  $dataLogicalSumMetric = ($workloadStatsList | Measure -Property 'Object Logical Size' -sum).sum / $capacityMetric
+  $dataLogicalSumMetric = [math]::Round($dataLogicalSumMetric, 3)
+  $allTotals."Logical Size ($capacityDisplay)" += $dataLogicalSumMetric
   $allTotals."Object Count" += $workloadStatsList.count
   # Object to hold the per workload stats across all clusters
   $workloadItem = [PSCustomObject] @{
@@ -435,6 +470,7 @@ foreach ($workload in $workloadList)
     "Bytes Transferred ($capacityDisplay)" = $dataTransSumMetric
     "Local Storage ($capacityDisplay)" = $dataStoredSumMetric
     "Archival Storage ($capacityDisplay)" = $dataArchivalSumMetric
+    "Logical Size ($capacityDisplay)" = $dataLogicalSumMetric
   }
   # Add the per workload totals across all clusters to the stats array
   $statsArray += $workloadItem
