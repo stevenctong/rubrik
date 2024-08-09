@@ -18,6 +18,7 @@ Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 10/5/23
 Updated: 6/4/24 - updated to use new NG report framework
+Updated: 8/2/24 - updated download status APIs and added Logical Size
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -71,6 +72,10 @@ $csvFileName = "./csvReports/rubrik_objectcapacity_csv-$($date.ToString("yyyy-MM
 # Location to save the calculated report
 $csvResultsFilename = "./csvResults/rubrik_objectcapacity_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
+# Whether to use a local Object Capacity Report CSV instead of pulling it from RSC
+$useLocalCSV = $false
+$localObjectCapacityCSV = ''
+
 # SMTP configuration if you want to send an email at the end of this script
 # $emailTo = @('')
 # $emailFrom = ''
@@ -94,66 +99,68 @@ $capacityDisplay = 'TB'
 ### End Variables section
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
-Write-Information -Message "Info: Attempting to read the Service Account file located at $serviceAccountPath"
-try {
-  $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
-}
-catch {
-  $errorMessage = $_.Exception | Out-String
-  if($errorMessage.Contains('because it does not exist')) {
-    throw "The Service Account JSON secret file was not found. Ensure the file is location at $serviceAccountPath."
+if ($useLocalCSV -eq $false) {
+  Write-Information -Message "Info: Attempting to read the Service Account file located at $serviceAccountPath"
+  try {
+    $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
   }
-  throw $_.Exception
+  catch {
+    $errorMessage = $_.Exception | Out-String
+    if($errorMessage.Contains('because it does not exist')) {
+      throw "The Service Account JSON secret file was not found. Ensure the file is location at $serviceAccountPath."
+    }
+    throw $_.Exception
+  }
+
+  $payload = @{
+    grant_type = "client_credentials";
+    client_id = $serviceAccountFile.client_id;
+    client_secret = $serviceAccountFile.client_secret
+  }
+
+  Write-Debug -Message "Determing if the Service Account file contains all required variables."
+  $missingServiceAccount = @()
+  if ($serviceAccountFile.client_id -eq $null) {
+    $missingServiceAccount += "'client_id'"
+  }
+
+  if ($serviceAccountFile.client_secret -eq $null) {
+    $missingServiceAccount += "'client_secret'"
+  }
+
+  if ($serviceAccountFile.access_token_uri -eq $null) {
+    $missingServiceAccount += "'access_token_uri'"
+  }
+
+  if ($missingServiceAccount.count -gt 0){
+    throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
+  }
+
+  $headers = @{
+    'Content-Type' = 'application/json';
+    'Accept' = 'application/json';
+  }
+
+  Write-Verbose -Message "Connecting to the RSC GraphQL API using the Service Account JSON file."
+  $response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+
+  $rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
+  $global:rubrikConnection = @{
+    accessToken = $response.access_token;
+    rubrikURL = $rubrikURL
+  }
+
+  # Rubrik GraphQL API URL
+  $endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
+
+  $headers = @{
+    'Content-Type'  = 'application/json';
+    'Accept' = 'application/json';
+    'Authorization' = $('Bearer ' + $rubrikConnection.accessToken);
+  }
+
+  Write-Host "Successfully connected to: $rubrikURL."
 }
-
-$payload = @{
-  grant_type = "client_credentials";
-  client_id = $serviceAccountFile.client_id;
-  client_secret = $serviceAccountFile.client_secret
-}
-
-Write-Debug -Message "Determing if the Service Account file contains all required variables."
-$missingServiceAccount = @()
-if ($serviceAccountFile.client_id -eq $null) {
-  $missingServiceAccount += "'client_id'"
-}
-
-if ($serviceAccountFile.client_secret -eq $null) {
-  $missingServiceAccount += "'client_secret'"
-}
-
-if ($serviceAccountFile.access_token_uri -eq $null) {
-  $missingServiceAccount += "'access_token_uri'"
-}
-
-if ($missingServiceAccount.count -gt 0){
-  throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
-}
-
-$headers = @{
-  'Content-Type' = 'application/json';
-  'Accept' = 'application/json';
-}
-
-Write-Verbose -Message "Connecting to the RSC GraphQL API using the Service Account JSON file."
-$response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
-
-$rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
-$global:rubrikConnection = @{
-  accessToken = $response.access_token;
-  rubrikURL = $rubrikURL
-}
-
-# Rubrik GraphQL API URL
-$endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
-
-$headers = @{
-  'Content-Type'  = 'application/json';
-  'Accept' = 'application/json';
-  'Authorization' = $('Bearer ' + $rubrikConnection.accessToken);
-}
-
-Write-Host "Successfully connected to: $rubrikURL."
 ###### RUBRIK AUTHENTICATION - END ######
 
 ###### FUNCTIONS - BEGIN ######
@@ -349,24 +356,27 @@ Function Get-ReportCSVLink {
 
 ###### FUNCTIONS - END ######
 
+if ($useLocalCSV -eq $false) {
+  # Download the current daily protection task report
+  $dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity -rubrikURL $rubrikURL
 
-# Download the current daily protection task report
-$dailyTaskCSVLink = Get-ReportCSVLink -reportID $reportIDObjectCapacity -rubrikURL $rubrikURL
-
-if ($PSVersionTable.PSVersion.Major -le 5) {
-  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers).content | ConvertFrom-CSV
-  if ($saveCSV) {
-    Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
-    $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
+  if ($PSVersionTable.PSVersion.Major -le 5) {
+    $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
+      $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
+    }
+  } else {
+    $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers -SkipCertificateCheck).content | ConvertFrom-CSV
+    if ($saveCSV) {
+      Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
+      $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
+    }
   }
+  Write-Host "Downloaded the report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
 } else {
-  $rubrikObjCapacity = $(Invoke-WebRequest -Uri $dailyTaskCSVLink -Headers $headers -SkipCertificateCheck).content | ConvertFrom-CSV
-  if ($saveCSV) {
-    Write-Host "Saving RSC report CSV to: $csvFileName" -foregroundcolor green
-    $rubrikObjCapacity | Export-CSV -path $csvFileName -NoTypeInformation
-  }
+  $rubrikObjCapacity = Import-Csv -path $localObjectCapacityCSV
 }
-Write-Host "Downloaded the report CSV: $($RubrikObjCapacity.count) tasks" -foregroundcolor green
 
 # Holds all the calculated stats
 $statsArray = @()
