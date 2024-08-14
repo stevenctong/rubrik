@@ -18,7 +18,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
-Date: 8/5/24
+Date: 8/13/24
 
 For authentication, use a RSC Service Account:
 ** RSC Settings -> Users -> Service Account -> Create one and assign it an appropriate role
@@ -86,8 +86,8 @@ $response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token
 
 # Rubrik GraphQL API URLs
 $rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
-$endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
-$logoutUrl = $rubrikConnection.rubrikURL + "/api/session"
+$endpoint = $rubrikURL + "/api/graphql"
+$logoutUrl = $rubrikURL + "/api/session"
 
 $headers = @{
   'Content-Type'  = 'application/json'
