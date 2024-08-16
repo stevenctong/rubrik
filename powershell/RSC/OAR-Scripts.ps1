@@ -21,8 +21,12 @@ For authentication, use a RSC Service Account:
 
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 - getEvents
+./Get-OAR-Recoveries.ps1 -getEvents
 Get all OAR events and export to a CSV.
+
+.EXAMPLE
+./Get-OAR-Recoveries.ps1 -cleanup
+Cleanup all successful Test Failovers.
 #>
 
 ### Variables section - please fill out as needed
