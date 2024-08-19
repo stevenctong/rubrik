@@ -39,7 +39,10 @@ param (
   [string]$operation = '',
   # Recovery Type - not used in the script at the moment
   [Parameter(Mandatory=$false)]
-  [string]$recoveryType = ''
+  [string]$recoveryType = '',
+  # Get hydration events for the last x hours
+  [Parameter(Mandatory=$false)]
+  [int]$hydrationHours = 24
 )
 
 # File location of the RSC service account json
@@ -48,11 +51,20 @@ $serviceAccountPath = "./rsc-service-account-rr.json"
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
-# CSV output file
-$csvOutput = "./rurik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+# CSV output file for OAR Recovery Events
+$csvOutputOAR = "./rubrik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
+# CSV output file for Hydration Status
+$csvOutputHydration = "./rubrik-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
 
 # Number of OAR recoveries to get
 $oarCount = 300
+
+# Source cluster name to grab VM list and snapshots
+# The hydration events match against 'cdmid' of the source cluster
+# $cluster = 'vault-r-melbourne'
+$cluster = 'vault-r-madison'
 
 ### End Variables section
 
@@ -104,6 +116,92 @@ Write-Host "Successfully connected to: $rubrikURL"
 ###### RUBRIK AUTHENTICATION - END ######
 
 ###### FUNCTIONS - BEGIN ######
+
+
+# Get Cluster list
+Function Get-ClusterList {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$clusterUUID = ''
+  )
+  $variables = @{
+    "sortBy" = "ClusterName"
+    "sortOrder" = "ASC"
+    "filter" = @{
+      "id" = @()
+      "name" = @(
+        ""
+      )
+      "type" = @()
+      "systemStatus" = @()
+      "productType" = @(
+        "CDM"
+      )
+    }
+    "first" = 50
+  }
+  $query = "query AllClusterListTableQuery(`$first: Int, `$after: String, `$filter: ClusterFilterInput, `$sortBy: ClusterSortByEnum, `$sortOrder: SortOrder) {
+    allClusterConnection(
+      filter: `$filter
+      sortBy: `$sortBy
+      sortOrder: `$sortOrder
+      first: `$first
+      after: `$after
+    ) {
+      edges {
+        cursor
+        node {
+          id
+          name
+          pauseStatus
+          geoLocation {
+            address
+          }
+          status
+          systemStatus
+          clusterNodeConnection {
+            count
+            nodes {
+              id
+              status
+              ipAddress
+            }
+          }
+          lastConnectionTime
+          state {
+            connectedState
+            clusterRemovalState
+          }
+          version
+          productType
+          type
+          metric {
+            usedCapacity
+            availableCapacity
+            totalCapacity
+          }
+        }
+      }
+      pageInfo {
+        startCursor
+        endCursor
+        hasNextPage
+        hasPreviousPage
+      }
+      count
+    }
+  }
+"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $clusterList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $clusterList.data.allClusterConnection.edges.node
+}  ### Function ClusterList
+
 
 # Get all OAR Recoveries
 Function Get-OAR-Recoveries {
@@ -170,6 +268,7 @@ Function Get-OAR-Recoveries {
       $estStartTime = [System.TimeZoneInfo]::ConvertTime($utcStartTime, $estTimeZone)
       $utcEndTime = [System.DateTimeOffset]::FromUnixTimeSeconds($item.endTime).ToUniversalTime()
       $estEndTime = [System.TimeZoneInfo]::ConvertTime($utcEndTime, $estTimeZone)
+      # Convert the event time to a format that Excel can use
       $item.startTime = $estStartTime.ToString("yyyy-MM-dd HH:mm:ss")
       $item.endTime = $estEndTime.ToString("yyyy-MM-dd HH:mm:ss")
       $item | Add-Member -MemberType NoteProperty -Name "durationSecs" -Value $item.elapsedTime
@@ -208,21 +307,301 @@ Function Cleanup-Failover {
 }  ### Function Cleanup-Failover
 
 
+# Get VM list and snapshots for each VM
+Function Get-VMSnapshots {
+  param (
+    [CmdletBinding()]
+    # Cluster ID
+    [Parameter(Mandatory=$false)]
+    [string]$clusterID = '',
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      }
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      }
+      @{
+        "field" = "IS_ACTIVE"
+        "texts" = @(
+          "true"
+        )
+      }
+      @{
+        "field" = "NAME"
+        "texts" = @(
+          ""
+        )
+      }
+      @{
+        "field" = "CLUSTER_ID"
+        "texts" = @(
+          "$clusterID"
+        )
+      }
+      @{
+        "field" = "IS_ACTIVE_AMONG_DUPLICATED_OBJECTS"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query (`$first: Int!, `$after: String, `$filter: [Filter!]!, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder) {
+    vSphereVmNewConnection(
+      filter: `$filter
+      first: `$first
+      after: `$after
+      sortBy: `$sortBy
+      sortOrder: `$sortOrder
+    ) {
+      edges {
+        cursor
+        node {
+          id
+          cdmId
+          name
+          objectType
+          blueprintName
+          blueprintId
+          newestSnapshot {
+            id
+          }
+          snapshotConnection {
+            edges {
+              node {
+                id
+                date
+                cdmId
+                cluster {
+                  name
+                  id
+                }
+                snappableId
+              }
+            }
+          }
+          ... on CdmHierarchyObject {
+            replicatedObjectCount
+            cluster {
+              id
+              name
+              version
+              status
+              __typename
+            }
+          }
+          ... on HierarchyObject {
+            id
+            effectiveSlaDomain {
+              id
+              name
+              ... on GlobalSlaReply {
+                isRetentionLockedSla
+                retentionLockMode
+                __typename
+              }
+              ... on ClusterSlaDomain {
+                fid
+                cluster {
+                  id
+                  name
+                  __typename
+                }
+                isRetentionLockedSla
+                retentionLockMode
+                __typename
+              }
+              __typename
+              ... on GlobalSlaReply {
+                description
+                __typename
+              }
+            }
+            __typename
+          }
+          ... on HierarchyObject {
+            effectiveSlaSourceObject {
+              fid
+              name
+              objectType
+              __typename
+            }
+            slaAssignment
+            __typename
+          }
+          isRelic
+          templateType
+          primaryClusterLocation {
+            id
+            name
+            __typename
+          }
+          slaPauseStatus
+          snapshotDistribution {
+            id
+            totalCount
+            __typename
+          }
+          vmwareToolsInstalled
+          agentStatus {
+            agentStatus
+            __typename
+          }
+        }
+        __typename
+      }
+      pageInfo {
+        startCursor
+        endCursor
+        hasNextPage
+        hasPreviousPage
+        __typename
+      }
+      count
+      __typename
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.vSphereVmNewConnection
+}  ### Function Get-VMSnapshots
+
+
+# Get hydration events and status
+Function Get-HydrationStatus {
+  param (
+    [CmdletBinding()]
+    # Get hydration events for last x hours
+    [Parameter(Mandatory=$false)]
+    [int]$hydrationHours = 24,
+    [CmdletBinding()]
+    # Page cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = $null
+  )
+  $lastUpdatedTimeGt = $utcDate.AddHours(-$hydrationHours)
+  $lastUpdatedTimeGt = $lastUpdatedTimeGt.toString("yyyy-MM-ddTHH:mm:ss.fffZ")
+  $variables = @{
+    "filters" = @{
+      "objectType" = 'VMWARE_VM'
+      "lastActivityStatus" = $null
+      "lastActivityType" = @(
+        "RECOVERY"
+      )
+      "severity" = $null
+      "clusterId" = $null
+      "lastUpdatedTimeGt" = $lastUpdatedTimeGt
+      "orgIds" = @()
+      "userIds" = $null
+      "objectName" = $null
+    }
+    "first" = 100
+    "after" = $cursor
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query EventSeriesListQuery(`$after: String, `$filters: ActivitySeriesFilter, `$first: Int, `$sortBy: ActivitySeriesSortField, `$sortOrder: SortOrder) {
+    activitySeriesConnection(
+      after: `$after
+      first: `$first
+      filters: `$filters
+      sortBy: `$sortBy
+      sortOrder: `$sortOrder
+    ) {
+      edges {
+        cursor
+        node {
+          id
+          fid
+          activitySeriesId
+          lastUpdated
+          lastActivityType
+          lastActivityStatus
+          objectId
+          objectName
+          objectType
+          severity
+          progress
+          location
+          effectiveThroughput
+          dataTransferred
+          logicalSize
+          clusterUuid
+          clusterName
+          activityConnection(first: 500) {
+            nodes {
+              id
+              message
+              __typename
+            }
+            __typename
+          }
+        }
+        __typename
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+        hasPreviousPage
+        __typename
+      }
+      __typename
+    }
+  }
+"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.activitySeriesConnection
+}  ### Function Get-HydrationStatus
+
+
+
 ###### FUNCTIONS - END ######
 
-Write-Host "Getting the last $oarCount recoveries"
-$oarEvents = Get-OAR-Recoveries -oarCount $oarCount
+$clusters = Get-ClusterList
+$clusterID = $($clusters | Where { $_.name -eq $cluster }).id
 
-# Get events and expor to CSV
+if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
+  Write-Host "Getting the last $oarCount recoveries"
+  $oarEvents = Get-OAR-Recoveries -oarCount $oarCount
+}
+
+# Get events and export to CSV
 if ($operation -eq 'getEvents') {
+  Write-Host "Getting and exporting recovery events."
   $oarEventsSelected = $oarEvents | Select-Object jobType, recoveryName, recoveryPlanName, startTime, endTime, durationMin, durationHours, status, blueprintName, blueprintId
-
-  $oarEventsSelected | Export-CSV -Path $csvOutput -NoTypeInformation
-  Write-Host "CSV output to: $csvOutput" -foregroundcolor green
+  $oarEventsSelected | Export-CSV -Path $csvOutputOAR -NoTypeInformation
+  Write-Host "CSV output to: $csvOutputOAR" -foregroundcolor green
 }  # getEvents
 
 # Cleanup all blueprints that have test failed over
 if ($operation -eq 'cleanup') {
+  Write-Host "Cleaning up Test Failovers..." -foregroundcolor green
   $count = 1
   $testFailovers = $oarEvents | Where { $_.status -eq "Failover succeeded" -And
     $_.jobType -eq 'TestFailover'}
@@ -232,4 +611,111 @@ if ($operation -eq 'cleanup') {
     Write-Host "[$count / $tfCount] Cleaning up: $($tf.recoveryPlanName)"
     $tfResult = Cleanup-Failover -blueprintId $tf.blueprintId
   }
+}
+
+if ($operation -eq 'hydrationStatus') {
+  Write-Host "Getting Hydration Status over the last $hydrationHours hours" -foregroundcolor green
+  Write-Host "Getting all replicated VMs & snapshots on: $cluster"
+  $vms = Get-VMSnapshots -clusterId $clusterID
+  $vmList = $vms.edges.node
+  while ($vms.pageInfo -eq $true) {
+    $vms = Get-VMReplicatedSnapshots -clusterId $clusterID
+    $vmList += $vms.edges.node
+  }
+  # Build a hash table of the VMs for faster processing
+  $vmHash = @{}
+  foreach ($vm in $vmList) {
+    # Only insert protected VMs
+    if ($vm.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $vm.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT') {
+      $vmHash[$vm.name] = $vm
+    }
+  }
+  # Get all hydration events over the last x hours
+  $hydrations = Get-HydrationStatus -hydrationHours $hydrationHours
+  $hydrationEvents = $hydrations.edges.node
+  while ($hydrations.pageInfo.hasNextPage -eq $true) {
+    $hydrations = Get-HydrationStatus -hydrationHours $hydrationHours -afterCursor $hydrations.pageInfo.endCursor
+    $hydrationEvents += $hydrations.edges.node
+  }
+  $hydrationRunning = $hydrationEvents | Where { $_.lastActivityStatus -match 'Running' }
+  $hydrationSuccess = $hydrationEvents | Where { $_.lastActivityStatus -match 'Success' }
+  $hydrationFailed = $hydrationEvents | Where { $_.lastActivityStatus -match 'Fail' }
+  Write-Host "Successful hydration events: $($hydrationSuccess.count)"
+  Write-Host "In Progress hydration events: $($hydrationRunning.count)"
+  Write-Host "Failed hydration events: $($hydrationFailed.count)"
+  # Get the per VM details of each successful hydration event
+  $pattern = "Export of snapshot '([a-f0-9-]+)' from vSphere VM '([^']+)' succeeded"
+  $count = 1
+  foreach ($hEvent in $hydrationSuccess) {
+    # Write-Host "[$count / $($hydrationSuccess.count)]"
+    # $count++
+    # Convert the event time to a format that Excel can use
+    $hEventTime = $hEvent.lastUpdated.ToString("yyyy-MM-dd HH:mm:ss")
+    # Look at the detailed activity log to get the VM and snapshot that were hydrated
+    foreach ($eventDetail in $hEvent.activityConnection.nodes) {
+      $eventMatch = [regex]::Match($eventDetail.message, $pattern)
+      # If we found a pattern match in the event detail message for the export event
+      if ($eventMatch.length -gt 0) {
+        $snapshotId = $eventMatch.Groups[1].Value
+        $vmName = $eventMatch.Groups[2].Value
+        if ($vmHash[$vmName].hydrationTime -eq $null) {
+          $vmHash[$vmName] | Add-Member -MemberType NoteProperty -Name 'hydrationTime' -Value $hEventTime
+          $vmHash[$vmName] | Add-Member -MemberType NoteProperty -Name 'hydrationSnapshotId' -Value $snapshotId
+        }
+      }
+    }
+  }  ## For loop through each hydration success event
+  # Process VM hash table to pull out the properties we want to export to CSV
+  $vmResultList = @()
+  foreach ($key in $vmHash.keys) {
+    $obj = $vmHash[$key]
+    # If VM is in a blueprint, then add to the list and check hydration
+    if ($obj.blueprintName.count -gt 0) {
+      # Get the most recent snapshot for the VM
+      if ($obj.snapshotConnection.edges.count -gt 0) {
+        $latestSnapshot = $obj.snapshotConnection.edges.node[-1]
+        $latestSnapshot.date = $latestSnapshot.date.ToString("yyyy-MM-dd HH:mm:ss")
+      } else {
+        # If no snapshot found
+        $latestSnapshot = [PSCustomObject] @{
+          "date" = ''
+          "id" = ''
+          "cdmId" = ''
+        }
+      }
+      # Find the details of the last snapshot that was hydrated
+      if ($obj.hydrationSnapshotId.count -gt 0) {
+        $lastHydratedSnapshot = $obj.snapshotConnection.edges.node | Where { $_.cdmid -eq $obj.hydrationSnapshotId }
+      } else {
+        # If there wasn't any hydration event for this VM, set things to blank
+        $obj | Add-Member -MemberType NoteProperty -Name 'hydrationSnapshotId' -Value ''
+        $obj | Add-Member -MemberType NoteProperty -Name 'hydrationTime' -Value ''
+        $lastHydratedSnapshot = [PSCustomObject] @{
+          "date" = ''
+          "id" = ''
+        }
+      }
+      $vmResultList += [PSCustomObject] @{
+        "Name" = $obj.name
+        "Cluster" = $obj.cluster.name
+        "Blueprint Name" = $obj.blueprintName
+        "Last Hydration Event Time" = $obj.hydrationTime
+        "Last Hydrated Snapshot Time" = $lastHydratedSnapshot.date
+        "Most Recent Snapshot Time" = $latestSnapshot.date
+        "VM ID" = $obj.id
+        "VM CDM ID" = $obj.cdmId
+        "Blueprint ID" = $obj.blueprintId
+        "Last Hydrated Snapshot ID" = $obj.hydrationSnapshotId
+        "Most Recent Snapshot ID" = $latestSnapshot.id
+        "Most Recent Snapshot CDM ID" = $latestSnapshot.cdmId
+      }
+    }
+  }  ## For loop through each VM to add results to $vmResultList
+  $vmResultList = $vmResultList | Sort-Object -Property 'Blueprint Name', 'Last Hydrated Snapshot Time'
+  $displayResults = $vmResultList | Select-Object -First 25 -Property 'Name',
+    'Cluster', 'Blueprint Name', 'Last Hydration Event Time', 'Last Hydrated Snapshot Time',
+    'Most Recent Snapshot Time'
+  $displayResults | Format-Table -AutoSize
+  $vmResultList | Export-CSV -Path $csvOutputHydration -NoTypeInformation
+  Write-Host "CSV output to: $csvOutputHydration" -foregroundcolor green
 }
