@@ -21,15 +21,15 @@ For authentication, use a RSC Service Account:
 
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 -operation getEvents
+./OAR-Scripts.ps1 -operation getEvents
 Get all OAR events and export to a CSV.
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 -operation cleanup
+./OAR-Scripts.ps1 -operation cleanup
 Cleanup all successful Test Failovers.
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
+./OAR-Scripts.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
 Get all hydration events for last 24 hours, target the source cluster
 #>
 
@@ -713,6 +713,7 @@ if ($operation -eq 'hydrationStatus') {
   $displayResults = $vmResultList | Select-Object -First 25 -Property 'Name',
     'Cluster', 'Blueprint Name', 'Last Hydration Event Time', 'Last Hydrated Snapshot Time',
     'Most Recent Snapshot Time'
+    Write-Host "Display last 25 VMs"
   $displayResults | Format-Table -AutoSize
   $vmResultList | Export-CSV -Path $csvOutputHydration -NoTypeInformation
   Write-Host "CSV output to: $csvOutputHydration" -foregroundcolor green
