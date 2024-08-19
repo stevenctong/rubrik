@@ -21,12 +21,16 @@ For authentication, use a RSC Service Account:
 
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 -getEvents
+./Get-OAR-Recoveries.ps1 -operation getEvents
 Get all OAR events and export to a CSV.
 
 .EXAMPLE
-./Get-OAR-Recoveries.ps1 -cleanup
+./Get-OAR-Recoveries.ps1 -operation cleanup
 Cleanup all successful Test Failovers.
+
+.EXAMPLE
+./Get-OAR-Recoveries.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
+Get all hydration events for last 24 hours, target the source cluster
 #>
 
 ### Variables section - please fill out as needed
@@ -34,15 +38,15 @@ Cleanup all successful Test Failovers.
 
 param (
   [CmdletBinding()]
-  # Operation to do: getEvents, cleanup
+  # Operation to do: getEvents, cleanup, hydrationStatus
   [Parameter(Mandatory=$false)]
   [string]$operation = '',
-  # Recovery Type - not used in the script at the moment
-  [Parameter(Mandatory=$false)]
-  [string]$recoveryType = '',
   # Get hydration events for the last x hours
   [Parameter(Mandatory=$false)]
-  [int]$hydrationHours = 24
+  [int]$hydrationHours = 24,
+  # Source cluster for hydration events
+  [Parameter(Mandatory=$false)]
+  [string]$cluster = 'vault-r-madison'
 )
 
 # File location of the RSC service account json
@@ -55,16 +59,10 @@ $utcDate = $date.ToUniversalTime()
 $csvOutputOAR = "./rubrik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 # CSV output file for Hydration Status
-$csvOutputHydration = "./rubrik-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
-
+$csvOutputHydration = "./rubrik-hydration-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 # Number of OAR recoveries to get
-$oarCount = 300
-
-# Source cluster name to grab VM list and snapshots
-# The hydration events match against 'cdmid' of the source cluster
-# $cluster = 'vault-r-melbourne'
-$cluster = 'vault-r-madison'
+$oarCount = 250
 
 ### End Variables section
 
