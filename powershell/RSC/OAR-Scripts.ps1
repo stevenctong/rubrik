@@ -46,7 +46,10 @@ param (
   [int]$hydrationHours = 24,
   # Source cluster for hydration events
   [Parameter(Mandatory=$false)]
-  [string]$cluster = 'vault-r-madison'
+  # [string]$cluster = 'vault-r-madison'
+  [string]$cluster = 'HDC2-RBRK-PRD',
+  # Number of OAR Recovery events to get
+  $recoveryEvents = 25
 )
 
 # File location of the RSC service account json
@@ -58,11 +61,12 @@ $utcDate = $date.ToUniversalTime()
 # CSV output file for OAR Recovery Events
 $csvOutputOAR = "./rubrik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
-# CSV output file for Hydration Status
-$csvOutputHydration = "./rubrik-hydration-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+# CSV output file for per-VM level Hydration Status
+$csvOutputHydrationVM = "./rubrik-hydration_vm-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
-# Number of OAR recoveries to get
-$oarCount = 250
+# CSV output file for per-blueprint level Hydration Status
+$csvOutputHydrationBlueprint = "./rubrik-hydration_blueprint-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
 
 ### End Variables section
 
@@ -206,8 +210,8 @@ Function Get-OAR-Recoveries {
   param (
     [CmdletBinding()]
     # Number of OAR recoveries to get
-    [Parameter(Mandatory=$false)]
-    [int]$oarCount = 500
+    [Parameter(Mandatory=$true)]
+    [int]$recoveryEvents
   )
   $variables = @{
     "failoverType" = @(
@@ -218,7 +222,7 @@ Function Get-OAR-Recoveries {
     "recoveryNames" = @()
     "recoveryTriggeredFrom" = @()
     "workloadType" = "VSPHERE_VIRTUAL_MACHINE"
-    "first" = $oarCount
+    "first" = $recoveryEvents
   }
   $query = "query (`$first: Int, `$failoverType: [FailoverTypeEnum!]!, `$after: String, `$planNames: [String!], `$endTimeMs: DateTime, `$startTimeMs: DateTime, `$workloadIDs: [UUID!], `$recoveryStatus: [RecoveryStatuses!], `$recoveryNames: [String!], `$recoveryTriggeredFrom: [RecoveryTriggeredType!], `$recoveryPlanIds: [UUID!], `$workloadType: ManagedObjectType) {
     failoverJobReports(first: `$first, failoverType: `$failoverType, after: `$after, planNames: `$planNames, endTimeMs: `$endTimeMs, startTimeMs: `$startTimeMs, workloadIDs: `$workloadIDs, RecoveryStatus: `$recoveryStatus, recoveryNames: `$recoveryNames, RecoveryTriggeredFrom: `$recoveryTriggeredFrom, recoveryPlanIds: `$recoveryPlanIds, workloadType: `$workloadType) {
@@ -585,14 +589,20 @@ $clusters = Get-ClusterList
 $clusterID = $($clusters | Where { $_.name -eq $cluster }).id
 
 if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
-  Write-Host "Getting the last $oarCount recoveries"
-  $oarEvents = Get-OAR-Recoveries -oarCount $oarCount
+  Write-Host "Getting the last $recoveryEvents recovery events..."
+  Write-Host 'If you want to grab more recovery events, use "-recoveryEvents <count>"'
+  $oarEvents = Get-OAR-Recoveries -recoveryEvents $recoveryEvents
 }
 
 # Get events and export to CSV
 if ($operation -eq 'getEvents') {
-  Write-Host "Getting and exporting recovery events."
-  $oarEventsSelected = $oarEvents | Select-Object jobType, recoveryName, recoveryPlanName, startTime, endTime, durationMin, durationHours, status, blueprintName, blueprintId
+  if ($oarEvents.count -gt 25) {
+    Write-Host "Displaying the first 25 recovery events to console"
+  }
+  $displayResults = $oarEvents | Select-Object -First 25 -Property 'recoveryName',
+    'recoveryPlanName', 'startTime', 'endTime', 'durationMin', 'durationHours', 'status', 'jobType'
+  $displayResults | Format-Table -AutoSize
+  $oarEventsSelected = $oarEvents | Select-Object recoveryName, recoveryPlanName, startTime, endTime, durationMin, durationHours, status, jobType, blueprintName, blueprintId
   $oarEventsSelected | Export-CSV -Path $csvOutputOAR -NoTypeInformation
   Write-Host "CSV output to: $csvOutputOAR" -foregroundcolor green
 }  # getEvents
@@ -613,13 +623,15 @@ if ($operation -eq 'cleanup') {
 
 if ($operation -eq 'hydrationStatus') {
   Write-Host "Getting Hydration Status over the last $hydrationHours hours" -foregroundcolor green
-  Write-Host "Getting all replicated VMs & snapshots on: $cluster"
+  Write-Host "Getting all VMs & snapshots on: $cluster, this can take a few minutes..."
   $vms = Get-VMSnapshots -clusterId $clusterID
   $vmList = $vms.edges.node
-  while ($vms.pageInfo -eq $true) {
-    $vms = Get-VMReplicatedSnapshots -clusterId $clusterID
+  while ($vms.pageInfo.hasNextPage -eq $true) {
+    $vms = Get-VMSnapshots -clusterId $clusterID -afterCursor $vms.pageInfo.endCursor
     $vmList += $vms.edges.node
   }
+  Write-Host "Found $($vmCount) VMs..."
+  Write-Host "Building hash table of VMs that have a SLA assigned..."
   # Build a hash table of the VMs for faster processing
   $vmHash = @{}
   foreach ($vm in $vmList) {
@@ -628,6 +640,8 @@ if ($operation -eq 'hydrationStatus') {
       $vmHash[$vm.name] = $vm
     }
   }
+  Write-Host "Found $($vmHash.count) VMs currently being PROTECTED..."
+  Write-Host "Getting Hydration Events over the last $hydrationHours hours..."
   # Get all hydration events over the last x hours
   $hydrations = Get-HydrationStatus -hydrationHours $hydrationHours
   $hydrationEvents = $hydrations.edges.node
@@ -645,8 +659,6 @@ if ($operation -eq 'hydrationStatus') {
   $pattern = "Export of snapshot '([a-f0-9-]+)' from vSphere VM '([^']+)' succeeded"
   $count = 1
   foreach ($hEvent in $hydrationSuccess) {
-    # Write-Host "[$count / $($hydrationSuccess.count)]"
-    # $count++
     # Convert the event time to a format that Excel can use
     $hEventTime = $hEvent.lastUpdated.ToString("yyyy-MM-dd HH:mm:ss")
     # Look at the detailed activity log to get the VM and snapshot that were hydrated
@@ -656,8 +668,8 @@ if ($operation -eq 'hydrationStatus') {
       if ($eventMatch.length -gt 0) {
         $snapshotId = $eventMatch.Groups[1].Value
         $vmName = $eventMatch.Groups[2].Value
-        if ($vmHash[$vmName].hydrationTime -eq $null) {
-          $vmHash[$vmName] | Add-Member -MemberType NoteProperty -Name 'hydrationTime' -Value $hEventTime
+        if ($vmHash[$vmName].hydrationEventTime -eq $null -and $vmHash.containsKey($vmName)) {
+          $vmHash[$vmName] | Add-Member -MemberType NoteProperty -Name 'hydrationEventTime' -Value $hEventTime
           $vmHash[$vmName] | Add-Member -MemberType NoteProperty -Name 'hydrationSnapshotId' -Value $snapshotId
         }
       }
@@ -684,21 +696,21 @@ if ($operation -eq 'hydrationStatus') {
       # Find the details of the last snapshot that was hydrated
       if ($obj.hydrationSnapshotId.count -gt 0) {
         $lastHydratedSnapshot = $obj.snapshotConnection.edges.node | Where { $_.cdmid -eq $obj.hydrationSnapshotId }
+        if ($($lastHydratedSnapshot.date.gettype().name) -eq 'DateTime') {
+          $lastHydratedSnapshotTime = $lastHydratedSnapshot.date.ToString("yyyy-MM-dd HH:mm:ss")
+        }
       } else {
         # If there wasn't any hydration event for this VM, set things to blank
         $obj | Add-Member -MemberType NoteProperty -Name 'hydrationSnapshotId' -Value ''
-        $obj | Add-Member -MemberType NoteProperty -Name 'hydrationTime' -Value ''
-        $lastHydratedSnapshot = [PSCustomObject] @{
-          "date" = ''
-          "id" = ''
-        }
+        $obj | Add-Member -MemberType NoteProperty -Name 'hydrationEventTime' -Value ''
+        $lastHydratedSnapshotTime = ''
       }
       $vmResultList += [PSCustomObject] @{
         "Name" = $obj.name
         "Cluster" = $obj.cluster.name
         "Blueprint Name" = $obj.blueprintName
-        "Last Hydration Event Time" = $obj.hydrationTime
-        "Last Hydrated Snapshot Time" = $lastHydratedSnapshot.date
+        "Last Hydration Event Time" = $obj.hydrationEventTime
+        "Last Hydrated Snapshot Time" = $lastHydratedSnapshotTime
         "Most Recent Snapshot Time" = $latestSnapshot.date
         "VM ID" = $obj.id
         "VM CDM ID" = $obj.cdmId
@@ -713,8 +725,45 @@ if ($operation -eq 'hydrationStatus') {
   $displayResults = $vmResultList | Select-Object -First 25 -Property 'Name',
     'Cluster', 'Blueprint Name', 'Last Hydration Event Time', 'Last Hydrated Snapshot Time',
     'Most Recent Snapshot Time'
-    Write-Host "Display last 25 VMs"
+    Write-Host "Displaying first 25 VMs, rest will be in a CSV"
   $displayResults | Format-Table -AutoSize
-  $vmResultList | Export-CSV -Path $csvOutputHydration -NoTypeInformation
-  Write-Host "CSV output to: $csvOutputHydration" -foregroundcolor green
-}
+  $vmResultList | Export-CSV -Path $csvOutputHydrationVM -NoTypeInformation
+  Write-Host ""
+  $blueprintList = @()
+  # Group the results by blueprint
+  $groupedData = $vmResultList | Group-Object -Property "Blueprint Name"
+  # Loop through each blueprint, and parse the 'Last Hydrated Snapshot Time'
+  foreach ($group in $groupedData) {
+      $snapshotTimes = $group.group.'Last Hydrated Snapshot Time' | sort-Object
+      # If blueprint contains multiple VMs, get the oldest and latest snapshot
+      if ($snapshotTimes.count -gt 1) {
+        $oldestSnapshotTime = $snapshotTimes[0]
+        $latestSnapshotTime = $snapshotTimes[-1]
+      } else {
+        # If blueprint only contains a single VM, set oldest and latest together
+        $oldestSnapshotTime = $snapshotTimes
+        $latestSnapshotTime = $snapshotTimes
+      }
+    # Create a new PSCustomObject with the required fields
+    $blueprintDetail = [PSCustomObject]@{
+        "Blueprint Name" = $group.Name
+        "# of VMs" = $group.Count
+        "Latest Hydrated Snapshot Time" = $latestSnapshotTime
+        "Oldest Hydrated Snapshot Time" = $oldestSnapshotTime
+    }
+    # Add the result to the results array
+    $blueprintList += $blueprintDetail
+  }
+  Write-Host ""
+  $blueprintList = $blueprintList | sort-object -property 'Oldest Hydrated Snapshot Time' -Descending
+  $blueprintList
+  $blueprintList | Export-Csv -Path $csvOutputHydrationBlueprint -NoTypeInformation
+  Start-sleep 5
+  Write-Host "VM-level CSV output to: $csvOutputHydrationVM" -foregroundcolor green
+  Write-Host "Blueprint-level CSV output to: $csvOutputHydrationBlueprint" -foregroundcolor green
+  Write-Host "Scroll up to see per-VM and per-Blueprint info" -foregroundcolor green
+}  ## IF $operation -eq 'hydrationStatus'
+
+
+# Log out of RSC session
+$closeStatus = $(Invoke-RestMethod -Method DELETE -Uri $logoutUrl -Headers $headers -ContentType "application/json")
