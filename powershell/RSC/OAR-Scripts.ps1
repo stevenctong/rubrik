@@ -31,6 +31,11 @@ Cleanup all successful Test Failovers.
 .EXAMPLE
 ./OAR-Scripts.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
 Get all hydration events for last 24 hours, target the source cluster
+
+.EXAMPLE
+./OAR-Scripts.ps1 -operation 'deleteScheduled'
+Get all blueprint plans and delete any scheduled test failovers
+
 #>
 
 ### Variables section - please fill out as needed
@@ -309,6 +314,31 @@ Function Cleanup-Failover {
 }  ### Function Cleanup-Failover
 
 
+# Delete scheduled test failover
+Function Delete-Schedule {
+  param (
+    [CmdletBinding()]
+    # Blueprint ID
+    [Parameter(Mandatory=$true)]
+    [string]$blueprintID = ''
+  )
+  $variables = @{
+    "input" = @{
+      "recoveryPlanFid" = $blueprintID
+    }
+  }
+  $query = "mutation DeleteRecoverySchedule(`$input: DeleteRecoveryScheduleInput!) {
+    deleteRecoverySchedule(input: `$input)
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result
+}  ### Function Delete-Schedule
+
+
 # Get VM list and snapshots for each VM
 Function Get-VMSnapshots {
   param (
@@ -488,6 +518,143 @@ Function Get-VMSnapshots {
   $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
   return $result.data.vSphereVmNewConnection
 }  ### Function Get-VMSnapshots
+
+
+# Get the recovery plans
+Function Get-RecoveryPlans {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "filter" = @(
+      @{
+        "field" = "NAME"
+        "texts" = @(
+          ""
+        )
+      }
+      @{
+        "field" = "RECOVERY_PLAN_TYPE"
+        "texts" = @(
+          "DISASTER_RECOVERY"
+        )
+      }
+      @{
+        "field" = "IS_RECOVERY_PLAN_VISIBLE"
+        "texts" = @(
+          "1"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+    "first" = 50
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query RecoveryPlansQuery(`$first: Int, `$after: String, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder, `$filter: [Filter!]) {
+    recoveryPlans(
+      first: `$first
+      after: `$after
+      sortBy: `$sortBy
+      sortOrder: `$sortOrder
+      filter: `$filter
+    ) {
+      edges {
+        cursor
+        node {
+          id
+          status
+          version
+          ... on RecoveryPlan {
+            id
+            name
+            __typename
+          }
+          ... on RecoveryPlan {
+            numChildren
+            __typename
+          }
+          ... on RecoveryPlan {
+            sourceLocation {
+              ... on BlueprintCdmLocation {
+                cluster {
+                  name
+                  id
+                  status
+                  version
+                  __typename
+                }
+              }
+            }
+          }
+          ... on RecoveryPlan {
+            targetLocation {
+              ... on BlueprintCdmLocation {
+                cluster {
+                  name
+                  id
+                  status
+                  version
+                  __typename
+                }
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          latestFailover {
+            status
+            failoverType
+            __typename
+          }
+          recoveryType
+          recoveryCount {
+            failoverRecoveryCount
+            isolatedRecoveryCount
+            localRecoveryCount
+            testFailoverRecoveryCount
+            __typename
+          }
+          schedule {
+            scheduleId
+            __typename
+          }
+          isVisible
+          lastIsolatedRecoveryStatus
+          lastIsolatedRecoveryTime
+          lastFailoverStatus
+          lastFailoverTime
+          lastTestFailoverStatus
+          lastTestFailoverTime
+          lastLocalRecoveryStatus
+          lastLocalRecoveryTime
+          __typename
+        }
+        __typename
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+        hasPreviousPage
+      }
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.recoveryPlans
+}  ### Function Get-RecoveryPlans
+
+
+
 
 
 # Get hydration events and status
@@ -763,6 +930,22 @@ if ($operation -eq 'hydrationStatus') {
   Write-Host "Blueprint-level CSV output to: $csvOutputHydrationBlueprint" -foregroundcolor green
   Write-Host "Scroll up to see per-VM and per-Blueprint info" -foregroundcolor green
 }  ## IF $operation -eq 'hydrationStatus'
+
+# Go through all blueprints and delete any scheduled test failovers
+if ($operation -eq 'deleteScheduled') {
+  $plans = Get-RecoveryPlans
+  $plansList = @()
+  $plansList += $plans.edges.node
+  while ($plans.pageInfo.hasNextPage -eq $true) {
+    $plans = Get-RecoveryPlans -afterCursor $plans.pageInfo.endCursor
+    $plansList += $plans.edges.node
+  }
+  foreach ($bp in $plansList) {
+    if ($bp.schedule.scheduleId -eq 1) {
+      Delete-Schedule -blueprintID $bp.id
+    }
+  }
+} ## IF $operation -eq 'deleteScheduled'
 
 
 # Log out of RSC session
