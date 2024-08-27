@@ -49,6 +49,9 @@ param (
   # Get hydration events for the last x hours
   [Parameter(Mandatory=$false)]
   [int]$hydrationHours = 24,
+  # Get recovery events for the last x hours
+  [Parameter(Mandatory=$false)]
+  [int]$recoveryHours,
   # Source cluster for hydration events
   [Parameter(Mandatory=$false)]
   # [string]$cluster = 'vault-r-madison'
@@ -58,7 +61,7 @@ param (
 )
 
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-rr.json"
+$serviceAccountPath = "./rsc-service-account-quorum.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -216,7 +219,10 @@ Function Get-OAR-Recoveries {
     [CmdletBinding()]
     # Number of OAR recoveries to get
     [Parameter(Mandatory=$true)]
-    [int]$recoveryEvents
+    [int]$recoveryEvents,
+    # How many hours back to
+    [Parameter(Mandatory=$false)]
+    [int]$recoveryHours
   )
   $variables = @{
     "failoverType" = @(
@@ -228,6 +234,11 @@ Function Get-OAR-Recoveries {
     "recoveryTriggeredFrom" = @()
     "workloadType" = "VSPHERE_VIRTUAL_MACHINE"
     "first" = $recoveryEvents
+  }
+  if ($recoveryHours -ne '') {
+    $startTimeMs = $utcDate.AddHours(-$hydrationHours)
+    $startTimeMs = $startTimeMs.toString("yyyy-MM-ddTHH:mm:ss.fffZ")
+    $variables.startTimeMs = $
   }
   $query = "query (`$first: Int, `$failoverType: [FailoverTypeEnum!]!, `$after: String, `$planNames: [String!], `$endTimeMs: DateTime, `$startTimeMs: DateTime, `$workloadIDs: [UUID!], `$recoveryStatus: [RecoveryStatuses!], `$recoveryNames: [String!], `$recoveryTriggeredFrom: [RecoveryTriggeredType!], `$recoveryPlanIds: [UUID!], `$workloadType: ManagedObjectType) {
     failoverJobReports(first: `$first, failoverType: `$failoverType, after: `$after, planNames: `$planNames, endTimeMs: `$endTimeMs, startTimeMs: `$startTimeMs, workloadIDs: `$workloadIDs, RecoveryStatus: `$recoveryStatus, recoveryNames: `$recoveryNames, RecoveryTriggeredFrom: `$recoveryTriggeredFrom, recoveryPlanIds: `$recoveryPlanIds, workloadType: `$workloadType) {
@@ -654,9 +665,6 @@ Function Get-RecoveryPlans {
 }  ### Function Get-RecoveryPlans
 
 
-
-
-
 # Get hydration events and status
 Function Get-HydrationStatus {
   param (
@@ -940,11 +948,15 @@ if ($operation -eq 'deleteScheduled') {
     $plans = Get-RecoveryPlans -afterCursor $plans.pageInfo.endCursor
     $plansList += $plans.edges.node
   }
+  Write-Host "Found $($plansList.count) plans"
+  $count = 0
   foreach ($bp in $plansList) {
-    if ($bp.schedule.scheduleId -eq 1) {
-      Delete-Schedule -blueprintID $bp.id
+    if ($bp.schedule.scheduleId -gt 0) {
+      $result = Delete-Schedule -blueprintID $bp.id
+      $count++
     }
   }
+  Write-Host "Deleted schedules for $count plans."
 } ## IF $operation -eq 'deleteScheduled'
 
 
