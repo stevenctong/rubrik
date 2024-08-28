@@ -780,7 +780,11 @@ if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
   $afterCursor = ''
   # Get up to 50 OAR events at a time to avoid timeout
   while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true) ) {
-    Write-Host "Grabbing events $count - $($count + 50)..."
+    if ($recoveryEvents -gt 50) {
+      Write-Host "Grabbing events $count - $($count + 50)..."
+    } else {
+      Write-Host "Grabbing events $count - $($count + $recoveryEvents)..."
+    }
     if ( ($recoveryEvents - $count) -lt 50) {
       $eventsToGet = $recoveryEvents - $count
       $count += $eventsToGet
@@ -798,13 +802,22 @@ if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
 # Get events and export to CSV
 if ($operation -eq 'getEvents') {
   if ($oarEvents.count -gt 25) {
-    Write-Host "Displaying the first 25 recovery events to console"
+    Write-Host "Displaying the latest 25 recovery events to console"
   }
   $displayResults = $oarEvents | Select-Object -First 25 -Property 'recoveryName',
     'recoveryPlanName', 'startTime', 'endTime', 'vmCount', 'durationMin', 'durationHours', 'status', 'progress', 'jobType'
   $displayResults | Format-Table -AutoSize
   $oarEventsSelected = $oarEvents | Select-Object recoveryName, recoveryPlanName, startTime, endTime, vmCount, durationMin, durationHours, status, jobType, progress, blueprintName, blueprintId
   $oarEventsSelected | Export-CSV -Path $csvOutputOAR -NoTypeInformation
+  $uniqueStatuses = @()
+  $uniqueStatuses += $oarEventsSelected | Select-Object -Property 'Status' -Unique -ExpandProperty 'Status'
+  foreach ($status in $uniqueStatuses) {
+    $statusCount = $($oarEventsSelected | Where { $_.status -like $status }).count
+    Write-Host "$($status): $statusCount" -foregroundcolor green
+  }
+  Write-Host ""
+  Write-Host "Total number of failover events found: $($oarEventsSelected.count)" -foregroundcolor green
+  Write-Host ""
   Write-Host "CSV output to: $csvOutputOAR" -foregroundcolor green
 }  # getEvents
 
