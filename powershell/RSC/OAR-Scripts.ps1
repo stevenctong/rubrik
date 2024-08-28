@@ -61,7 +61,7 @@ param (
 )
 
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-quorum.json"
+$serviceAccountPath = "./rsc-service-account-rr.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -289,6 +289,7 @@ Function Get-OAR-Recoveries {
       # Convert the event time to a format that Excel can use
       $item.startTime = $estStartTime.ToString("yyyy-MM-dd HH:mm:ss")
       $item.endTime = $estEndTime.ToString("yyyy-MM-dd HH:mm:ss")
+      $item | Add-Member -MemberType NoteProperty -Name "vmCount" -Value $item.objectIds.count
       $item | Add-Member -MemberType NoteProperty -Name "durationSecs" -Value $item.elapsedTime
       $item | Add-Member -MemberType NoteProperty -Name "durationMin" -Value $([math]::Round($item.durationSecs/60, 2))
       $item | Add-Member -MemberType NoteProperty -Name "durationHours" -Value $([math]::Round($item.durationMin / 60, 2))
@@ -775,7 +776,7 @@ if ($operation -eq 'getEvents') {
     Write-Host "Displaying the first 25 recovery events to console"
   }
   $displayResults = $oarEvents | Select-Object -First 25 -Property 'recoveryName',
-    'recoveryPlanName', 'startTime', 'endTime', 'durationMin', 'durationHours', 'status', 'jobType'
+    'recoveryPlanName', 'startTime', 'endTime', 'vmCount', 'durationMin', 'durationHours', 'status', 'jobType'
   $displayResults | Format-Table -AutoSize
   $oarEventsSelected = $oarEvents | Select-Object recoveryName, recoveryPlanName, startTime, endTime, durationMin, durationHours, status, jobType, blueprintName, blueprintId
   $oarEventsSelected | Export-CSV -Path $csvOutputOAR -NoTypeInformation
