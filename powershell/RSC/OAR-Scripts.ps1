@@ -61,7 +61,7 @@ param (
 )
 
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-rr.json"
+$serviceAccountPath = "./rsc-service-account-quorum.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -222,7 +222,10 @@ Function Get-OAR-Recoveries {
     [int]$recoveryEvents,
     # How many hours back to
     [Parameter(Mandatory=$false)]
-    [int]$recoveryHours
+    [int]$recoveryHours,
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
   )
   $variables = @{
     "failoverType" = @(
@@ -234,6 +237,9 @@ Function Get-OAR-Recoveries {
     "recoveryTriggeredFrom" = @()
     "workloadType" = "VSPHERE_VIRTUAL_MACHINE"
     "first" = $recoveryEvents
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
   }
   if ($recoveryHours -ne '') {
     $startTimeMs = $utcDate.AddHours(-$hydrationHours)
@@ -295,7 +301,7 @@ Function Get-OAR-Recoveries {
       $item | Add-Member -MemberType NoteProperty -Name "durationHours" -Value $([math]::Round($item.durationMin / 60, 2))
     }
   }
-  return $result.data.failoverJobReports.edges.node
+  return $result.data.failoverJobReports
 }  ### Function Get-OAR-Recoveries
 
 # Cleanup Test Failover
@@ -765,9 +771,25 @@ $clusters = Get-ClusterList
 $clusterID = $($clusters | Where { $_.name -eq $cluster }).id
 
 if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
-  Write-Host "Getting the last $recoveryEvents recovery events..."
+  Write-Host "Getting the lastest $recoveryEvents recovery events..."
   Write-Host 'If you want to grab more recovery events, use "-recoveryEvents <count>"'
-  $oarEvents = Get-OAR-Recoveries -recoveryEvents $recoveryEvents
+  # Holds array of OAR events that we are grabbing
+  $oarEvents = @()
+  $count = 0
+  $hasNextPage = $true
+  # Get up to 50 OAR events at a time to avoid timeout
+  while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true)) {
+    if ( ($recoveryEvents - $count) -lt 50) {
+      $eventsToGet = $recoveryEvents - $count
+      $count += $eventsToGet
+    } else {
+      $eventsToGet = 50
+      $count += 50
+    }
+    $oar = Get-OAR-Recoveries -recoveryEvents $eventsToGet -afterCursor $oar.pageInfo.endCursor
+    $oarEvents += $oar.edges.node
+    $hasNextPage = $oar.pageInfo.hasNextPage
+  }
 }
 
 # Get events and export to CSV
@@ -793,6 +815,7 @@ if ($operation -eq 'cleanup') {
   Write-Host "Successful test failovers found for cleanpup: $tfCount"
   foreach ($tf in $testFailovers) {
     Write-Host "[$count / $tfCount] Cleaning up: $($tf.recoveryPlanName)"
+    $count++
     $tfResult = Cleanup-Failover -blueprintId $tf.blueprintId
   }
 }
@@ -942,12 +965,12 @@ if ($operation -eq 'hydrationStatus') {
 
 # Go through all blueprints and delete any scheduled test failovers
 if ($operation -eq 'deleteScheduled') {
-  $plans = Get-RecoveryPlans
   $plansList = @()
-  $plansList += $plans.edges.node
-  while ($plans.pageInfo.hasNextPage -eq $true) {
+  $hasNextPage = $true
+  while ($hasNextPage -eq $true) {
     $plans = Get-RecoveryPlans -afterCursor $plans.pageInfo.endCursor
     $plansList += $plans.edges.node
+    $hasNextPage = $plans.pageInfo.hasNextPage
   }
   Write-Host "Found $($plansList.count) plans"
   $count = 0
