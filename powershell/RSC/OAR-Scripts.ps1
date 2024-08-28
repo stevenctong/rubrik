@@ -61,7 +61,7 @@ param (
 )
 
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-rr.json"
+$serviceAccountPath = "./rsc-service-account-quorum.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -777,8 +777,10 @@ if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
   $oarEvents = @()
   $count = 0
   $hasNextPage = $true
+  $afterCursor = ''
   # Get up to 50 OAR events at a time to avoid timeout
-  while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true)) {
+  while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true) ) {
+    Write-Host "Grabbing events $count - $($count + 50)..."
     if ( ($recoveryEvents - $count) -lt 50) {
       $eventsToGet = $recoveryEvents - $count
       $count += $eventsToGet
@@ -786,9 +788,10 @@ if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
       $eventsToGet = 50
       $count += 50
     }
-    $oar = Get-OAR-Recoveries -recoveryEvents $eventsToGet -afterCursor $oar.pageInfo.endCursor
+    $oar = Get-OAR-Recoveries -recoveryEvents $eventsToGet -afterCursor $afterCursor
     $oarEvents += $oar.edges.node
     $hasNextPage = $oar.pageInfo.hasNextPage
+    $afterCursor = $oar.pageInfo.endCursor
   }
 }
 
@@ -798,9 +801,9 @@ if ($operation -eq 'getEvents') {
     Write-Host "Displaying the first 25 recovery events to console"
   }
   $displayResults = $oarEvents | Select-Object -First 25 -Property 'recoveryName',
-    'recoveryPlanName', 'startTime', 'endTime', 'vmCount', 'durationMin', 'durationHours', 'status', 'jobType'
+    'recoveryPlanName', 'startTime', 'endTime', 'vmCount', 'durationMin', 'durationHours', 'status', 'progress', 'jobType'
   $displayResults | Format-Table -AutoSize
-  $oarEventsSelected = $oarEvents | Select-Object recoveryName, recoveryPlanName, startTime, endTime, durationMin, durationHours, status, jobType, blueprintName, blueprintId
+  $oarEventsSelected = $oarEvents | Select-Object recoveryName, recoveryPlanName, startTime, endTime, vmCount, durationMin, durationHours, status, jobType, progress, blueprintName, blueprintId
   $oarEventsSelected | Export-CSV -Path $csvOutputOAR -NoTypeInformation
   Write-Host "CSV output to: $csvOutputOAR" -foregroundcolor green
 }  # getEvents
