@@ -1,0 +1,35 @@
+{
+  "properties": {
+    "roleName": "rubrik-cces-custom-role",
+    "description": "Rubrik custom role for CC-ES Storage Account",
+    "assignableScopes": [
+      "/subscriptions/<subscription_id>/resourceGroups/<resource_group>"
+    ],
+    "permissions": [
+      {
+        "actions": [
+          "Microsoft.Storage/storageAccounts/blobServices/generateUserDelegationKey/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/delete",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/read",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/write",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/lock/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/extend/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/delete",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/write",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies/read"
+        ],
+        "notActions": [],
+        "dataActions": [
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/deleteBlobVersion/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action",
+          "Microsoft.Storage/storageAccounts/blobServices/containers/blobs/immutableStorage/runAsSuperUser/action"
+        ],
+        "notDataActions": []
+      }
+    ]
+  }
+}
