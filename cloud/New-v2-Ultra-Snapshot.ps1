@@ -3,20 +3,27 @@
 
 1. Freeze IRIS ODB -
 ** ssh -i <ssh.pem> <user>@<iris_host> '<instafreeze>'
-** Also add to cron to automatically 'instathaw' after 9 minutes
+** Also add to sleep / cron to automatically 'instathaw' after 5 minutes
 2. Create Ultra SSD snapshot
 3. Thaw IRIS ODB
 ** ssh -i <ssh.pem> <user>@<iris_host> '<instathaw>'
+
+ Wait for the snapshot background copy to complete
 4. Create Managed Disk from Snapshot
+ Wait for the managed disk background copy to complete
+
 5. Proxy VM - Prep the Proxy VM for refreshed Managed Disk
 ** unmount /epic/prd01
 ** lvchange -an /dev/vg-prd01/prd01
 ** vgchange -an vg-prd01
+
 6. Mount Managed Disk onto Proxy VM
+
 7. Proxy VM - Re-Mount the refreshed Managed Disk
 ** vgchange -ay vg-prd01
 ** lvchange -ay /dev/vg-prd01/prd01
 ** mount /dev/vg-prd01/prd01 /epic/prd01
+
 8. Backup begins
 
 #>
@@ -27,19 +34,31 @@ $date = Get-Date
 $dateString = $date.ToString("yyyy-MM-dd_HHmm")
 
 # Time to wait between status checks, in seconds
-$statusCheckSecs = 60
+$statusCheckSecs = 120
 
-$subscriptionId = 'b2e9b0af-7820-42f8-b1cb-e9780a1cde59'
-$resourceGroup = 'rg-tong-ultra'
+$sourceSubscriptionId = ''
+$targetSubscriptionId = ''
+Set-AzContext -subscription $targetSubscriptionId
 
-$proxyVM = 'tong-proxy-vm'
+#### Set-AzContext and check current
+
+$sourceResourceGroup = ''
+$resourceGroup = ''
+
+$proxyVM = 'azrubrikproxy01'
+
+# Performance config for the Target Managed Disks
+$DiskMBpsReadWrite = 600
+$DiskMBpsReadOnly = 600
+$DiskIOPSReadWrite = 10000
+$DiskIOPSReadOnly = 10000
 
 #### Create an incremental snapshot of a Ultra / v2 disk ####
 # https://learn.microsoft.com/en-us/azure/virtual-machines/disks-incremental-snapshots
 # Ultra / v2 disks perform a background copy
 
 # Provide the list of source disks that will be snapshot
-$sourceDisks = @('vm-ultra-01_DataDisk_0', 'vm-ultra-01_DataDisk_1')
+$sourceDisks = @('', 'datadisk-')
 $diskCount = $sourceDisks.count
 
 # Provide the list of target disks that are mounted on the proxy VM
@@ -58,8 +77,9 @@ foreach ($disk in $sourceDisks) {
 }
 
 Write-Host "Date: $date"
-Write-Host "Subcription ID: $subscriptionId"
-Write-Host "Resource Group: $resourceGroup"
+Write-Host "Subcription ID: $targetSubscriptionId"
+Write-Host "Source Resource Group: $sourceResourceGroup"
+Write-Host "Resource Group: $targetResourceGroup"
 Write-Host ""
 Write-Host "$diskCount disks will be snapshot and refreshed:"
 $index = 0
@@ -80,11 +100,12 @@ foreach ($disk in $sourceDisks) {
   $sourceDiskToSnapshot.$disk = $snapshotName
   Write-Host "Creating snapshot for disk: $disk, snapshot name: $snapshotName..."
   # Get the disk info that you need to backup by creating an incremental snapshot
-  $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $resourceGroup
+  $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $sourceResourceGroup
   # Create an incremental snapshot by setting the SourceUri property with the value of the Id property of the disk
   $snapshotConfig=New-AzSnapshotConfig -SourceUri $diskInfo.Id -Location $diskInfo.Location -CreateOption Copy -Incremental
   $result = New-AzSnapshot -ResourceGroupName $resourceGroup -SnapshotName $snapshotName -Snapshot $snapshotConfig
   Write-Host "Snapshot result: $($result.ProvisioningState)"
+  #### If all snapshots ProvisioningState = Successful, then we can send thaw command
 }
 
 Write-Host ""
@@ -96,6 +117,7 @@ $snapshotComplete = @{}
 
 # For each incremental snapshot, check and wait until the background copy completes
 while ($snapshotComplete.count -lt $diskCount) {
+  #### Snapshot should be a 7 day retention, write logic to delete anything after 7 days
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   # Check the status of each snapshot operation
   foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
@@ -113,6 +135,7 @@ while ($snapshotComplete.count -lt $diskCount) {
 }
 
 Write-Host "All $diskCount snapshots have finished background copy" -foregroundcolor green
+
 
 #### Detach Managed Disk from the Proxy VM ####
 # https://learn.microsoft.com/en-us/azure/virtual-machines/windows/detach-disk
@@ -141,20 +164,21 @@ Write-Host "Starting Managed Disk creation from snapshots..."
 
 foreach ($disk in $sourceDisks) {
   $targetDiskName = $sourceDiskToTargetDisk[$disk]
-  $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $resourceGroup
+  $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $sourceResourceGroup
   $snapshotInfo = Get-AzSnapshot -ResourceGroupName $resourceGroup -SnapshotName $sourceDiskToSnapshot[$disk]
   Write-Host "Building disk config for: $disk, $($sourceDiskToSnapshot[$disk]) for target: $targetDiskName"
   $diskConfigParameters = @{
     CreateOption = "Copy"
     SourceResourceId = $snapshotInfo.Id
     DiskSizeGB = $diskInfo.DiskSizeGB
-    SkuName = $diskInfo.sku.name
+    SkuName = 'Standard_ZRS'
+    # SkuName = $diskInfo.sku.name
     Zone = $diskInfo.zones[0]
     Location = $diskInfo.location
-    DiskIOPSReadWrite = $diskInfo.DiskIOPSReadWrite
-    DiskIOPSReadOnly = $diskInfo.DiskIOPSReadOnly
-    DiskMBpsReadWrite = $diskInfo.DiskMBpsReadWrite
-    DiskMBpsReadOnly = $diskInfo.DiskMBpsReadOnly
+    DiskIOPSReadWrite = $diskIOPSReadWrite
+    DiskIOPSReadOnly = $diskIOPSReadOnly
+    DiskMBpsReadWrite = $diskMBpsReadWrite
+    DiskMBpsReadOnly = $diskMBpsReadOnly
   }
   $diskConfigParameters
   $diskConfig = New-AzDiskConfig @diskConfigParameters
@@ -199,6 +223,8 @@ Write-Host "Attaching new Managed Disks to the Proxy VM..."
 $vm = Get-AzVM -ResourceGroupName $resourceGroup -Name $proxyVM
 
 $lunNum = 0
+
+#### Can also use the managed disk names in order to attach to a specific LUN number
 
 foreach ($disk in $sourceDisks) {
   $targetDiskName = $sourceDiskToTargetDisk[$disk]
