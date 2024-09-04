@@ -29,6 +29,10 @@ Get all OAR events and export to a CSV.
 Cleanup all successful Test Failovers.
 
 .EXAMPLE
+./OAR-Scripts.ps1 -operation cleanup -cleanupTimeEST '2024-09-05 18:00' -cleanupLoop $true
+Only cleanup test failovers that started after 9/5/24 6pm EST and keep cleaning
+
+.EXAMPLE
 ./OAR-Scripts.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
 Get all hydration events for last 24 hours, target the source cluster
 
@@ -56,8 +60,16 @@ param (
   [Parameter(Mandatory=$false)]
   # [string]$cluster = 'vault-r-madison'
   [string]$cluster = 'HDC2-RBRK-PRD',
+  [Parameter(Mandatory=$false)]
   # Number of OAR Recovery events to get
-  $recoveryEvents = 25
+  [int]$recoveryEvents = 25,
+  # Set if we want to only cleanup plans after a certain EST time
+  # Format: '2024-09-04 18:00' for 6pm EST
+  [Parameter(Mandatory=$false)]
+  [string]$cleanupTimeEST = '',
+  # Set to true to loop through the cleanup
+  [Parameter(Mandatory=$false)]
+  [bool]$cleanupLoop = $false
 )
 
 # File location of the RSC service account json
@@ -781,9 +793,9 @@ if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
   # Get up to 50 OAR events at a time to avoid timeout
   while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true) ) {
     if ($recoveryEvents -gt 50) {
-      Write-Host "Grabbing events $count - $($count + 50)..."
+      Write-Host "Grabbing events $($count + 1) - $($count + 50)..."
     } else {
-      Write-Host "Grabbing events $count - $($count + $recoveryEvents)..."
+      Write-Host "Grabbing events $count - $($($count + 1) + $recoveryEvents)..."
     }
     if ( ($recoveryEvents - $count) -lt 50) {
       $eventsToGet = $recoveryEvents - $count
@@ -823,16 +835,37 @@ if ($operation -eq 'getEvents') {
 
 # Cleanup all blueprints that have test failed over
 if ($operation -eq 'cleanup') {
-  Write-Host "Cleaning up Test Failovers..." -foregroundcolor green
-  $count = 1
-  $testFailovers = $oarEvents | Where { $_.status -eq "Failover succeeded" -And
-    $_.jobType -eq 'TestFailover'}
-  $tfCount = $testFailovers.count
-  Write-Host "Successful test failovers found for cleanpup: $tfCount"
-  foreach ($tf in $testFailovers) {
-    Write-Host "[$count / $tfCount] Cleaning up: $($tf.recoveryPlanName)"
-    $count++
-    $tfResult = Cleanup-Failover -blueprintId $tf.blueprintId
+  $loop = $true
+  while ($loop) {
+    $loop = $cleanupLoop
+    Write-Host "Cleaning up Test Failovers..." -foregroundcolor green
+    # Get list of Test Failovers that are ready to cleanup
+    $testFailovers = $oarEvents | Where { $_.status -eq "Failover succeeded" -And
+      $_.jobType -eq 'TestFailover'}
+    # Cleanup list
+    $cleanupList = @()
+    # If time is provided, only cleanup plans after this time
+    if ($cleanupTimeEST -ne '') {
+      $cleanupTimeESTdt = [datetime]::ParseExact($cleanupTimeEST, 'yyyy-MM-dd HH:mm', $null)
+      foreach ($tf in $testFailovers) {
+        $startTimeDT = [datetime]::ParseExact($($tf.startTime), 'yyyy-MM-dd HH:mm:ss', $null)
+        if ($startTimeDT -gt $cleanupTimeESTdt) {
+          $cleanupList += $tf
+        }
+      }
+    } else {
+      $cleanupList = $testFailovers
+    }
+    $tfCount = $testFailovers.count
+    $count = 1
+    Write-Host "Successful test failovers found for cleanpup: $tfCount"
+    foreach ($tf in $cleanupList) {
+      Write-Host "[$count / $tfCount] Cleaning up: $($tf.recoveryPlanName)"
+      $count++
+      $tfResult = Cleanup-Failover -blueprintId $tf.blueprintId
+    }
+  Write-Host "Waiting 120 seconds..."
+  Start-Sleep 120
   }
 }
 
