@@ -59,6 +59,7 @@ param (
   # Source cluster for hydration events
   [Parameter(Mandatory=$false)]
   # [string]$cluster = 'vault-r-madison'
+  # [string]$cluster = 'DDC1-RBRK-UAT',
   [string]$cluster = 'HDC2-RBRK-PRD',
   [Parameter(Mandatory=$false)]
   # Number of OAR Recovery events to get
@@ -782,7 +783,7 @@ Function Get-HydrationStatus {
 $clusters = Get-ClusterList
 $clusterID = $($clusters | Where { $_.name -eq $cluster }).id
 
-if ($operation -eq 'getEvents' -or $operation -eq 'cleanup') {
+if ($operation -eq 'getEvents') {
   Write-Host "Getting the lastest $recoveryEvents recovery events..."
   Write-Host 'If you want to grab more recovery events, use "-recoveryEvents <count>"'
   # Holds array of OAR events that we are grabbing
@@ -837,6 +838,34 @@ if ($operation -eq 'getEvents') {
 if ($operation -eq 'cleanup') {
   $loop = $true
   while ($loop) {
+    # copy / paste
+    Write-Host "Getting the lastest $recoveryEvents recovery events..."
+    Write-Host 'If you want to grab more recovery events, use "-recoveryEvents <count>"'
+    # Holds array of OAR events that we are grabbing
+    $oarEvents = @()
+    $count = 0
+    $hasNextPage = $true
+    $afterCursor = ''
+    # Get up to 50 OAR events at a time to avoid timeout
+    while ( ($count -lt $recoveryEvents) -and ($hasNextPage -eq $true) ) {
+      if ($recoveryEvents -gt 50) {
+        Write-Host "Grabbing events $($count + 1) - $($count + 50)..."
+      } else {
+        Write-Host "Grabbing events $count - $($($count + 1) + $recoveryEvents)..."
+      }
+      if ( ($recoveryEvents - $count) -lt 50) {
+        $eventsToGet = $recoveryEvents - $count
+        $count += $eventsToGet
+      } else {
+        $eventsToGet = 50
+        $count += 50
+      }
+      $oar = Get-OAR-Recoveries -recoveryEvents $eventsToGet -afterCursor $afterCursor
+      $oarEvents += $oar.edges.node
+      $hasNextPage = $oar.pageInfo.hasNextPage
+      $afterCursor = $oar.pageInfo.endCursor
+    }
+    # end copy / paste
     $loop = $cleanupLoop
     Write-Host "Cleaning up Test Failovers..." -foregroundcolor green
     # Get list of Test Failovers that are ready to cleanup
@@ -957,7 +986,7 @@ if ($operation -eq 'hydrationStatus') {
         "Name" = $obj.name
         "Cluster" = $obj.cluster.name
         "Blueprint Name" = $obj.blueprintName
-        "Last Hydration Event Time" = $obj.hydrationEventTime
+        "Last Hydration Event Time" = $hydrationEventTime
         "Last Hydrated Snapshot Time" = $lastHydratedSnapshotTime
         "Most Recent Snapshot Time" = $latestSnapshot.date
         "VM ID" = $obj.id
