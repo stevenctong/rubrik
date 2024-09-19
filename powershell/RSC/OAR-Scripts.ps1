@@ -81,7 +81,7 @@ param (
 )
 
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-quorum.json"
+$serviceAccountPath = "./rsc-service-account-rr.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
