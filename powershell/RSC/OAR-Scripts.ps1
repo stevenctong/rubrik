@@ -29,8 +29,8 @@ Get all OAR events and export to a CSV.
 Cleanup all successful Test Failovers.
 
 .EXAMPLE
-./OAR-Scripts.ps1 -operation cleanup -cleanupTimeEST '2024-09-05 18:00' -cleanupLoop $true
-Only cleanup test failovers that started after 9/5/24 6pm EST and keep cleaning
+./OAR-Scripts.ps1 -operation cleanup -recoveryEvents 270 -cleanupTimeEST '2024-09-07 16:00' -cleanupLoop $true
+Only cleanup test failovers that started after 9/5/24 6pm EST and keep cleaning, and get last 270 events
 
 .EXAMPLE
 ./OAR-Scripts.ps1 -operation hydrationEvents -hydrationHours 24 -cluster 'PRD-Cluster'
@@ -39,6 +39,10 @@ Get all hydration events for last 24 hours, target the source cluster
 .EXAMPLE
 ./OAR-Scripts.ps1 -operation 'deleteScheduled'
 Get all blueprint plans and delete any scheduled test failovers
+
+.EXAMPLE
+./OAR-Scripts.ps1 -operation 'getRecoveryPlans' -planName 'prod'
+Get all recovery plans with 'prod' in the name and latest status
 
 #>
 
@@ -70,7 +74,10 @@ param (
   [string]$cleanupTimeEST = '',
   # Set to true to loop through the cleanup
   [Parameter(Mandatory=$false)]
-  [bool]$cleanupLoop = $false
+  [bool]$cleanupLoop = $false,
+  # For getRecoveryPlans, filter by a specific plan name
+  [Parameter(Mandatory=$false)]
+  [string]$planName = ''
 )
 
 # File location of the RSC service account json
@@ -88,6 +95,7 @@ $csvOutputHydrationVM = "./rubrik-hydration_vm-$($date.ToString("yyyy-MM-dd_HHmm
 # CSV output file for per-blueprint level Hydration Status
 $csvOutputHydrationBlueprint = "./rubrik-hydration_blueprint-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
+$csvOutputRecoveryPlans = "./rubrik-recovery_plans-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ### End Variables section
 
@@ -604,6 +612,7 @@ Function Get-RecoveryPlans {
           ... on RecoveryPlan {
             id
             name
+            isHydrationEnabled
             __typename
           }
           ... on RecoveryPlan {
@@ -782,6 +791,7 @@ Function Get-HydrationStatus {
 
 $clusters = Get-ClusterList
 $clusterID = $($clusters | Where { $_.name -eq $cluster }).id
+
 
 if ($operation -eq 'getEvents') {
   Write-Host "Getting the lastest $recoveryEvents recovery events..."
@@ -986,7 +996,7 @@ if ($operation -eq 'hydrationStatus') {
         "Name" = $obj.name
         "Cluster" = $obj.cluster.name
         "Blueprint Name" = $obj.blueprintName
-        "Last Hydration Event Time" = $hydrationEventTime
+        "Last Hydration Event Time" = $obj.hydrationEventTime
         "Last Hydrated Snapshot Time" = $lastHydratedSnapshotTime
         "Most Recent Snapshot Time" = $latestSnapshot.date
         "VM ID" = $obj.id
@@ -1041,16 +1051,38 @@ if ($operation -eq 'hydrationStatus') {
   Write-Host "Scroll up to see per-VM and per-Blueprint info" -foregroundcolor green
 }  ## IF $operation -eq 'hydrationStatus'
 
-# Go through all blueprints and delete any scheduled test failovers
-if ($operation -eq 'deleteScheduled') {
+# Go through all blueprints and get all recovery plans
+if ($operation -eq 'deleteScheduled' -or $operation -eq 'getRecoveryPlans') {
+  Write-Host "Getting all Recovery Plans"
   $plansList = @()
+  $plans = $null
   $hasNextPage = $true
   while ($hasNextPage -eq $true) {
     $plans = Get-RecoveryPlans -afterCursor $plans.pageInfo.endCursor
     $plansList += $plans.edges.node
     $hasNextPage = $plans.pageInfo.hasNextPage
   }
-  Write-Host "Found $($plansList.count) plans"
+  Write-Host "Total plans found: $($plansList.count)" -foregroundcolor green
+}
+
+if ($operation -eq 'getRecoveryPlans') {
+  if ($planName -ne '') {
+    $plansList = $plansList | Where { $_.Name -match $planName }
+    Write-Host "Plans found containing the word ${planName}: $($plansList.count)" -foregroundcolor green
+  }
+  if ($plansList.count -gt 0) {
+    $displayPlans = $plansList | Select-Object -Property Name, @{
+        Expression = { $_.latestFailover.status }
+    }, lastTestFailoverTime, isHydrationEnabled | Sort-Object lastTestFailoverTime -Descending
+  }
+  $displayPlans | Format-table
+  Write-Host "Exporting to: $csvOutputRecoveryPlans" -foregroundcolor green
+  $displayPlans | Export-CSV -Path $csvOutputRecoveryPlans -NoTypeInformation
+}
+
+# Delete any scheduling on the recovery plans found
+if ($operation -eq 'deleteScheduled') {
+  Write-Host "Remove any scheduled recoveries for the plans."
   $count = 0
   foreach ($bp in $plansList) {
     if ($bp.schedule.scheduleId -gt 0) {
