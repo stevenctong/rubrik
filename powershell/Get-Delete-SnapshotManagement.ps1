@@ -1,10 +1,5 @@
 #requires -modules Rubrik
 
-# https://build.rubrik.com
-# https://www.rubrik.com/blog/get-started-rubrik-powershell-module/
-# https://github.com/rubrikinc/rubrik-sdk-for-powershell
-# https://github.com/rubrikinc/rubrik-scripts-for-powershell
-
 <#
 .SYNOPSIS
 Generates a filterable list of objects and snapshots under Snapshot Management and assists with deletion.
@@ -28,27 +23,27 @@ Possible Use Cases:
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 12/20/20
-Modified: 4/8/22
+Modified: 9/20/24
 
-For authentication, use an API token (recommended), username/password, or a credential file.
-
-To create a credential file (note: only the user who creates it can use it):
-- Get-Credential | Export-CliXml -Path ./rubrik_cred.xml
+For authentication, using a RSC Service Account with a custom role.
+Create a custom role: Settings -> Users & Access -> Roles.
+Create a RSC Service Account: Settings -> Users & Access -> Service Accounts.
+Within the Service Account json, use the 'client_id' and 'client_secret'.
 
 Fill out the PARAM and VARIABLES section with config details for this script.
 
 .EXAMPLE
-./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -token <API_token>
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -id <client_id> -secret <client_secret>
 Use an API token for authentication.
 Generates a list of snapshots based on the config in the VARIABLES section and export the list to a CSV file.
 
 .EXAMPLE
-./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -delete $true
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -id <client_id> -secret <client_secret> -delete $true
 Checks for credential file and if none found prompts for username/password.
 Generates a list of snapshots based on the config in the VARIABLES section, deletes the snapshots, and exports the list to a CSV file.
 
 .EXAMPLE
-./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -csvDelete './rubrik_snapshot_list-2020-12-01_2220.csv'
+./Get-Delete-SnapshotManagement.ps1 -server <Rubrik_server> -id <client_id> -secret <client_secret> -csvDelete './rubrik_snapshot_list-2020-12-01_2220.csv'
 Reads in the file './rubrik_snapshot_list-2020-12-01_2220.csv' and deletes the snapshots in there.
 
 #>
@@ -60,21 +55,21 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$server = '',
 
-  # Use API token for authentication
+  # Use RSC Service Account ID for authentication
   [Parameter(Mandatory=$false)]
-  [string]$token = $null,
+  [string]$id = $null,
 
-  # Use Rubrik username/password for authentication
+  # Use RSC Service Account secret for authentication
   [Parameter(Mandatory=$false)]
-  [string]$user = $null,
-
-  # Use Rubrik username/password for authentication
-  [Parameter(Mandatory=$false)]
-  [string]$password = $null,
+  [string]$secret = $null,
 
   # Use credential file for authentication, location of it
   [Parameter(Mandatory=$false)]
   [string]$rubrikCred = 'rubrik_cred.xml',
+
+  # Use API token for authentication
+  [Parameter(Mandatory=$false)]
+  [string]$token = $null,
 
   # Set to true to also delete the snapshots that are found
   [Parameter(Mandatory=$false)]
@@ -121,15 +116,10 @@ $csvFile = "./rubrik_snapshot_list-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 # First try using API token, then username/password if a user is provided, then credential file
 try {
   if (!$server) { $server = Read-Host "Rubrik hostname or IP" }
-  if ($token) { Connect-Rubrik -Server $server -Token $token }
-  else {
-    if ($user) {
-      if ($password) {
-        [SecureString]$password = ConvertTo-SecureString -String  $password -AsPlainText -Force
-        $credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $user, $password
-      }
-      else { $credential = Get-Credential -Username $user }
-    }
+  if ($id) {
+    Connect-Rubrik -server $server -id $id -secret $secret -RedirectToRSC
+  } else {
+    if ($token) { Connect-Rubrik -Server $server -Token $token }
     elseif (Test-Path $rubrikCred) { $credential  = Import-Clixml -Path $rubrikCred }
     else { $credential = Get-Credential }
     Connect-Rubrik -Server $server -Credential $credential
@@ -215,9 +205,6 @@ if ($csvDelete -eq '')
             $newObj | Add-Member -MemberType NoteProperty -Name "snapshotReplicationFrequency" -Value $j.snapshotRetentionInfo.replicationInfos.snapshotFrequency
             $newObj | Add-Member -MemberType NoteProperty -Name "snapshotReplicationExpiration" -Value $j.snapshotRetentionInfo.replicationInfos.expirationTime
           }
-
-          $newObj
-
           $snapshotList += $NewObj
          }  # if older than $beforeDate
       }  # foreach in snapshot list
