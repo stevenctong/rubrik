@@ -121,8 +121,9 @@ try {
   } else {
     if ($token) { Connect-Rubrik -Server $server -Token $token }
     elseif (Test-Path $rubrikCred) { $credential  = Import-Clixml -Path $rubrikCred }
-    else { $credential = Get-Credential }
-    Connect-Rubrik -Server $server -Credential $credential
+    else { $credential = Get-Credential
+      Connect-Rubrik -Server $server -Credential $credential
+    }
   }
 } catch {
   try {
