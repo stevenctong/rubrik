@@ -1,0 +1,91 @@
+# For script: Rubrik-New-v2-Ultra-Snapshot.ps1
+
+### General Variables ###
+
+# Number of days to keep the snapshots
+snapDaysToKeep: 7
+# Number of day to keep the cloned Managed Disks
+clonedDisksDaysToKeep: 7
+
+### Variables - Azure ###
+
+# Source Disks - Subscription & Resource Group of the source disks
+sourceSubscriptionId: abcdefg-7820-42f8-b1cb-12345678
+sourceResourceGroup: rg-source
+
+# Comma separated list of source disks we want to snapshot
+azDiskNames: iris-data-lun01, iris-data-lun02
+
+# Target Proxy VM - Subscription & Resource Group where the Proxy VM is
+# The Proxy VM is where we will mount the cloned Managed Disks to
+targetSubscriptionId: abcdefg-7820-42f8-b1cb-12345678
+targetResourceGroup: rg-target
+
+# Target Proxy VM - Name of the Proxy VM the cloned Managed Disks will be mounted on
+proxyVM: iris-proxy-vm
+
+# Snapshots will be appended with: -${sourceSnapshotSuffix}-${dateString}
+sourceSnapshotSuffix: rubrik-snap
+
+# The cloned disks will be appended with the name of the source disk and
+# -${targetDiskSuffix}-${dateString}
+targetDiskSuffix: rubrik-disk
+
+### Variables - Proxy VM commands ###
+# Defines variables for what VG, LV, and file systems we will be mounting
+
+# The base directory where all mount points will live under
+MOUNT_BASE: /epic
+
+# If $irisName is provided as a parameter, then we will derive the mount
+# options based off that name. Otherwise, you can explicitly define it here.
+
+# Defines the instances / mount points under $MOUNT_BASE
+# This can be a comma separated string of mount points
+MOUNTS: /ply01, /relbld01
+
+# Defines the volume group names, this can be a comma separated list
+VGS: plyvg, relbldvg
+
+# Defines the logical volume names, this can be a comma separated list
+LVS: lv_ply, lv_relbld
+
+### Variables - IRIS ODB user variables ###
+
+# Server that IRIS ODB Prod server is on to execute freeze / thaw
+EPIC_PRD_SERVER: AZIRISODB01
+
+# User to issue freeze / thaw on the IRIS ODB server.
+# Ensure they have permissions and can sudo.
+EPIC_PRD_USER: rbrkbkp
+
+# Whether to execute certain groups of commands as break points
+executeEpicCommands: true
+executeConnectToAzure: true
+executeAzureCleanup: true
+executeAzureSnapshot: true
+executeManagedDiskClone: true
+executeProxyDiskUnmountCommands: true
+executeAzureDiskDetach: true
+executeAzureDiskAttach: true
+executeProxyMountCommands: true
+
+# Whether to send an email or not
+sendMail: false
+
+# Performance config for v2 / Ultra cloned Managed Disks
+# Acceptable values also depends on the size of the v2 / Ultra Managed Disks
+# Script has error handling if out of bounds to set to its max discovered value
+DiskMBpsReadWrite: 800
+DiskMBpsReadOnly: 800
+DiskIOPSReadWrite: 10000
+DiskIOPSReadOnly: 10000
+
+# Time to wait between status checks, in seconds
+statusCheckSecs: 120
+
+### Variables SMTP to send an email ###
+emailTo:
+emailFrom:
+SMTPServer:
+emailSubject: Rubrik Azure Script
