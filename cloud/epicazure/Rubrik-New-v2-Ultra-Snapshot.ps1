@@ -138,20 +138,6 @@ if (-Not (Test-Path $configFile)) {
 
 ##### BEGIN - VARIABLES #####
 
-# IRIS ODB commands
-
-if ($irisName) {
-  $EPIC_FREEZE ="sudo /epic/${irisName}/bin/instfreeze"
-  $EPIC_THAW = "sudo /epic/${irisName}/bin/instthaw"
-} else {
-  $EPIC_FREEZE = "sudo /epic/bin/instfreeze"
-  $EPIC_THAW = "sudo /epic/bin/instthaw"
-}
-
-$EPIC_AUTOTHAW = "nohup sh -c '(sleep 5m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
-$EPIC_FREEZE_CMD = $EPIC_FREEZE
-$EPIC_THAW_CMD = $EPIC_THAW
-$EPIC_AUTOTHAW_CMD = $EPIC_AUTOTHAW
 
 Function ConvertFrom-Yaml {
   param (
@@ -174,6 +160,20 @@ Function ConvertFrom-Yaml {
     return $result
 }
 $configData = ConvertFrom-Yaml -YamlContent $yamlContent
+
+# IRIS freeze / thaw commands
+if ($irisName) {
+  $EPIC_FREEZE = "sudo /epic/${irisName}/bin/instfreeze"
+  $EPIC_THAW = "sudo /epic/${irisName}/bin/instthaw"
+} else {
+  $EPIC_FREEZE = $configData.EPIC_FREEZE
+  $EPIC_THAW = $configData.EPIC_THAW
+}
+
+$EPIC_FREEZE_CMD = $EPIC_FREEZE
+$EPIC_THAW_CMD = $EPIC_THAW
+$EPIC_AUTOTHAW = "nohup sh -c '(sleep 5m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
+$EPIC_AUTOTHAW_CMD = $EPIC_AUTOTHAW
 
 $EPIC_PRD_SERVER = $configData.EPIC_PRD_SERVER
 $EPIC_PRD_USER = $configData.EPIC_PRD_USER
