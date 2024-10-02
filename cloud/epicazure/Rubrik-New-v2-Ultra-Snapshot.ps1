@@ -291,7 +291,7 @@ for($i = 0; $i -lt $VG_COUNT; $i++) {
 #### Login to Azure and initialization of some variables ####
 
 $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-$emailBody = "${currentTime}: Starting Azure snapshot script $irisName \n"
+$emailBody = "${currentTime}: Starting Azure snapshot script $irisName `n"
 
 if ($executeConnectToAzure) {
   Connect-AzAccount -Identity
@@ -336,7 +336,7 @@ if ($executeConnectToAzure) {
 
 if ($executeAzureCleanup) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Cleaning up older snapshots and cloned disks \n"
+  $emailBody += "${currentTime}: Cleaning up older snapshots and cloned disks `n"
   Set-AzContext -subscription $sourceSubscriptionId
   $snapDateToKeep = $date.add("-$snapDaysToKeep")
   Write-Host "Looking for and cleaning up any snapshots older than: $snapDateToKeep" -foregroundcolor green
@@ -404,7 +404,7 @@ if ($executeAzureCleanup) {
 # Send command to IRIS PRD server to freeze and set auto-thaw
 if ($executeEpicCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Sending command to freeze IRIS ODB \n"
+  $emailBody += "${currentTime}: Sending command to freeze IRIS ODB `n"
   Write-Host "Sending command to freeze & auto-thaw IRIS ODB..." -foregroundcolor cyan
   ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_FREEZE_CMD} 2>&1
   ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_AUTOTHAW_CMD} 2>&1
@@ -412,7 +412,7 @@ if ($executeEpicCommands) {
 
 if ($executeAzureSnapshot) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Creating snapshots \n"
+  $emailBody += "${currentTime}: Creating snapshots `n"
   # Create a snapshot for each disk
   foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
     # $sourceDiskToSnapshot contains the Source Disk Name to Snapshot Name mapping
@@ -523,7 +523,7 @@ if ($executeConnectToAzure) {
 
 if ($executeManagedDiskClone) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots \n"
+  $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots `n"
   Write-Host ""
   Write-Host "Starting Managed Disk creation from snapshots..."
   # $disk contains the name of the source disk being worked on
@@ -638,7 +638,7 @@ if ($executeProxyDiskUnmountCommands) {
 
 if ($executeAzureDiskDetach) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Detatching disks from Proxy VM \n"
+  $emailBody += "${currentTime}: Detatching disks from Proxy VM `n"
   Write-Host ""
   Write-Host "Detaching existing data disks from the Proxy VM" -foregroundcolor green
 
@@ -692,7 +692,7 @@ if ($executeAzureDiskDetach) {
 
 if ($executeAzureDiskAttach) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Attaching cloned disks to Proxy VM \n"
+  $emailBody += "${currentTime}: Attaching cloned disks to Proxy VM `n"
   Write-Host ""
   Write-Host "Attaching new Managed Disks to the Proxy VM" -foregroundcolor green
   $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
@@ -732,7 +732,7 @@ if ($executeAzureDiskAttach) {
 # The mount definitions should put in /etc/fstab
 if ($executeProxyMountCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Mounting file systems on Proxy VM \n"
+  $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
   Write-Host ""
   Write-Host "On Proxy VM, re-mounting the file systems" -foregroundcolor green
   $mountCount = $MOUNT_LIST.count
