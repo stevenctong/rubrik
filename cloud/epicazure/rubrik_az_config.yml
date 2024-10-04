@@ -52,6 +52,11 @@ LVS: lv_ply, lv_relbld
 
 ### Variables - IRIS ODB user variables ###
 
+# SSH command to issue to IRIS ODB server to freeze & thaw database
+# If $irisName is provided, it is generated within the PowerShell script
+EPIC_FREEZE: sudo /epic/bin/instfreeze
+EPIC_THAW: sudo /epic/bin/instthaw
+
 # Server that IRIS ODB Prod server is on to execute freeze / thaw
 EPIC_PRD_SERVER: AZIRISODB01
 
