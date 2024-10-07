@@ -133,6 +133,8 @@ if (-Not (Test-Path $configFile)) {
 
 $configData = ConvertFrom-Yaml -YamlContent $yamlContent
 
+$irisName = $configData.IRISNAME
+
 # Directory to write logs to
 $logDir = $configData.logDir
 # Filename of the log when stored in the path. The filename will be appended
@@ -147,8 +149,6 @@ if ($irisName) {
 
 Start-Transcript -path $logPath -append
 Write-Host "Starting log capture to: $logPath"
-
-$irisName = $configData.IRISNAME
 
 $MOUNT_BASE = $configData.MOUNT_BASE
 $MOUNTS = $configData.MOUNTS
