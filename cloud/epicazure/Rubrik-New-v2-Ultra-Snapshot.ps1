@@ -91,16 +91,7 @@ param (
   [CmdletBinding()]
   # Location of the YAML config file
   [Parameter(Mandatory=$true)]
-  [string]$configFile = '',
-  # The name of the IRIS instance you want to execute against
-  # This is used to build the VG, LVM, and mount point names
-  [Parameter(Mandatory=$false)]
-  [string]$irisName = '',
-  [CmdletBinding()]
-  # Source disk names in Azure associated with the instance
-  # If multiple disks, separate with a comma
-  [Parameter(Mandatory=$false)]
-  [string]$azDiskNames = ''
+  [string]$configFile = ''
 )
 
 Import-Module Az.Accounts
@@ -115,26 +106,6 @@ $dateString = $date.ToString("yyyy-MM-dd_HHmm")
 ## If you need to mount an existing disk, set $dateString below
 # $dateString = '2024-10-01_1628'
 
-# Directory to write logs to
-$logDir = './logs'
-# Filename of the log when stored in the path. The filename will be appended
-# with: $logFilename-$dateString.log or $logFilename-$irisName-$dateString.log
-$logFilename = 'rubrik_azure_snap_script'
-
-if ($irisName) {
-  $logPath = $logDir + '/' + $logFilename + '-' + $irisName + '-' + $dateString + '.log'
-} else {
-  $logPath = $logDir + '/' + $logFilename + '-' + $dateString + '.log'
-}
-
-Start-Transcript -path $logPath -append
-Write-Host "Starting log capture to: $logPath"
-
-if (-Not (Test-Path $configFile)) {
-  throw "File not found: $configFile"
-} else {
-  $yamlContent = Get-Content -Path $configFile -Raw
-}
 
 ##### BEGIN - VARIABLES #####
 
@@ -160,6 +131,36 @@ Function ConvertFrom-Yaml {
     return $result
 }
 $configData = ConvertFrom-Yaml -YamlContent $yamlContent
+
+# Directory to write logs to
+$logDir = $configData.logDir
+# Filename of the log when stored in the path. The filename will be appended
+# with: $logFilename-$dateString.log or $logFilename-$irisName-$dateString.log
+$logFilename = $configData.logFilename
+
+if ($irisName) {
+  $logPath = $logDir + '/' + $logFilename + '-' + $irisName + '-' + $dateString + '.log'
+} else {
+  $logPath = $logDir + '/' + $logFilename + '-' + $dateString + '.log'
+}
+
+Start-Transcript -path $logPath -append
+Write-Host "Starting log capture to: $logPath"
+
+if (-Not (Test-Path $configFile)) {
+  throw "File not found: $configFile"
+} else {
+  $yamlContent = Get-Content -Path $configFile -Raw
+}
+
+$irisName = $configData.IRISNAME
+
+$MOUNT_BASE = $configData.MOUNT_BASE
+$MOUNTS = $configData.MOUNTS
+$VGS = $configData.VGS
+$LVS = $configData.LVS
+
+$azDiskNames = $configData.azDiskNames
 
 # IRIS freeze / thaw commands
 if ($irisName) {
@@ -188,15 +189,6 @@ $proxyVM = $configData.proxyVM
 
 $sourceSnapshotSuffix = $configData.sourceSnapshotSuffix
 $targetDiskSuffix = $configData.targetDiskSuffix
-
-$MOUNT_BASE = $configData.MOUNT_BASE
-$MOUNTS = $configData.MOUNTS
-$VGS = $configData.VGS
-$LVS = $configData.LVS
-
-if ($azDiskNames -eq '') {
-  $azDiskNames = $configData.azDiskNames
-}
 
 $executeEpicCommands = [bool]::Parse($configData.executeEpicCommands)
 $executeConnectToAzure = [bool]::Parse($configData.executeConnectToAzure)

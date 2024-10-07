@@ -1,5 +1,28 @@
 # For script: Rubrik-New-v2-Ultra-Snapshot.ps1
 
+### Variables - Proxy VM commands & Disk Names ###
+# Defines variables for what VG, LV, and file systems we will be mounting
+
+# If $irisName is provided as a parameter, then we will derive the mount
+# options based off that name. Otherwise, you can explicitly define it below.
+irisName:
+
+# Defines the instances / mount points under $MOUNT_BASE
+# This can be a comma separated string of mount points
+MOUNTS: /ply01, /relbld01
+
+# Defines the volume group names, this can be a comma separated list
+VGS: plyvg, relbldvg
+
+# Defines the logical volume names, this can be a comma separated list
+LVS: lv_ply, lv_relbld
+
+# Comma separated list of source disks we want to snapshot
+azDiskNames: iris-data-lun01, iris-data-lun02
+
+# The base directory where all mount points will live under
+MOUNT_BASE: /epic
+
 ### General Variables ###
 
 # Number of days to keep the snapshots
@@ -12,9 +35,6 @@ clonedDisksDaysToKeep: 7
 # Source Disks - Subscription & Resource Group of the source disks
 sourceSubscriptionId: abcdefg-7820-42f8-b1cb-12345678
 sourceResourceGroup: rg-source
-
-# Comma separated list of source disks we want to snapshot
-azDiskNames: iris-data-lun01, iris-data-lun02
 
 # Target Proxy VM - Subscription & Resource Group where the Proxy VM is
 # The Proxy VM is where we will mount the cloned Managed Disks to
@@ -31,24 +51,6 @@ sourceSnapshotSuffix: rubrik-snap
 # -${targetDiskSuffix}-${dateString}
 targetDiskSuffix: rubrik-disk
 
-### Variables - Proxy VM commands ###
-# Defines variables for what VG, LV, and file systems we will be mounting
-
-# The base directory where all mount points will live under
-MOUNT_BASE: /epic
-
-# If $irisName is provided as a parameter, then we will derive the mount
-# options based off that name. Otherwise, you can explicitly define it here.
-
-# Defines the instances / mount points under $MOUNT_BASE
-# This can be a comma separated string of mount points
-MOUNTS: /ply01, /relbld01
-
-# Defines the volume group names, this can be a comma separated list
-VGS: plyvg, relbldvg
-
-# Defines the logical volume names, this can be a comma separated list
-LVS: lv_ply, lv_relbld
 
 ### Variables - IRIS ODB user variables ###
 
@@ -94,3 +96,8 @@ emailTo:
 emailFrom:
 SMTPServer:
 emailSubject: Rubrik Azure Script
+
+
+### Log Location ###
+logDir: ./logs
+logFilename: rubrik_azure_snap_script
