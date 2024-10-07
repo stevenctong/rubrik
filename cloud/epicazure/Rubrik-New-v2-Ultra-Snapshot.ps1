@@ -79,12 +79,6 @@ PRE-REQUISITES:
  Execute the scripts according to the variables in the config file. Specify
  variables such as mount points, VG, and LV within the config file.
 
-.EXAMPLE
-./Rubrik-New-v2-Ultra-Snapshot.ps1 -configFile 'rubrik_az_config.yml' -irisName 'ply' -azDiskNames 'az-ply-disk-01'
-Execute the scripts according to the variables in the config file and using an
-IRIS ODB instance name. The mount points, VG, and LV will be automatically
-generated based on $irisName.
-
 #>
 
 param (
@@ -130,6 +124,13 @@ Function ConvertFrom-Yaml {
     }
     return $result
 }
+
+if (-Not (Test-Path $configFile)) {
+  throw "File not found: $configFile"
+} else {
+  $yamlContent = Get-Content -Path $configFile -Raw
+}
+
 $configData = ConvertFrom-Yaml -YamlContent $yamlContent
 
 # Directory to write logs to
@@ -146,12 +147,6 @@ if ($irisName) {
 
 Start-Transcript -path $logPath -append
 Write-Host "Starting log capture to: $logPath"
-
-if (-Not (Test-Path $configFile)) {
-  throw "File not found: $configFile"
-} else {
-  $yamlContent = Get-Content -Path $configFile -Raw
-}
 
 $irisName = $configData.IRISNAME
 
@@ -286,8 +281,8 @@ $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
 $emailBody = "${currentTime}: Starting Azure snapshot script $irisName `n"
 
 if ($executeConnectToAzure) {
-  Connect-AzAccount -Identity
-  # Connect-AzAccount
+  # Connect-AzAccount -Identity
+  Connect-AzAccount
   Set-AzContext -subscription $sourceSubscriptionId
   # Holds source disk to target disk name mapping
   $sourceDiskToTargetDisk = @{}
