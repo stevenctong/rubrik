@@ -281,8 +281,8 @@ $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
 $emailBody = "${currentTime}: Starting Azure snapshot script $irisName `n"
 
 if ($executeConnectToAzure) {
-  # Connect-AzAccount -Identity
-  Connect-AzAccount
+  Connect-AzAccount -Identity
+  # Connect-AzAccount
   Set-AzContext -subscription $sourceSubscriptionId
   # Holds source disk to target disk name mapping
   $sourceDiskToTargetDisk = @{}
@@ -689,6 +689,12 @@ if ($executeAzureDiskAttach) {
     $targetDiskName = $sourceDiskToTargetDisk[$disk]
     if ($targetDiskName -match 'lun([0-9]+)') {
       [int]$lunNum = $matches[1]
+      Write-Host "Found LUN: $lunNum"
+    }
+    # Check if the LUN is being used, and if it is, increment the LUN number
+    while ($vm.StorageProfile.DataDisks.lun -contains $lunNum) {
+      Write-Host "LUN conflict, incrementing by one..."
+      $lunNum++
     }
     Write-Host "Attaching disk to Proxy VM: $targetDiskName..."
     $resultUpdate = $null
