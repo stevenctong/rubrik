@@ -50,7 +50,7 @@ but appended with a 'suffix' and datestamped.
 Written by Steven Tong for usage with Rubrik
 GitHub: stevenctong
 Date: 8/30/24
-Updated: 9/27/24
+Updated: 10/18/24
 
 PRE-REQUISITES:
 1. IRIS PROD VM has the Proxy VM keys as 'authorized_keys' for SSH commands
@@ -682,7 +682,6 @@ if ($executeAzureDiskAttach) {
   $emailBody += "${currentTime}: Attaching cloned disks to Proxy VM `n"
   Write-Host ""
   Write-Host "Attaching new Managed Disks to the Proxy VM" -foregroundcolor green
-  $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
   $lunNum = 0
   # For each source disk, will then get the target disk name to attach
   foreach ($disk in $sourceDisks) {
@@ -691,10 +690,16 @@ if ($executeAzureDiskAttach) {
       [int]$lunNum = $matches[1]
       Write-Host "Found LUN: $lunNum"
     }
+    $randomInterval = Get-Random -Minimum 20 -Maximum 60
+    Start-Sleep -Seconds $randomInterval
+    $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
     # Check if the LUN is being used, and if it is, increment the LUN number
     while ($vm.StorageProfile.DataDisks.lun -contains $lunNum) {
       Write-Host "LUN conflict, incrementing by one..."
       $lunNum++
+      $randomInterval = Get-Random -Minimum 20 -Maximum 60
+      Start-Sleep -Seconds $randomInterval
+      $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
     }
     Write-Host "Attaching disk to Proxy VM: $targetDiskName..."
     $resultUpdate = $null
