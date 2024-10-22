@@ -38,6 +38,10 @@ Runs the script to gather Rubrik stats and output to  CSV.
 $clusterID = '2988c49d-4040-4982-a77f-63c3c6c24c14'
 $clusterName = 'HDC2-RBRK-PRD'
 
+# The report IDs for the Compliance Report the script uses
+# Compliance report should be filtered to Last 24 hours for the Cluster above
+$reportIDdailyComplianceReport = 118
+
 # File location of the RSC service account json
 $serviceAccountPath = "./rsc-service-account-quorum.json"
 
@@ -46,6 +50,16 @@ $dateString = $date.ToString("yyyy-MM-ddTHH:mm:ss")
 
 # CSV file info
 $csvOutput = "./rubrik_daily_stats.csv"
+
+# SMTP configuration if you want to send an email at the end of this script
+$emailTo = @('')
+$emailFrom = ''
+$SMTPServer = ''
+$SMTPPort = '25'
+$emailSubject = "Rubrik Cluster Stats - " + $date.ToString("yyyy-MM-dd HH:MM")
+
+# Set to $true to send out email at the end of this script
+$sendEmail = $false
 
 # Define the capacity metric conversions
 $GB = 1000000000
@@ -103,188 +117,6 @@ Write-Host "Successfully connected to: $rubrikURL"
 ###### RUBRIK AUTHENTICATION - END ######
 
 ###### FUNCTIONS - BEGIN ######
-
-
-# Get VM list and snapshots for each VM
-Function Get-VMSnapshots {
-  param (
-    [CmdletBinding()]
-    # Cluster ID
-    [Parameter(Mandatory=$false)]
-    [string]$clusterID = '',
-    # Page info after cursor
-    [Parameter(Mandatory=$false)]
-    [string]$afterCursor = ''
-  )
-  $variables = @{
-    "first" = 500
-    "filter" = @(
-      @{
-        "field" = "IS_RELIC"
-        "texts" = @(
-          "false"
-        )
-      }
-      @{
-        "field" = "IS_REPLICATED"
-        "texts" = @(
-          "false"
-        )
-      }
-      @{
-        "field" = "IS_ACTIVE"
-        "texts" = @(
-          "true"
-        )
-      }
-      @{
-        "field" = "NAME"
-        "texts" = @(
-          ""
-        )
-      }
-      @{
-        "field" = "CLUSTER_ID"
-        "texts" = @(
-          "$clusterID"
-        )
-      }
-      @{
-        "field" = "IS_ACTIVE_AMONG_DUPLICATED_OBJECTS"
-        "texts" = @(
-          "false"
-        )
-      }
-    )
-    "sortBy" = "NAME"
-    "sortOrder" = "ASC"
-  }
-  if ($afterCursor -ne '') {
-    $variables.after = $afterCursor
-  }
-  $query = "query (`$first: Int!, `$after: String, `$filter: [Filter!]!, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder) {
-    vSphereVmNewConnection(
-      filter: `$filter
-      first: `$first
-      after: `$after
-      sortBy: `$sortBy
-      sortOrder: `$sortOrder
-    ) {
-      edges {
-        cursor
-        node {
-          id
-          cdmId
-          name
-          objectType
-          blueprintName
-          blueprintId
-          newestSnapshot {
-            id
-          }
-          snapshotConnection {
-            edges {
-              node {
-                id
-                date
-                cdmId
-                cluster {
-                  name
-                  id
-                }
-                snappableId
-              }
-            }
-          }
-          ... on CdmHierarchyObject {
-            replicatedObjectCount
-            cluster {
-              id
-              name
-              version
-              status
-              __typename
-            }
-          }
-          ... on HierarchyObject {
-            id
-            effectiveSlaDomain {
-              id
-              name
-              ... on GlobalSlaReply {
-                isRetentionLockedSla
-                retentionLockMode
-                __typename
-              }
-              ... on ClusterSlaDomain {
-                fid
-                cluster {
-                  id
-                  name
-                  __typename
-                }
-                isRetentionLockedSla
-                retentionLockMode
-                __typename
-              }
-              __typename
-              ... on GlobalSlaReply {
-                description
-                __typename
-              }
-            }
-            __typename
-          }
-          ... on HierarchyObject {
-            effectiveSlaSourceObject {
-              fid
-              name
-              objectType
-              __typename
-            }
-            slaAssignment
-            __typename
-          }
-          isRelic
-          templateType
-          primaryClusterLocation {
-            id
-            name
-            __typename
-          }
-          slaPauseStatus
-          snapshotDistribution {
-            id
-            totalCount
-            __typename
-          }
-          vmwareToolsInstalled
-          agentStatus {
-            agentStatus
-            __typename
-          }
-        }
-        __typename
-      }
-      pageInfo {
-        startCursor
-        endCursor
-        hasNextPage
-        hasPreviousPage
-        __typename
-      }
-      count
-      __typename
-    }
-  }"
-  $payload = @{
-    "query" = $query
-    "variables" = $variables
-  }
-  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
-  return $result.data.vSphereVmNewConnection
-}  ### Function Get-VMSnapshots
-
 
 # Get cluster stats
 Function Get-ClusterStats {
@@ -362,21 +194,222 @@ Function Get-RCVStats {
 }  ### Function Get-RCVStats
 
 
+# Trigger generating a CSV for a report
+Function Generate-ReportCSV {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "id" = $reportID
+  }
+  $query = "mutation (`$id: Int!, `$config: CustomReportCreate) {
+    downloadReportCsvAsync(input: {id: `$id, config: `$config}) {
+      jobId
+      referenceId
+      __typename
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+  if ($response.errors) {
+    Write-Error $response.errors.message
+  }
+  return $response.data.downloadReportCsvAsync
+} ### Function Generate-ReportCSV
+
+# Get the report name via report ID
+Function Get-ReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "filter" = @{
+      "focus" = $null
+      "searchTerm" = ""
+      "isHidden" = $false
+    }
+  }
+  $query = "query (`$filter: CustomReportFilterInput) {
+    reportConnection(filter: `$filter) {
+      nodes {
+        id
+        name
+        focus
+        updatedAt
+      }
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.ReportConnection.nodes
+  $reportName = $($reportList | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-ReportName
+
+# Get the report name with NG framework via report ID
+Function Get-NGReportName {
+  param (
+    [CmdletBinding()]
+    # Report ID
+    [Parameter(Mandatory=$true)]
+    [int]$reportID
+  )
+  $variables = @{
+    "polarisReportsFilters" = @(
+      @{
+        "field" = "FILTER_UNSPECIFIED"
+        "reportRooms" = @(
+          "REPORT_ROOM_NONE"
+        )
+      }
+    )
+  }
+  $query = "query (`$polarisReportsFilters: [PolarisReportsFilterInput!]) {
+    allRscReportConfigs(polarisReportsFilters: `$polarisReportsFilters) {
+      id
+      name
+      reportViewType
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $reportList = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  $reportName = $($reportList.data.allRscReportConfigs | Where-Object -Property 'id' -eq $reportID).name
+  return $reportName
+} ### Get-NGReportName
+
+# Get the CSV download status
+Function Get-DownloadStatus {
+  $query = "query DownloadBarQuery {
+    getUserDownloads {
+      id
+      name
+      status
+      progress
+      identifier
+      createTime
+      completeTime
+    }
+    allUserFiles {
+      downloads {
+        externalId
+        createdAt
+        expiresAt
+        completedAt
+        creator
+        filename
+        type
+        state
+      }
+    }
+  }"
+  $payload = @{
+    "query" = $query
+  }
+  $response = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $response.data.allUserFiles.downloads
+} ### Get-DownloadStatus
+
+# Get the CSV link for a report that is ready to be downloaded
+Function Get-CSVDownloadLink {
+  param (
+    [CmdletBinding()]
+    # Download ID
+    [Parameter(Mandatory=$true)]
+    [int]$downloadID
+  )
+  $variables = @{
+    "downloadId" = $downloadID
+  }
+  $query = "mutation generateDownloadUrlMutation(`$downloadId: Long!) {
+    getDownloadUrl(downloadId: `$downloadId) {
+      url
+    }
+  }"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $response = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $response.data.getDownloadUrl.url
+} ### Get-CSVDownloadLink
+
+# Trigger downloading a CSV for a report and return the download link
+Function Get-ReportCSVLink {
+  param (
+    [CmdletBinding()]
+    # Report ID to get CSV for
+    [Parameter(Mandatory=$true)]
+    [int]$reportID,
+    # Rubrik URL
+    [Parameter(Mandatory=$true)]
+    [string]$rubrikURL
+  )
+  $reportName = Get-ReportName -reportID $reportID
+  if ($reportName -eq $null) {
+    $reportName = Get-NGReportName -reportID $reportID
+    if ($reportName -eq $null) {
+      Write-Error "No report found for report ID: $reportID, exiting..."
+      exit
+    }
+  }
+  Write-Host "Generating CSV for report: $reportName (report ID: $reportID)" -foregroundcolor green
+  # First trigger creation of the CSV
+  $responseCreateCSV = Generate-ReportCSV -reportID $reportID
+  # Then monitor for when the CSV is ready and then download it
+  # This grabs the status of all recent downloads
+  $downloadStatus = Get-DownloadStatus
+  # Find the matching report that is in progress and that is the one we want to monitor
+  $jobToMonitor = $downloadStatus | Where { $_.filename -match "$reportName*" -and ($_.state -match 'PENDING' -or $_.state -match 'IN_PROGRESS') }
+  Write-Host "Waiting for CSV to be ready, current status: $($jobToMonitor.state)"
+  do {
+    Start-Sleep -seconds 10
+    $downloadStatus = Get-DownloadStatus | Where { $_.externalId -eq $jobToMonitor.externalId }
+    Write-Host "Waiting for CSV to be ready, current status: $($downloadStatus.state)"
+  } while ( $downloadStatus.state -notmatch 'READY' )
+  # $downloadURL = Get-CSVDownloadLink -downloadID $responseCreateCSV.id
+  $fileURL = $rubrikURL + "/file-downloads/" + $($jobToMonitor.externalId)
+  return $fileURL
+}  ### Function Get-ReportCSVLink
+
 ###### FUNCTIONS - END ######
 
 
-Write-Host "Getting VMs and their snapshots..."
-
-$vms = Get-VMSnapshots -clusterId $clusterID
-$vmList = $vms.edges.node
-Write-Host "Found $($vmList.count) VMs..."
-while ($vms.pageInfo.hasNextPage -eq $true) {
-  $vms = Get-VMSnapshots -clusterId $clusterID -afterCursor $vms.pageInfo.endCursor
-  $vmList += $vms.edges.node
-  Write-Host "Found $($vmList.count) VMs..."
+# Download the current daily protection task report
+$dailyComplianceCSVLink = Get-ReportCSVLink -reportID $reportIDdailyComplianceReport -rubrikURL $rubrikURL
+if ($PSVersionTable.PSVersion.Major -le 5) {
+  $rubrikCompliance = $(Invoke-WebRequest -Uri $dailyComplianceCSVLink -headers $Headers).content | ConvertFrom-CSV
+} else {
+  $rubrikCompliance = $(Invoke-WebRequest -Uri $dailyComplianceCSVLink -SkipCertificateCheck -headers $Headers).content | ConvertFrom-CSV
 }
-$vmCount = $vmList.count
-Write-Host "Found $($vmCount) VMs"
+Write-Host "Downloaded the Daily Task Compliance CSV: $($rubrikCompliance.count) tasks" -foregroundcolor green
+
+$complianceByCluster = $rubrikCompliance | Where { $_.'Cluster' -eq $clusterName }
+
+$localSnapshots = 0
+$missedSnapshots = 0
+
+foreach ($obj in $complianceByCluster) {
+  try {
+    $localSnapshots += [int]$obj.'Local Snapshots'
+    $missedSnapshots += [int]$obj.'Missed Snapshots'
+  } catch {
+    Write-Error "Error totaling snapshots for: $($obj.Object)"
+  }
+}
 
 $clusterStats = Get-ClusterStats -clusterID $clusterID
 $rcvStats = Get-RCVStats
@@ -404,6 +437,8 @@ foreach ($tier in $rcvstats.entitlements) {
 $statsTable = [PSCustomObject] @{
   "Date" = $dateString
   "Cluster" = $clusterName
+  "Local Snapshots" = $localSnapshots
+  "Missed Snapshots" = $missedSnapshots
   "Cluster Used TB" = $clusterUsedCapacityTB
   "Cluster Free TB" = $clusterFreeCapacityTB
   "Cluster Total TB" = $clusterTotalCapacityTB
@@ -425,3 +460,10 @@ $statsTable | Format-Table
 
 $statsTable | Export-CSV -Path $csvOutput -NoTypeInformation -Append
 Write-Host "CSV output to: $csvOutput" -foregroundcolor green
+
+
+# Send an email with CSV attachment
+if ($sendEmail) {
+  $htmlReport = ""
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Attachments $csvOutput
+}
