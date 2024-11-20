@@ -950,7 +950,7 @@ if ($operation -eq 'getEvents') {
   }  # foreach to calculate stats
   Write-Host "Failover Summary for scheduled test failovers from last $scheduledDay : $($lastSunday.ToString('yyyy-mm-dd'))" -foregroundcolor green
   $failoverSummary | Format-Table
-  $failoverSummary | Export-CSV -Path $csvOutputOARSummary -NoTypeInformation
+  $failoverSummary | Export-CSV -Path $csvOutputOARSummary -NoTypeInformation -Append
   Write-Host "Failover Summary CSV output to: $csvOutputOARSummary" -foregroundcolor green
 }
 
