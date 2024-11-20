@@ -1,18 +1,34 @@
 # https://www.rubrik.com/api
 <#
 .SYNOPSIS
-This script will get OAR DR recoveries and export to a CSV.
+This script has a few utilities for OAR including getting recovery events,
+calculating when the last hydration occurred for each blueprint / object,
+cleaning up Test Failovers, and deleting the schedules of test failovers.
 
 .DESCRIPTION
-This script will get OAR DR recoveries and export to a CSV.
+This script has a few utilities for OAR including getting recovery events,
+calculating when the last hydration occurred for each blueprint / object,
+and deleting the schedules of test failovers.
+
 Times are in EST.
+
+** -operation getEvents
+Additional parameter: -recoveryEvents ###, grabs last ### recovery events
+Additional parameter: -scheduledDay 'Sunday', calculates the scheduled test failover summary based on this date
+
+For getEvents, it will get the last $recoveryEvents events and then output
+the details to a CSV. It will also summarize Test Failovers based on the last
+$scheduledDay (Default Sunday) by checking when the first Test Failover started,
+and then calculating how long it took each blueprint to failover based on
+that start time. The summary info will be output to a CSV.
+
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
-Date: 8/14/24
+Date: 11/18/24
 
 For authentication, use a RSC Service Account:
 ** RSC Settings -> Users -> Service Account -> Create one and assign it an appropriate role
@@ -21,12 +37,13 @@ For authentication, use a RSC Service Account:
 
 
 .EXAMPLE
-./OAR-Scripts.ps1 -operation getEvents
-Get all OAR events and export to a CSV.
+./OAR-Scripts.ps1 -operation 'getEvents' -recoveryEvents 350
+Get the last 350 recovery events. A detailed CSV will be generated and
+summary CSV for scheduled test failovers will be generated.
 
 .EXAMPLE
-./OAR-Scripts.ps1 -operation cleanup
-Cleanup all successful Test Failovers.
+./OAR-Scripts.ps1 -operation cleanup -recoveryEvents 100
+Cleanup all successful Test Failovers in the last 100 recoveries.
 
 .EXAMPLE
 ./OAR-Scripts.ps1 -operation cleanup -recoveryEvents 270 -cleanupTimeEST '2024-09-07 16:00' -cleanupLoop $true
@@ -51,7 +68,7 @@ Get all recovery plans with 'prod' in the name and latest status
 
 param (
   [CmdletBinding()]
-  # Operation to do: getEvents, cleanup, hydrationStatus
+  # Operation to do: getEvents, cleanup, hydrationStatus, deleteScheduled, getRecoveryPlans
   [Parameter(Mandatory=$false)]
   [string]$operation = '',
   # Get hydration events for the last x hours
@@ -77,25 +94,33 @@ param (
   [bool]$cleanupLoop = $false,
   # For getRecoveryPlans, filter by a specific plan name
   [Parameter(Mandatory=$false)]
-  [string]$planName = ''
+  [string]$planName = '',
+  # For Scheduled Recovery, the day of week that it runs on to summarize info for
+  [Parameter(Mandatory=$false)]
+  [string]$scheduledDay = 'Sunday'
 )
 
+$path = '.'
+
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-rr.json"
+$serviceAccountPath = "${path}/rsc-service-account-quorum.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
 
 # CSV output file for OAR Recovery Events
-$csvOutputOAR = "./rubrik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutputOAR = "${path}/rubrik_oar_events-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
+# CSV output file for OAR Recovery Events summary
+$csvOutputOARSummary = "${path}/rubrik_oar_summary.csv"
 
 # CSV output file for per-VM level Hydration Status
-$csvOutputHydrationVM = "./rubrik-hydration_vm-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutputHydrationVM = "${path}/rubrik-hydration_vm-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 # CSV output file for per-blueprint level Hydration Status
-$csvOutputHydrationBlueprint = "./rubrik-hydration_blueprint-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutputHydrationBlueprint = "${path}/rubrik-hydration_blueprint-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
-$csvOutputRecoveryPlans = "./rubrik-recovery_plans-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvOutputRecoveryPlans = "${path}/rubrik-recovery_plans-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 
 ### End Variables section
 
@@ -793,6 +818,7 @@ $clusters = Get-ClusterList
 $clusterID = $($clusters | Where { $_.name -eq $cluster }).id
 
 
+# Get all OAR recovery events based on the input parameters
 if ($operation -eq 'getEvents') {
   Write-Host "Getting the lastest $recoveryEvents recovery events..."
   Write-Host 'If you want to grab more recovery events, use "-recoveryEvents <count>"'
@@ -822,7 +848,7 @@ if ($operation -eq 'getEvents') {
   }
 }
 
-# Get events and export to CSV
+# If recovery events were grabbed, export to CSV
 if ($operation -eq 'getEvents') {
   if ($oarEvents.count -gt 25) {
     Write-Host "Displaying the latest 25 recovery events to console"
@@ -843,6 +869,91 @@ if ($operation -eq 'getEvents') {
   Write-Host ""
   Write-Host "CSV output to: $csvOutputOAR" -foregroundcolor green
 }  # getEvents
+
+# If recovery events were grabbed, export summary info to CSV
+if ($operation -eq 'getEvents') {
+  # Get the current date
+  $today = Get-Date
+  # Calculate the number of days to subtract to get to the last Sunday
+  # The .NET DayOfWeek enum defines Sunday as 0, so we use modulo arithmetic to adjust
+  $daysToSubtract = (7 + $today.DayOfWeek - [System.DayOfWeek]::Sunday) % 7
+  # If today is Sunday, subtract 7 days to get the previous Sunday
+  if ($daysToSubtract -eq 0) {
+      $daysToSubtract = 7
+  }
+  # Subtract the calculated number of days from today's date
+  $lastSunday = $today.AddDays(-$daysToSubtract)
+  # Filter the OAR Events by the scheduled events
+  $scheduledOAREvents = $oarEvents | Where { $_.triggeredFrom -eq 'SCHEDULE' }
+  # Convert the start time to a DateTime so we can filter by it
+  foreach ($e in $scheduledOAREvents) {
+    $format = 'yyyy-MM-dd HH:mm:ss'
+    $startDateTime = [datetime]::ParseExact($e.startTime, $format, $null)
+    $endDateTime = [datetime]::ParseExact($e.endTime, $format, $null)
+    $e | Add-Member -MemberType NoteProperty -Name "startDateTime" -Value $startDateTime
+    $e | Add-Member -MemberType NoteProperty -Name "endDateTime" -Value $endDateTime
+  }
+  # Filter the Scheduled OAR Events by only those that occured the previous Sunday
+  $scheduledOAREvents = $scheduledOAREvents | Where { $_.startDateTime.Date -eq $lastSunday.Date }
+  # Sort from oldest to latest
+  $scheduledOAREvents = $scheduledOAREvents | Sort-Object -Property 'startDateTime'
+  # Grab when the first scheduled test failover started
+  $scheduledStartTime = $scheduledOAREvents[0].startDateTime
+  # Variables to hold summary info
+  $failoverSummary = [PSCustomObject] @{
+    startTime = $scheduledStartTime.ToString("yyyy-MM-ddTHH:mm:ss")
+    successCount = 0
+    failCount = 0
+    totalCount = 0
+    lt1hour = 0
+    lt2hour = 0
+    lt3hour = 0
+    lt4hour = 0
+    lt5hour = 0
+    lt6hour = 0
+    lt8hour = 0
+    gt8hour = 0
+  }
+  foreach ($s in $scheduledOAREvents) {
+    $failoverSummary.totalCount += 1
+    # If 'succeeded' is in the status, then successful failover, calc stats
+    if ($status -match 'succ') {
+      $failoverSummary.successCount += 1
+      $failoverDuration = $s.endDateTime - $scheduledStartTime
+      if ($failoverDuration.hours -lt 1) {
+        $failoverSummary.lt1hour += 1
+      }
+      if ($failoverDuration.hours -lt 2) {
+        $failoverSummary.lt2hour += 1
+      }
+      if ($failoverDuration.hours -lt 3) {
+        $failoverSummary.lt3hour += 1
+      }
+      if ($failoverDuration.hours -lt 4) {
+        $failoverSummary.lt4hour += 1
+      }
+      if ($failoverDuration.hours -lt 5) {
+        $failoverSummary.lt5hour += 1
+      }
+      if ($failoverDuration.hours -lt 6) {
+        $failoverSummary.lt6hour += 1
+      }
+      if ($failoverDuration.hours -lt 8) {
+        $failoverSummary.lt8hour += 1
+      }
+      if ($failoverDuration.hours -ge 8) {
+        $failoverSummary.gt8hour += 1
+      }
+    } else {
+      $failoverSummary.failCount += 1
+    }
+  }  # foreach to calculate stats
+  Write-Host "Failover Summary for scheduled test failovers from last $scheduledDay : $($lastSunday.ToString('yyyy-mm-dd'))" -foregroundcolor green
+  $failoverSummary | Format-Table
+  $failoverSummary | Export-CSV -Path $csvOutputOARSummary -NoTypeInformation
+  Write-Host "Failover Summary CSV output to: $csvOutputOARSummary" -foregroundcolor green
+}
+
 
 # Cleanup all blueprints that have test failed over
 if ($operation -eq 'cleanup') {
