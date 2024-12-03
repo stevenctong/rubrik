@@ -24,10 +24,10 @@ param (
   [CmdletBinding()]
   # Rubrik cluster hostname or IP
   [Parameter(Mandatory=$false)]
-  [string]$cluster = '10.8.49.104',
+  [string]$cluster = '',
   # RSC Service Account json
   [Parameter(Mandatory=$false)]
-  [string]$serviceAccountPath = './rsc-service-account-rr.json',
+  [string]$serviceAccountPath = '',
   # SQL Hostname
   [Parameter(Mandatory=$false)]
   [string]$sqlHost = '',
