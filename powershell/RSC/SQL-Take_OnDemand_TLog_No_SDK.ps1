@@ -15,7 +15,9 @@ For authentication, provide a RSC Service Account JSON defined at variable $serv
 Update the the PARAM and VARIABLES section as needed.
 
 .EXAMPLE
-./SQL-Take_OnDemand_TLog_No_SDK.ps1
+./SQL-Take_OnDemand_TLog_No_SDK.ps1 -serviceAccountPath ./rsc_svc.json
+  -cluster pa-cluster.rubrikdemo.com -sqlHost pa-host.rubrikdemo.com
+  - sqlInstance MSSQLSERVER -sqlDBName F1db
 Take an On Demand Backup T-Log backup of a SQL DB.
 
 #>
