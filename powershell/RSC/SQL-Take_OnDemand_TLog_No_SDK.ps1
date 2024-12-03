@@ -19,7 +19,6 @@ Update the the PARAM and VARIABLES section as needed.
   -cluster pa-cluster.rubrikdemo.com -sqlHost pa-host.rubrikdemo.com
   - sqlInstance MSSQLSERVER -sqlDBName F1db
 Take an On Demand Backup T-Log backup of a SQL DB.
-
 #>
 
 param (
