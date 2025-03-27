@@ -22,12 +22,28 @@ For authentication, use a RSC Service Account:
 .EXAMPLE
 ./Get-ArchivalDetails.ps1
 Runs the script.
+
+.EXAMPLE
+./Get-ArchivalDetails.ps1 -Cluster <cluster_name>
+Runs the script and filters against a specific cluster.
 #>
 
 ### Variables section - please fill out as needed
 
+param (
+  [CmdletBinding()]
+  # Rubrik cluster name
+  [Parameter(Mandatory=$false)]
+  [string]$cluster = ''
+)
+### VARIABLES - END ###
+
+# List of SLA domains to filter out / ignore
+$slaIgnoreList = @('IDOC-VM-BKP-STD')
+
 # File location of the RSC service account json
-$serviceAccountPath = "./rsc-service-account-rr.json"
+# $serviceAccountPath = "./rsc-service-account-rr.json"
+$serviceAccountPath = "./ArchivalDetailsScripts.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -613,20 +629,11 @@ Function Get-BackupDetail {
         }
         id
         date
-        expirationDate
         isOnDemandSnapshot
         ... on CdmSnapshot {
           cdmVersion
           isRetentionLocked
           isDownloadedSnapshot
-          cluster {
-            id
-            name
-            version
-            status
-            timezone
-            __typename
-          }
           pendingSnapshotDeletion {
             id: snapshotFid
             status
@@ -737,18 +744,14 @@ Function Get-BackupDetail {
               __typename
             }
           }
-          __typename
         }
-        __typename
       }
-      __typename
     }
     pageInfo {
       endCursor
       hasNextPage
       __typename
     }
-    __typename
   }
 }"
   $payload = @{
@@ -761,8 +764,11 @@ Function Get-BackupDetail {
 
 ###### FUNCTIONS - END ######
 
-# Holds list of objects and if they have backups that were archived or not
+# Holds list of objects to check archival for
 $objList = @()
+
+# Holds list of objects and archival result
+$resultList = @()
 
 Write-Host "Getting a list of all VMs"
 $vmList = @()
@@ -773,51 +779,9 @@ do {
   $afterCursor = $vmInventory.pageInfo.endCursor
 } while ($vmInventory.pageInfo.hasNextPage)
 
-# Filter list by protected VMs
-$protectedVMs = $vmList | Where { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
-  $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+Write-Host "Found $($vmList.count) VMs" -foregroundcolor green
 
-Write-Host "Found $($vmList.count) protected VMs" -foregroundcolor green
-
-Write-Host "Processing VMs..."
-
-# Go through each protected VM and find the last backup that was archived
-# to a single location and to two archive locations.
-foreach ($vm in $protectedVMs) {
-  $backups = $vm.snapshotConnection.edges.node | sort-object "Date" -descending
-  if ($backups.count -gt 0) {
-    $latestBackup = $backups[0].date
-    $archiveOne = $backups | Where { $_.archivalLocations.count -ge 1 }
-    if ($archiveOne.count -gt 0) {
-      $latestOneArchive = $archiveOne[0].date
-    } else {
-      $latestOneArchive = ''
-    }
-    $archiveTwo = $backups | Where { $_.archivalLocations.count -ge 2 }
-    if ($archiveTwo.count -gt 0) {
-      $latestTwoArchive = $archiveTwo[0].date
-    } else {
-      $latestTwoArchive = ''
-    }
-  } else {
-    $latestBackup = ''
-    $latestOneArchive = ''
-    $latestTwoArchive = ''
-  }
-  $vmSLA = $vm.effectivesladomain.name
-  $vmObj = [PSCustomObject] @{
-    "Name" = $vm.name
-    "Location" = ''
-    "Workload" = "VMware"
-    "Latest Backup" = $latestBackup
-    "Latest Archive to One Location" = $latestOneArchive
-    "Latest Archive to Two Locations" = $latestTwoArchive
-    "SLA" = $vmSLA
-  }
-  $objList += $vmObj
-}
-
-Write-Host "Finished processing VMs" -foregroundcolor green
+$objList += $vmList
 
 Write-Host "Getting a list of all SQL DBs"
 $dbList = @()
@@ -828,54 +792,118 @@ do {
   $afterCursor = $dbInventory.pageInfo.endCursor
 } while ($dbInventory.pageInfo.hasNextPage)
 
-# Filter list by protected DBs
-$protectedDBs = $dbList | Where { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
+Write-Host "Found $($dbList.count) DBs" -foregroundcolor green
+
+$objList += $dbList
+
+Write-Host ""
+Write-Host "Total object count so far: $($objList.count)" -foregroundcolor green
+Write-Host "Now filtering out objects by Protected, SLA, and Cluster" -foregroundcolor green
+Write-Host ""
+
+# Filter list by protected objects
+$objList = $objList | Where { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
   $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+Write-Host "Object count after filtering by Protected: $($objList.count)" -foregroundcolor green
 
-$dbCount = $dbList.count
+# Filter list by removing any in the SLA ignore list
+$objList = $objList | Where { $_.effectiveSlaDomain.name -notin $slaIgnoreList }
+Write-Host "SLAs to ignore: $slaIgnoreList" -foregroundcolor green
+Write-Host "Object count after filtering out ignored SLAs: $($objList.count)" -foregroundcolor green
 
-Write-Host "Found $dbCount protected DBs" -foregroundcolor green
+# Filter list by cluster if provided
+if ($cluster -ne '') {
+  Write-Host "Cluster name provided: $cluster" -foregroundcolor green
+  $objList = $objList | Where { $_.cluster.name -eq $cluster }
+  Write-Host "Object count after filtering by cluster: $($objList.count)" -foregroundcolor green
+} else {
+  Write-Host "No cluster name provided so not filtering out by cluster name." -foregroundcolor green
+}
 
-Write-Host "Processing DBs..."
+$totalCount = $objList.count
+Write-Host "Total number of objects to process: $totalCount" -foregroundcolor green
+Write-Host "Processing $totalCount Objects..."
+Write-Host ""
 
 $count = 1
 
-# Go through each protected DB and find the last backup that was archived
+# Go through each object and find the last backup that was archived
 # to a single location and to two archive locations.
-foreach ($db in $protectedDBs) {
-  Write-Host "Processing $count / $dbCount"
-  $backups = Get-BackupDetail -objId $db.dagid
-  if ($backups.count -gt 0) {
-    $latestBackup = $backups[0].date
-    $archiveOne = $backups | Where { $_.snapshotRetentionInfo.archivalInfos.count -ge 1 }
-    if ($archiveOne.count -gt 0) {
-      $latestOneArchive = $archiveOne[0].date
-    } else {
-      $latestOneArchive = ''
-    }
-    $archiveTwo = $backups | Where { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 }
-    if ($archiveTwo.count -gt 0) {
-      $latestTwoArchive = $archiveTwo[0].date
-    } else {
-      $latestTwoArchive = ''
-    }
+foreach ($obj in $objList) {
+  Write-Host "Processing $count / $totalCount"
+  $workload = $obj.objectType
+  if ($workload -eq 'VmwareVirtualMachine') {
+    $objID = $obj.id
   } else {
-    $latestBackup = ''
-    $latestOneArchive = ''
-    $latestTwoArchive = ''
+    $objID = $obj.dagid
   }
-  $location = $db.physicalPath[-1].name
-  $dbSLA = $db.effectivesladomain.name
-  $dbObj = [PSCustomObject] @{
-    "Name" = $db.name
+  $backups = Get-BackupDetail -objId $objID
+  # Reset all variables
+  $latestBackupDate = ''
+  $oldestLocalBackupDate = ''
+  $oldestLocalBackupExpire = ''
+  $latestOneArchiveDate = ''
+  $oldestOneArchiveDate = ''
+  $oldestOneArchiveLocation = ''
+  $oldestOneArchiveExpire = ''
+  $latestTwoArchiveDate = ''
+  $oldestTwoArchiveDate = ''
+  $oldestTwoArchiveLocation1 = ''
+  $oldestTwoArchiveExpire1 = ''
+  $oldestTwoArchiveLocation2 = ''
+  $oldestTwoArchiveExpire2 = ''
+  if ($backups.count -gt 0) {
+    $latestBackupDate = $backups[0].date
+    # Get all local backups
+    $localBackups = $backups | Where-Object { $_.snapshotRetentionInfo.localInfo.count -ge 1 }
+    if ($localBackups.count -gt 0) {
+      # Get the oldest local backup
+      $oldestLocalBackupDate = $($localBackups[-1].date)
+      $oldestLocalBackupExpire = $($localBackups[-1].snapshotRetentionInfo.localInfo.expirationTime)
+    }
+    $archiveOne = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 1 }
+    if ($archiveOne.count -gt 0) {
+      $latestOneArchiveDate = $($archiveOne[0].date)
+      $oldestOneArchiveDate = $($archiveOne[-1].date)
+      $oldestOneArchiveLocation = $($archiveOne[-1].snapshotRetentionInfo.archivalInfos[0].name)
+      $oldestOneArchiveExpire = $($archiveOne[-1].snapshotRetentionInfo.archivalInfos[0].expirationTime)
+    }
+    $archiveTwo = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 }
+    if ($archiveTwo.count -gt 0) {
+      $latestTwoArchiveDate = $($archiveTwo[0].date)
+      $oldestTwoArchiveDate = $($archiveTwo[-1].date)
+      $oldestTwoArchiveLocation1 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[0].name)
+      $oldestTwoArchiveExpire1 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[0].expirationTime)
+      $oldestTwoArchiveLocation2 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[1].name)
+      $oldestTwoArchiveExpire2 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[1].expirationTime)
+    }
+  }
+
+  $location = $obj.physicalPath[-1].name
+  $objCluster = $obj.cluster.name
+  $objSLA = $obj.effectivesladomain.name
+
+  $objInfo = [PSCustomObject] @{
+    "Name" = $obj.name
     "Location" = $location
-    "Workload" = "SQL"
-    "Latest Backup" = $latestBackup
-    "Latest Archive to One Location" = $latestOneArchive
-    "Latest Archive to Two Locations" = $latestTwoArchive
-    "SLA" = $dbSLA
+    "Workload" = $workload
+    "Latest Backup" = $latestBackupDate
+    "Latest Archive to One Location" = $latestOneArchiveDate
+    "Latest Archive to Two Locations" = $latestTwoArchiveDate
+    "Cluster" = $objCluster
+    "SLA" = $objSLA
+    "Oldest Local Backup" = $oldestLocalBackupDate
+    "Oldest Local Backup Expire" = $oldestLocalBackupExpire
+    "Oldest Archive to One Location" = $oldestOneArchiveDate
+    "Oldest Archive to One Location 1" = $oldestOneArchiveLocation
+    "Oldest Archive to One Location 1 Expire" = $oldestOneArchiveExpire
+    "Oldest Archive to Two Locations" = $oldestTwoArchiveDate
+    "Oldest Archive to Two Locations 1" = $oldestTwoArchiveLocation1
+    "Oldest Archive to Two Locations 1 Expire" = $oldestTwoArchiveExpire1
+    "Oldest Archive to Two Locations 2" = $oldestTwoArchiveLocation2
+    "Oldest Archive to Two Locations 2 Expire" = $oldestTwoArchiveExpire2
   }
-  $objList += $dbObj
+  $resultList += $objInfo
   $count++
 }
 
@@ -885,13 +913,17 @@ $firstDayOfCurrentMonth = Get-Date -Day 1
 # Subtract one day to get the last day of the previous month
 $lastMonth = $firstDayOfCurrentMonth.AddDays(-2)
 
-$objNoSecondArchiveSinceLastMonth = $objList | Where { $_.'Latest Archive to Two Location' -lt $lastMonth }
+$objNoSecondArchiveSinceLastMonth = $resultList | Where { $_.'Latest Archive to Two Locations' -lt $lastMonth }
 
-$objList | Export-CSV -Path $csvOutput -NoTypeInformation
+$resultList | Export-CSV -Path $csvOutput -NoTypeInformation
 Write-Host "Exporting all objects and last backup and archival dates to: $csvOutput" -foregroundcolor green
 
 $objNoSecondArchiveSinceLastMonth | Export-CSV -Path $csvOutput2 -NoTypeInformation
 Write-Host "Exporting all objects without an archival upload of a snapshot since the prior month to: $csvOutput2" -foregroundcolor green
+
+Write-Host ""
+Write-Host "If expiration date is blank then that means it is the most recent backup/archival" -foregroundcolor green
+Write-Host "and the expiration date is still Computing." -foregroundcolor green
 
 # # Send an email with CSV attachment
 # if ($sendEmail) {
