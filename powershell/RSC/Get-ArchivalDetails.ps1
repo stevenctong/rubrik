@@ -36,7 +36,7 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$cluster = ''
 )
-### VARIABLES - END ###
+### VARIABLES - START ###
 
 # List of SLA domains to filter out / ignore
 $slaIgnoreList = @('IDOC-VM-BKP-STD')
@@ -65,8 +65,14 @@ $emailSubject = "Rubrik - " + $date.ToString("yyyy-MM-dd HH:MM")
 # Set to $true to send out email at the end of this script
 $sendEmail = $false
 
+### VARIABLES - END ###
 
-### End Variables section
+if ($psversiontable.psversion -lt 7) {
+  Write-Error "PowerShell version is: $($psversiontable.psversion)"
+  Write-Error "Please use PowerShell version 7+"
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls, [Net.SecurityProtocolType]::Tls11, [Net.SecurityProtocolType]::Tls12, [Net.SecurityProtocolType]::Ssl3
+  [Net.ServicePointManager]::SecurityProtocol = "Tls, Tls11, Tls12, Ssl3"
+}
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 Write-Information -Message "Info: Attempting to read the Service Account file located at $serviceAccountPath"
@@ -838,20 +844,19 @@ foreach ($obj in $objList) {
     $objID = $obj.dagid
   }
   $backups = Get-BackupDetail -objId $objID
+  $obj | Add-Member -MemberType NoteProperty -Name backupList -Value $backups
   # Reset all variables
   $latestBackupDate = ''
   $oldestLocalBackupDate = ''
   $oldestLocalBackupExpire = ''
-  $latestOneArchiveDate = ''
-  $oldestOneArchiveDate = ''
-  $oldestOneArchiveLocation = ''
-  $oldestOneArchiveExpire = ''
-  $latestTwoArchiveDate = ''
-  $oldestTwoArchiveDate = ''
-  $oldestTwoArchiveLocation1 = ''
-  $oldestTwoArchiveExpire1 = ''
-  $oldestTwoArchiveLocation2 = ''
-  $oldestTwoArchiveExpire2 = ''
+  $latestARCHDate = ''
+  $oldestARCHDate = ''
+  $oldestARCHLocation = ''
+  $oldestARCHExpire = ''
+  $latestBKPDate = ''
+  $oldestBKPDate = ''
+  $oldestBKPLocation = ''
+  $oldestBKPExpire = ''
   if ($backups.count -gt 0) {
     $latestBackupDate = $backups[0].date
     # Get all local backups
@@ -861,47 +866,45 @@ foreach ($obj in $objList) {
       $oldestLocalBackupDate = $($localBackups[-1].date)
       $oldestLocalBackupExpire = $($localBackups[-1].snapshotRetentionInfo.localInfo.expirationTime)
     }
-    $archiveOne = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 1 }
-    if ($archiveOne.count -gt 0) {
-      $latestOneArchiveDate = $($archiveOne[0].date)
-      $oldestOneArchiveDate = $($archiveOne[-1].date)
-      $oldestOneArchiveLocation = $($archiveOne[-1].snapshotRetentionInfo.archivalInfos[0].name)
-      $oldestOneArchiveExpire = $($archiveOne[-1].snapshotRetentionInfo.archivalInfos[0].expirationTime)
+    $rcvARCHList = $backups | Where-Object { ($_.snapshotRetentionInfo.archivalInfos.count -ge 2) -or
+      ($_.snapshotRetentionInfo.archivalInfos[0].name -match 'ARCH') }
+    if ($rcvARCHList.count -gt 0) {
+      $latestARCHDate = $($rcvARCHList[0].date)
+      $oldestARCHDate = $($rcvARCHList[-1].date)
+      $oldestARCH = $rcvARCHList[-1].snapshotRetentionInfo.archivalInfos | Where-Object { $_.name -match 'ARCH' }
+      $oldestARCHLocation = $oldestARCH.name
+      $oldestARCHExpire = $oldestARCH.expirationTime
     }
-    $archiveTwo = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 }
-    if ($archiveTwo.count -gt 0) {
-      $latestTwoArchiveDate = $($archiveTwo[0].date)
-      $oldestTwoArchiveDate = $($archiveTwo[-1].date)
-      $oldestTwoArchiveLocation1 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[0].name)
-      $oldestTwoArchiveExpire1 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[0].expirationTime)
-      $oldestTwoArchiveLocation2 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[1].name)
-      $oldestTwoArchiveExpire2 = $($archiveTwo[-1].snapshotRetentionInfo.archivalInfos[1].expirationTime)
+  $rcvBKPList = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 -or
+    ($_.snapshotRetentionInfo.archivalInfos[0].name -match 'BKP') }
+    if ($rcvBKPList.count -gt 0) {
+      $latestBKPDate = $($rcvBKPList[0].date)
+      $oldestBKPDate = $($rcvBKPList[-1].date)
+      $oldestBKP = $rcvBKPList[-1].snapshotRetentionInfo.archivalInfos | Where-Object { $_.name -match 'BKP' }
+      $oldestBKPLocation = $oldestBKP.name
+      $oldestBKPExpire = $oldestBKP.expirationTime
     }
   }
-
   $location = $obj.physicalPath[-1].name
   $objCluster = $obj.cluster.name
   $objSLA = $obj.effectivesladomain.name
-
   $objInfo = [PSCustomObject] @{
     "Name" = $obj.name
     "Location" = $location
     "Workload" = $workload
     "Latest Backup" = $latestBackupDate
-    "Latest Archive to One Location" = $latestOneArchiveDate
-    "Latest Archive to Two Locations" = $latestTwoArchiveDate
+    "Latest Archive to ARCH" = $latestARCHDate
+    "Latest Archive to BKP" = $latestBKPDate
     "Cluster" = $objCluster
     "SLA" = $objSLA
     "Oldest Local Backup" = $oldestLocalBackupDate
     "Oldest Local Backup Expire" = $oldestLocalBackupExpire
-    "Oldest Archive to One Location" = $oldestOneArchiveDate
-    "Oldest Archive to One Location 1" = $oldestOneArchiveLocation
-    "Oldest Archive to One Location 1 Expire" = $oldestOneArchiveExpire
-    "Oldest Archive to Two Locations" = $oldestTwoArchiveDate
-    "Oldest Archive to Two Locations 1" = $oldestTwoArchiveLocation1
-    "Oldest Archive to Two Locations 1 Expire" = $oldestTwoArchiveExpire1
-    "Oldest Archive to Two Locations 2" = $oldestTwoArchiveLocation2
-    "Oldest Archive to Two Locations 2 Expire" = $oldestTwoArchiveExpire2
+    "Oldest ARCH Date" = $oldestARCHDate
+    "Oldest ARCH Location" = $oldestARCHLocation
+    "Oldest ARCH Expiration" = $oldestARCHExpire
+    "Oldest BKP Date" = $oldestBKPDate
+    "Oldest BKP Location" = $oldestBKPLocation
+    "Oldest BKP Expiration" = $oldestBKPExpire
   }
   $resultList += $objInfo
   $count++
@@ -913,7 +916,7 @@ $firstDayOfCurrentMonth = Get-Date -Day 1
 # Subtract one day to get the last day of the previous month
 $lastMonth = $firstDayOfCurrentMonth.AddDays(-2)
 
-$objNoSecondArchiveSinceLastMonth = $resultList | Where { $_.'Latest Archive to Two Locations' -lt $lastMonth }
+$objNoSecondArchiveSinceLastMonth = $resultList | Where { $_.'Latest Archive to ARCH' -lt $lastMonth }
 
 $resultList | Export-CSV -Path $csvOutput -NoTypeInformation
 Write-Host "Exporting all objects and last backup and archival dates to: $csvOutput" -foregroundcolor green
