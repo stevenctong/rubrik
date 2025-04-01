@@ -1,10 +1,20 @@
 # https://www.rubrik.com/api
 <#
 .SYNOPSIS
-This script will get the archival details for VMware and SQL objects.
+This script will get the backup and archival details for VMware, SQL, Oralce,
+and Windows VG objects.
 
 .DESCRIPTION
-This script will get the archival details for VMware and SQL objects.
+This script will get the backup and archival details for VMware, SQL, Oralce,
+and Windows VG objects.
+
+The details of all backups are stored with the objects under: $objlist[].backups
+
+The results will be output to two CSVs.
+1) Contains all the objects along with the most recent local and archived backups,
+   and the oldest local and archived backups along with their expiration dates.
+2) A list of objects that do not have a recent upload to the ARCH archival
+   location as of the last month.
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
@@ -12,6 +22,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/1/25
+Updated: 3/30/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -359,7 +370,6 @@ Function Get-VMList {
   return $result.data.vSphereVmNewConnection
 }  ### Function Get-VMList
 
-
 # Get SQL DB list
 Function Get-SQLList {
   param (
@@ -590,6 +600,375 @@ Function Get-SQLList {
   return $result.data.mssqlDatabases
 }  ### Function Get-SQLList
 
+# Get Oracle DB list
+Function Get-OracleList {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query OracleDatabasesListQuery(`$first: Int!, `$after: String, `$filter: [Filter!], `$sortBy: HierarchySortByField, `$sortOrder: SortOrder) {
+  oracleDatabases(
+    after: `$after
+    first: `$first
+    filter: `$filter
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+  ) {
+    edges {
+      cursor
+      node {
+        id
+        dbUniqueName
+        name
+        objectType
+        dataGuardGroup {
+          id
+          dbUniqueName
+          __typename
+        }
+        dataGuardType
+        isRelic
+        dbRole
+        logBackupFrequency
+        logRetentionHours
+        hostLogRetentionHours
+        numInstances
+        numChannels
+        sectionSizeInGigabytes
+        useSecureThrift
+        effectiveSlaDomain {
+          objectSpecificConfigs {
+            oracleConfig {
+              frequency {
+                duration
+                unit
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          id
+          name
+          ... on GlobalSlaReply {
+            isRetentionLockedSla
+            retentionLockMode
+            __typename
+          }
+          ... on ClusterSlaDomain {
+            fid
+            cluster {
+              id
+              name
+              __typename
+            }
+            isRetentionLockedSla
+            retentionLockMode
+            __typename
+          }
+          __typename
+          ... on GlobalSlaReply {
+            description
+            __typename
+          }
+        }
+        ... on HierarchyObject {
+          name
+          __typename
+        }
+        ... on HierarchyObject {
+          logicalPath {
+            name
+            objectType
+            __typename
+          }
+          physicalPath {
+            name
+            objectType
+            __typename
+          }
+          __typename
+        }
+        ... on HierarchyObject {
+          id
+          effectiveSlaDomain {
+            id
+            name
+            ... on GlobalSlaReply {
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            __typename
+            ... on GlobalSlaReply {
+              description
+              __typename
+            }
+          }
+          ... on CdmHierarchyObject {
+            pendingSla {
+              id
+              name
+              ... on ClusterSlaDomain {
+                fid
+                cluster {
+                  id
+                  name
+                  __typename
+                }
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        ... on HierarchyObject {
+          slaAssignment
+          __typename
+        }
+        ... on CdmHierarchyObject {
+          replicatedObjectCount
+          cluster {
+            id
+            name
+            version
+            status
+            __typename
+          }
+          __typename
+        }
+        ... on HierarchyObject {
+          allOrgs {
+            fullName
+            __typename
+          }
+          __typename
+        }
+        ... on CdmHierarchyObject {
+          cluster {
+            id
+            name
+            version
+            __typename
+          }
+          primaryClusterLocation {
+            id
+            __typename
+          }
+          __typename
+        }
+        numTablespaces
+        __typename
+        osType
+        osNames
+      }
+      __typename
+    }
+    pageInfo {
+      startCursor
+      endCursor
+      hasNextPage
+      hasPreviousPage
+      __typename
+    }
+    __typename
+  }
+}"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.oracleDatabases
+}  ### Function Get-OracleList
+
+Function Get-VGList {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query WindowsVolumeGroupHostListQuery(`$first: Int!, `$after: String, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder, `$filter: [Filter!]) {
+  physicalHosts(
+    hostRoot: WINDOWS_HOST_ROOT
+    filter: `$filter
+    first: `$first
+    after: `$after
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+  ) {
+    edges {
+      cursor
+      node {
+        id
+        name
+        isArchived
+        descendantConnection(typeFilter: [VolumeGroup]) {
+          edges {
+            node {
+              id
+              name
+              objectType
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        effectiveSlaDomain {
+          id
+          name
+          ... on GlobalSlaReply {
+            isRetentionLockedSla
+            retentionLockMode
+            __typename
+          }
+          ... on ClusterSlaDomain {
+            fid
+            cluster {
+              id
+              name
+              __typename
+            }
+            isRetentionLockedSla
+            retentionLockMode
+            __typename
+          }
+          __typename
+        }
+        ... on CdmHierarchyObject {
+          replicatedObjectCount
+          cluster {
+            id
+            name
+            version
+            status
+            __typename
+          }
+          __typename
+        }
+        cluster {
+          clusterNodeConnection {
+            nodes {
+              id
+              status
+              ipAddress
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        ... on HierarchyObject {
+          allOrgs {
+            fullName
+            __typename
+          }
+          __typename
+        }
+        primaryClusterLocation {
+          id
+          __typename
+        }
+        osType
+        osName
+        vfdState
+        connectionStatus {
+          connectivity
+          timestampMillis
+          __typename
+        }
+        hostVolumes {
+          mountPoints
+          fileSystemType
+          size
+          volumeId
+          volumeGroupId
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    pageInfo {
+      endCursor
+      startCursor
+      hasNextPage
+      hasPreviousPage
+      __typename
+    }
+    count
+    __typename
+  }
+}"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.physicalHosts
+}  ### Function Get-VGList
+
 # Get Backup Details
 Function Get-BackupDetail {
   param (
@@ -790,17 +1169,43 @@ Write-Host "Found $($vmList.count) VMs" -foregroundcolor green
 $objList += $vmList
 
 Write-Host "Getting a list of all SQL DBs"
-$dbList = @()
+$sqlList = @()
 $afterCursor = ''
 do {
-  $dbInventory = Get-SQLList -afterCursor $afterCursor
-  $dbList += $dbInventory.edges.node
-  $afterCursor = $dbInventory.pageInfo.endCursor
-} while ($dbInventory.pageInfo.hasNextPage)
+  $sqlInventory = Get-SQLList -afterCursor $afterCursor
+  $sqlList += $sqlInventory.edges.node
+  $afterCursor = $sqlInventory.pageInfo.endCursor
+} while ($sqlInventory.pageInfo.hasNextPage)
 
-Write-Host "Found $($dbList.count) DBs" -foregroundcolor green
+Write-Host "Found $($sqlList.count) DBs" -foregroundcolor green
 
-$objList += $dbList
+$objList += $sqlList
+
+Write-Host "Getting a list of all Oracle DBs"
+$oracleList = @()
+$afterCursor = ''
+do {
+  $oracleInventory = Get-OracleList -afterCursor $afterCursor
+  $oracleList += $oracleInventory.edges.node
+  $afterCursor = $oracleInventory.pageInfo.endCursor
+} while ($oracleInventory.pageInfo.hasNextPage)
+
+Write-Host "Found $($oracleList.count) DBs" -foregroundcolor green
+
+$objList += $oracleList
+
+Write-Host "Getting a list of all Windows Volume Groups"
+$vgList = @()
+$afterCursor = ''
+do {
+  $vgInventory = Get-VGList -afterCursor $afterCursor
+  $vgList += $vgInventory.edges.node
+  $afterCursor = $vgInventory.pageInfo.endCursor
+} while ($vgInventory.pageInfo.hasNextPage)
+
+Write-Host "Found $($vgList.count) Volume Groups" -foregroundcolor green
+
+$objList += $vgList
 
 Write-Host ""
 Write-Host "Total object count so far: $($objList.count)" -foregroundcolor green
@@ -838,10 +1243,12 @@ $count = 1
 foreach ($obj in $objList) {
   Write-Host "Processing $count / $totalCount"
   $workload = $obj.objectType
-  if ($workload -eq 'VmwareVirtualMachine') {
-    $objID = $obj.id
-  } else {
+  if ($workload -eq 'Mssql') {
     $objID = $obj.dagid
+  } elseif ($workload -eq 'OracleDatabase' -and $($obj.dataGuardType) -eq 'DATA_GUARD_MEMBER') {
+    $objID = $obj.dataGuardGroup.id
+  } else {
+    $objID = $obj.id
   }
   $backups = Get-BackupDetail -objId $objID
   $obj | Add-Member -MemberType NoteProperty -Name backupList -Value $backups
@@ -928,7 +1335,7 @@ Write-Host ""
 Write-Host "If expiration date is blank then that means it is the most recent backup/archival" -foregroundcolor green
 Write-Host "and the expiration date is still Computing." -foregroundcolor green
 
-# # Send an email with CSV attachment
-# if ($sendEmail) {
-#   Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Port $SMTPPort
-# }
+# Send an email with CSV attachment
+if ($sendEmail) {
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Port $SMTPPort
+}
