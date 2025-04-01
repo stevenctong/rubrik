@@ -138,25 +138,50 @@ try {
 # If no CSV is provided to identify snapshots for deletion, generate a list based on the filters specified
 if ($csvDelete -eq '')
 {
+  # Holds list of objects and their backups
+  $allSnapshotManagement = @()
   # Get all objects under Snapshot Management (On Demands, Relics, Unmanaged Objects)
-  try {
-    $query = '{"query":"query UnmanagedObjectV1{unmanagedObjectV1Connection{nodes{id name objectType physicalLocation{name}unmanagedStatus isRemote snapshotCount localStorage archiveStorage retentionSlaDomainName}}}"}'
-    $allSnapshotManagement = (Invoke-RubrikGraphQLCall -Body $query).unmanagedObjectV1Connection.nodes
-  } catch {
-    $allSnapshotManagement = Get-RubrikUnmanagedObject
-  }
+  $afterCursor = ''
+  do {
+    $query = 'query UnmanagedObjectV1($searchValue: String, $unmanagedStatus: String, $objectType: String, $retentionSlaDomainName: String, $sortBy: String, $sortOrder: String, $first: Int, $after: String) { unmanagedObjectV1Connection(searchValue: $searchValue, unmanagedStatus: $unmanagedStatus, objectType: $objectType, retentionSlaDomainName: $retentionSlaDomainName, sortBy: $sortBy, sortOrder: $sortOrder, first: $first, after: $after) { nodes { id name objectType physicalLocation { id name } unmanagedStatus isRemote snapshotCount localStorage archiveStorage retentionSlaDomainId retentionSlaDomainName retentionSlaDomainPolarisManagedId isRetentionSlaRetentionLocked hasSnapshotsWithPolicy recoveryInfo { newSnappableId oldSnappableId locationId lastUpdatedTimeOpt isRefreshInProgressOpt } } pageInfo { endCursor hasNextPage } } }'
+    $variables = @{
+      sortBy = "Name"
+      sortOrder = "asc"
+      first = 50
+      after = ''
+    }
+    if ($afterCursor -ne '') {
+      $variables.after = $afterCursor
+    }
+    $bodyJson = @{
+      query = $query
+      variables = $variables
+    }
+    $bodyJson = $bodyJson | ConvertTo-Json -Compress
+    $objSnaps = Invoke-RubrikGraphQLCall -Body $bodyJson
+    $allSnapshotManagement += $objSnaps.unmanagedObjectV1Connection.nodes
+    $afterCursor = $objSnaps.unmanagedObjectV1Connection.pageInfo.endCursor
+  } while ($objSnaps.unmanagedObjectV1Connection.pageInfo.hasNextPage)
 
   # $snapshostList contains list of snapshots based on the filters
   $snapshotList = @()
 
+  $count = 1
+
   # Iterate through each object in Snapshot Management
   foreach ($i in $allSnapshotManagement) {
+  Write-Host "$count / $($allSnapshotManagement.count)"
+  $count++
     # Process objects that match the object type or status filter
     if (($objectType -eq '' -or $i.objectType -like $objectType) -and
         ($objectStatus -eq '' -or $i.unmanagedStatus -like $objectStatus))
     {
       # Get all snapshots for the object
-      $objectSnapshots = Invoke-RubrikRESTCall -Method GET -Api $apiVer -Endpoint "unmanaged_object/$($i.id)/snapshot"
+      try {
+        $objectSnapshots = Invoke-RubrikRESTCall -Method GET -Api $apiVer -Endpoint "unmanaged_object/$($i.id)/snapshot"
+      } catch {
+        $objectSnapshots = ''
+      }
 
       # Iterate through each all the snapshots and filter for snapshots older than $beforeDate
       foreach ($j in $objectSnapshots.data) {
