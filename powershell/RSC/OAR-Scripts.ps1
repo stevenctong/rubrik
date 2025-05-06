@@ -29,6 +29,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 11/18/24
+Updated: 5/6/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings -> Users -> Service Account -> Create one and assign it an appropriate role
