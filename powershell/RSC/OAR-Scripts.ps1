@@ -917,7 +917,7 @@ if ($operation -eq 'getEvents') {
   foreach ($s in $scheduledOAREvents) {
     $failoverSummary.totalCount += 1
     # If 'succeeded' is in the status, then successful failover, calc stats
-    if ($status -match 'succ') {
+    if ($s.status -match 'succ') {
       $failoverSummary.successCount += 1
       $failoverDuration = $s.endDateTime - $scheduledStartTime
       if ($failoverDuration.hours -lt 1) {
