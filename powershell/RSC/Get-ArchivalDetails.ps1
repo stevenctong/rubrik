@@ -1,20 +1,24 @@
 # https://www.rubrik.com/api
 <#
 .SYNOPSIS
-This script will get the backup and archival details for VMware, SQL, Oralce,
-and Windows VG objects.
+This script will get the backup and archival details for VMware, SQL, Oracle,
+Windows VG, NAS Share, and Active Directory Domain Controllers.
 
 .DESCRIPTION
-This script will get the backup and archival details for VMware, SQL, Oralce,
-and Windows VG objects.
+This script will get the backup and archival details for VMware, SQL, Oracle,
+Windows VG, NAS Share, and Active Directory Domain Controllers.
 
-The details of all backups are stored with the objects under: $objlist[].backups
+The details of all backups are stored with the objects under: $objlist[].backups.
+You can add a loop to export out all backup details if needed from there.
 
-The results will be output to two CSVs.
+For the existing script, the results will be output to two CSVs.
 1) Contains all the objects along with the most recent local and archived backups,
    and the oldest local and archived backups along with their expiration dates.
+   The oldest backup information can help you find backups that might be retained
+   longer than you expected them to be.
 2) A list of objects that do not have a recent upload to the ARCH archival
-   location as of the last month.
+   location as of the last month. This will highlight any compliance issues with
+   the monthly uploads.
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
@@ -22,7 +26,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/1/25
-Updated: 3/30/25
+Updated: 5/16/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
