@@ -106,15 +106,15 @@ $payload = @{
 
 Write-Debug -Message "Determing if the Service Account file contains all required variables."
 $missingServiceAccount = @()
-if ($serviceAccountFile.client_id -eq $null) {
+if ($null -eq $serviceAccountFile.client_id) {
   $missingServiceAccount += "'client_id'"
 }
 
-if ($serviceAccountFile.client_secret -eq $null) {
+if ($null -eq $serviceAccountFile.client_secret) {
   $missingServiceAccount += "'client_secret'"
 }
 
-if ($serviceAccountFile.access_token_uri -eq $null) {
+if ($null -eq $serviceAccountFile.access_token_uri) {
   $missingServiceAccount += "'access_token_uri'"
 }
 
@@ -862,13 +862,29 @@ Function Get-VGList {
       node {
         id
         name
+        objectType
         isArchived
+        physicalChildConnection {
+          edges {
+            node {
+              name
+              id
+              effectiveSlaDomain {
+                id
+              }
+            }
+          }
+        }
         descendantConnection(typeFilter: [VolumeGroup]) {
           edges {
             node {
               id
               name
               objectType
+              effectiveSlaDomain {
+                id
+                name
+              }
               __typename
             }
             __typename
@@ -968,6 +984,315 @@ Function Get-VGList {
   $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
   return $result.data.physicalHosts
 }  ### Function Get-VGList
+
+Function Get-nasList {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "NAS_SHARE_HIDDEN"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_DELETED_IN_CDM"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "NAS_SHARE_STALE"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query NasAllSharesQuery(`$first: Int, `$after: String, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder, `$filter: [Filter!]) {
+  nasShares(
+    first: `$first
+    after: `$after
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+    filter: `$filter
+  ) {
+    count
+    edges {
+      cursor
+      node {
+        id
+        name
+        effectiveSlaDomain {
+          id
+          name
+        }
+        isStale
+        isNasShareManuallyAdded
+        objectType
+        logicalPath {
+          fid
+          objectType
+          name
+          __typename
+        }
+        nasSystem {
+          id
+          name
+          vendorType
+          effectiveSlaDomain {
+            id
+            name
+          }
+          __typename
+        }
+        primaryFileset {
+          __typename
+          id
+          name
+          effectiveSlaDomain {
+            id
+            name
+          }
+          snapshotDistribution {
+            id
+            totalCount
+            __typename
+          }
+          templateFid
+        }
+        shareType
+        isChangelistEnabled
+        connectedThrough
+        hostIdForRestore
+        exportPoint
+        descendantConnection {
+          nodes {
+            id
+            replicatedObjects {
+              cluster {
+                id
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        cluster {
+          status
+          id
+          version
+          name
+          __typename
+        }
+        isHidden
+        isRelic
+        cdmId
+        __typename
+      }
+      __typename
+    }
+    pageInfo {
+      endCursor
+      hasNextPage
+      hasPreviousPage
+      __typename
+    }
+    __typename
+  }
+}"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.nasshares
+}  ### Function Get-nasList
+
+Function Get-DCs {
+  param (
+    [CmdletBinding()]
+    # Page info after cursor
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query OnPremAdDomainControllerListQuery(`$first: Int, `$after: String, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder, `$filter: [Filter!]) {
+  unifiedActiveDirectoryDomainControllers(
+    first: `$first
+    after: `$after
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+    filter: `$filter
+  ) {
+    count
+    edges {
+      cursor
+      node {
+        id
+        name
+        objectType
+        dcLocation
+        fsmoRoles
+        activeDirectoryDomain {
+          name
+          cluster {
+            id
+            name
+            version
+            __typename
+          }
+          __typename
+        }
+        serverRoles
+        slaPauseStatus
+        isRelic
+        snapshotConnection {
+          count
+          __typename
+        }
+        agentUuid
+        rbsStatus {
+          connectivity
+          __typename
+        }
+        ... on HierarchyObject {
+          id
+          effectiveSlaDomain {
+            id
+            name
+            ... on GlobalSlaReply {
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            __typename
+            ... on GlobalSlaReply {
+              description
+              __typename
+            }
+          }
+          ... on CdmHierarchyObject {
+            pendingSla {
+              id
+              name
+              ... on ClusterSlaDomain {
+                fid
+                cluster {
+                  id
+                  name
+                  __typename
+                }
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        ... on HierarchyObject {
+          slaAssignment
+          __typename
+        }
+        ... on CdmHierarchyObject {
+          replicatedObjectCount
+          cluster {
+            id
+            name
+            version
+            status
+            pauseStatus
+            __typename
+            clusterNodeConnection {
+              count
+              nodes {
+                ipAddress
+                clusterId
+                status
+                __typename
+              }
+              __typename
+            }
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+      __typename
+    }
+    __typename
+  }
+}"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.unifiedActiveDirectoryDomainControllers
+}  ### Function Get-DCs
 
 # Get Backup Details
 Function Get-BackupDetail {
@@ -1194,6 +1519,28 @@ Write-Host "Found $($oracleList.count) DBs" -foregroundcolor green
 
 $objList += $oracleList
 
+Write-Host "Getting a list of all Active Directory Domain Controllers"
+$afterCursor = ''
+$adList = Get-DCs -afterCursor $afterCursor
+$adList = $adList.edges.node
+
+Write-Host "Found $($adList.count) AD Domain Controllers" -foregroundcolor green
+
+$objList += $adList
+
+# NAS shares will not be added to $objList yet since it needs to be separately filtered
+Write-Host "Getting a list of all NAS shares"
+$nasList = @()
+$afterCursor = ''
+do {
+  $nasInventory = Get-nasList -afterCursor $afterCursor
+  $nasList += $nasInventory.edges.node
+  $afterCursor = $nasInventory.pageInfo.endCursor
+} while ($nasInventory.pageInfo.hasNextPage)
+
+Write-Host "Found $($nasList.count) NAS shares" -foregroundcolor green
+
+# Windows VG will not be added to $objList yet since it needs to be separately filtered
 Write-Host "Getting a list of all Windows Volume Groups"
 $vgList = @()
 $afterCursor = ''
@@ -1205,27 +1552,47 @@ do {
 
 Write-Host "Found $($vgList.count) Volume Groups" -foregroundcolor green
 
-$objList += $vgList
+$allObjCount = $objList.count + $nasList.count + $vgList.count
 
 Write-Host ""
-Write-Host "Total object count so far: $($objList.count)" -foregroundcolor green
+Write-Host "Total object count so far: $allObjCount" -foregroundcolor green
 Write-Host "Now filtering out objects by Protected, SLA, and Cluster" -foregroundcolor green
 Write-Host ""
 
 # Filter list by protected objects
-$objList = $objList | Where { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
+$objList = $objList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
   $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
-Write-Host "Object count after filtering by Protected: $($objList.count)" -foregroundcolor green
+
+# Handle NAS separately since we need to look at the primary fileset to see what's protected
+$nasListProtected = $nasList | Where-Object { $null -ne $_.primaryFileset -and $_.primaryFileset.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
+  $_.primaryFileset.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+
+# Handle Windows VG separately since we need to look at the volumes to see what's protected
+$vgListProtected = $vgList | Where-Object { $_.descendantConnection.edges.node.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
+  $_.descendantConnection.edges.node.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+
+$protectedCount = $objList.count + $nasListProtected.count + $vgListProtected.count
+
+Write-Host "Object count after filtering by Protected: $protectedCount" -foregroundcolor green
 
 # Filter list by removing any in the SLA ignore list
-$objList = $objList | Where { $_.effectiveSlaDomain.name -notin $slaIgnoreList }
+$objList = $objList | Where-Object { $_.effectiveSlaDomain.name -notin $slaIgnoreList }
+
+# Handle NAS and Windows VG separately since it's in a separate list
+$nasListProtected = $nasListProtected | Where-Object { $_.primaryFileset.effectiveSlaDomain.name -notin $slaIgnoreList }
+$vgListProtected = $vgListProtected | Where-Object { $_.descendantConnection.edges.node.effectiveSlaDomain.name -notin $slaIgnoreList }
+
+# Combine the main object list with Windows VG List for final protected objects minus SLAs
+$objList += $nasListProtected
+$objList += $vgListProtected
+
 Write-Host "SLAs to ignore: $slaIgnoreList" -foregroundcolor green
 Write-Host "Object count after filtering out ignored SLAs: $($objList.count)" -foregroundcolor green
 
 # Filter list by cluster if provided
-if ($cluster -ne '') {
+if ($cluster -ne '' -and $cluster -ne $null) {
   Write-Host "Cluster name provided: $cluster" -foregroundcolor green
-  $objList = $objList | Where { $_.cluster.name -eq $cluster }
+  $objList = $objList | Where-Object { $_.cluster.name -eq $cluster }
   Write-Host "Object count after filtering by cluster: $($objList.count)" -foregroundcolor green
 } else {
   Write-Host "No cluster name provided so not filtering out by cluster name." -foregroundcolor green
@@ -1247,6 +1614,12 @@ foreach ($obj in $objList) {
     $objID = $obj.dagid
   } elseif ($workload -eq 'OracleDatabase' -and $($obj.dataGuardType) -eq 'DATA_GUARD_MEMBER') {
     $objID = $obj.dataGuardGroup.id
+  } elseif ($workload -eq 'NasShare') {
+    $objID = $obj.primaryFileset.id
+  } elseif ($workload -eq 'PhysicalHost') {
+    $volGroup = $obj.hostVolumes | Where-Object { $_.volumeGroupId -ne $null }
+    $volGroupString = $volGroup.mountPoints -join ','
+    $objID = $volGroup[0].volumeGroupId
   } else {
     $objID = $obj.id
   }
@@ -1292,9 +1665,20 @@ foreach ($obj in $objList) {
       $oldestBKPExpire = $oldestBKP.expirationTime
     }
   }
-  $location = $obj.physicalPath[-1].name
+  if ($workload -eq 'PhysicalHost') {
+    $location = $volGroupString
+    $objSLA = $obj.descendantConnection.edges.node.effectiveSlaDomain.name
+  } elseif ($workload -eq 'NasShare') {
+    $location = $obj.nassystem.name
+    $objSLA = $obj.primaryFileset.effectiveSlaDomain.name
+  } elseif ($workload -eq 'ACTIVE_DIRECTORY_DOMAIN_CONTROLLER') {
+    $location = $obj.dcLocation
+    $objSLA = $obj.effectivesladomain.name
+  } else {
+    $location = $obj.physicalPath[-1].name
+    $objSLA = $obj.effectivesladomain.name
+  }
   $objCluster = $obj.cluster.name
-  $objSLA = $obj.effectivesladomain.name
   $objInfo = [PSCustomObject] @{
     "Name" = $obj.name
     "Location" = $location
@@ -1317,13 +1701,13 @@ foreach ($obj in $objList) {
   $count++
 }
 
-# Calculate the first day of the current month
-$firstDayOfCurrentMonth = Get-Date -Day 1
+### $objList() contains each object
+### $objList.backups() contains the backup information for each object
+### Can write some logic to loop through $objList().backups() to filter out by a particular date
 
-# Subtract one day to get the last day of the previous month
-$lastMonth = $firstDayOfCurrentMonth.AddDays(-2)
-
-$objNoSecondArchiveSinceLastMonth = $resultList | Where { $_.'Latest Archive to ARCH' -lt $lastMonth }
+# Comparison date to flag any objects that don't have archival to ARCH more recent to this date
+$compDate = $date.AddDays(-32)
+$objNoSecondArchiveSinceLastMonth = $resultList | Where-Object { $_.'Latest Archive to ARCH' -lt $compDate }
 
 $resultList | Export-CSV -Path $csvOutput -NoTypeInformation
 Write-Host "Exporting all objects and last backup and archival dates to: $csvOutput" -foregroundcolor green
