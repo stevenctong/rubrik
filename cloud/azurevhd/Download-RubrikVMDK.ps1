@@ -14,7 +14,9 @@ Requirements:
 - Rubrik Security Cloud PowerShell SDK: https://github.com/rubrikinc/rubrik-powershell-sdk
 
 .EXAMPLE
-./Download-RubrikVMDK -.ps1
+./Download-RubrikVMDK -vmID <VMware VM ID> -snapshotID <snapshot ID>
+  -vmdkFileName <vmdk files> -downloadPath <directory to download files to>.ps1
+  Downloads the VMDK files for a given VMware VM and Snapshot to a target directory
 abc
 
 #>
@@ -29,12 +31,17 @@ param (
   [string]$snapshotID = '',
   # VMDK Filename
   [Parameter(Mandatory=$false)]
-  [string]$vmdkFileName = ''
+  [aa x]$vmdkFileName = '',
+  # Directory to download VMDKs into
+  [Parameter(Mandatory=$false)]
+  [string]$downloadPath = ''
 )
 
-$vmID = '8cf7a1ce-ba6c-5dd6-ab2a-edcc142dda35'
-$snapshotID = '8564b6a9-54ad-53df-954e-fd479b25c32b'
-$vmdkFileName = '[rp-vmware-fc-05] tmp-pf-ad01/tmp-pf-ad01_1.vmdk'
+# Testing variables
+# $vmID = '8cf7a1ce-ba6c-5dd6-ab2a-edcc142dda35'
+# $snapshotID = '8564b6a9-54ad-53df-954e-fd479b25c32b'
+# $vmdkFileName = '[rp-vmware-fc-05] tmp-pf-ad01/tmp-pf-ad01_1.vmdk'
+# $downloadPath = './'
 
 ### RSC GQL Queries - BEGIN ###
 
@@ -173,7 +180,6 @@ $foundEvent = $false
 foreach ($e in $events) {
   $mes = $e.activityConnection.nodes[-1].message
   if ($mes.contains($vmdkFileName)) {
-    Write-Host "match"
     $foundEvent = $true
   } else {
     $num++
@@ -185,32 +191,43 @@ if ($foundEvent -eq $false) {
   exit
 }
 
+
 $recoveryEvent = $events[$num]
 $eventID = $recoveryEvent.id
-Write-Host "Recovery event found for $($recoveryEvent.objectName)"
-Write-Host "UTC last updated time: $($recoveryEvent.LastUpdated)"
+$timeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+$lastUpdatedEST = [System.TimeZoneInfo]::ConvertTimeFromUtc($recoveryEvent.LastUpdated, $timeZone)
+Write-Host "Recovery event found for: $($recoveryEvent.objectName)"
+Write-Host "UTC last updated time: $lastUpdatedEST"
 Write-Host "Current status: $($recoveryEvent.LastActivityStatus)"
 while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   Write-Host "Waiting 30 seconds before checking event again..."
+  Start-Sleep -Seconds 30
   $events = (Invoke-RSC -gqlquery $queryGetEvent -var $varGetEvent).edges.node
   $recoveryEvent = $events | Where-Object { $_.id -eq $eventID}
 }
 
-Write-Host "Event messages:"
+Disconnect-RSC
+
+Write-Host "Final Recovery Event message below"
 Write-Host ""
 
 $recoveryEvent.ActivityConnection.nodes.message
 
 # To contain the download links for each file
-$fileList = @()
-foreach ($a in $recoveryEvent.ActivityConnection.nodes) {
-  if ($a.message -match 'Successfully prepared the Virtual Machine file content for these files: List\((.*?)\)') {
-    # $matches[1] contains everything between "List(*)"
-    $contentBetweenList = $matches[1]
-    Write-Host "Extracted content: $contentBetweenList"
-  } else {
-    Write-Host "No match found."
+$downloadList = @()
+$dlString = 'The file can also be downloaded through this link: '
+foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
+  if ($e.message -match "The file can also be downloaded through this link:\s*(.+)") {
+    $dlLink = $matches[1]
+    Write-Host "Download link: $dlLink"
+    $downloadList += $dlLink
   }
 }
 
-Disconnect-RSC
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+
+foreach ($f in $downloadList) {
+  Write-Host "Downloading: $f"
+  Invoke-WebRequest -Uri $f -OutFile $downloadPath -SkipCertificateCheck
+  Write-Host "Finished downloading the above to: $downloadPath"
+}
