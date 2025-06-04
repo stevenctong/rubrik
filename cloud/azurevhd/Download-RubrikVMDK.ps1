@@ -31,7 +31,7 @@ param (
   [string]$snapshotID = '',
   # VMDK Filename
   [Parameter(Mandatory=$false)]
-  [aa x]$vmdkFileName = '',
+  [string]$vmdkFileName = '',
   # Directory to download VMDKs into
   [Parameter(Mandatory=$false)]
   [string]$downloadPath = ''
