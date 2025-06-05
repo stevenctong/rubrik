@@ -5,10 +5,16 @@ This script will download a VMware VMDK from a specific recovery point.
 .DESCRIPTION
 This script will download a VMware VMDK from a specific recovery point.
 
+Use 'aria2c' to download the files from the Rubrik cluster.
+- https://aria2.github.io/Can
+- aria2c.exe --check-certificate=false <url> -d <target directory>
+
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
+Updated: 6/5/25
 
 Requirements:
 - Rubrik Security Cloud PowerShell SDK: https://github.com/rubrikinc/rubrik-powershell-sdk
@@ -36,6 +42,9 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$downloadPath = ''
 )
+
+# aria2c utility - for downloading the VMDK from Rubrik
+$aria2c = "F:\aria2\aria2c.exe"
 
 # Testing variables
 # $vmID = '8cf7a1ce-ba6c-5dd6-ab2a-edcc142dda35'
@@ -228,6 +237,7 @@ foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
 
 foreach ($f in $downloadList) {
   Write-Host "Downloading: $f"
-  Invoke-WebRequest -Uri $f -OutFile $downloadPath -SkipCertificateCheck
+  # Invoke-WebRequest -Uri $f -OutFile $downloadPath -SkipCertificateCheck
+  & $aria2c --check-certificate=false $f -d $downloadPath
   Write-Host "Finished downloading the above to: $downloadPath"
 }
