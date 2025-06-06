@@ -14,7 +14,7 @@ Use 'aria2c' to download the files from the Rubrik cluster.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
-Updated: 6/5/25
+Updated: 6/6/25
 
 Requirements:
 - Rubrik Security Cloud PowerShell SDK: https://github.com/rubrikinc/rubrik-powershell-sdk
@@ -188,6 +188,9 @@ $foundEvent = $false
 foreach ($e in $events) {
   $mes = $e.activityConnection.nodes[-1].message
   if ($mes.contains($vmdkFileName)) {
+    if ($foundEvent -eq $false) {
+      $foundNum = $num
+    }
     $foundEvent = $true
   } else {
     $num++
