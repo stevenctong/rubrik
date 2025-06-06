@@ -58,7 +58,6 @@ It's easiest to perform these checks on a local Windows host w/Hyper-V role inst
 
 #>
 
-
 param (
   [CmdletBinding()]
   # Source VMDK - descriptor file, not the -flat.vmdk file
