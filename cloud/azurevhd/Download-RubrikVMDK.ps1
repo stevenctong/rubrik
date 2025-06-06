@@ -23,7 +23,6 @@ Requirements:
 ./Download-RubrikVMDK -vmID <VMware VM ID> -snapshotID <snapshot ID>
   -vmdkFileName <vmdk files> -downloadPath <directory to download files to>.ps1
   Downloads the VMDK files for a given VMware VM and Snapshot to a target directory
-abc
 
 #>
 
@@ -213,6 +212,7 @@ while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   Start-Sleep -Seconds 30
   $events = (Invoke-RSC -gqlquery $queryGetEvent -var $varGetEvent).edges.node
   $recoveryEvent = $events | Where-Object { $_.id -eq $eventID}
+  Write-Host "Current status: $($recoveryEvent.LastActivityStatus)"
 }
 
 Disconnect-RSC
