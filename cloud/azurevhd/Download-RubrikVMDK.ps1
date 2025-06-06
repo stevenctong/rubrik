@@ -238,6 +238,6 @@ foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
 foreach ($f in $downloadList) {
   Write-Host "Downloading: $f"
   # Invoke-WebRequest -Uri $f -OutFile $downloadPath -SkipCertificateCheck
-  & $aria2c --check-certificate=false $f -d $downloadPath
+  & $aria2c --check-certificate=false --file-allocation=none $f -d $downloadPath
   Write-Host "Finished downloading the above to: $downloadPath"
 }
