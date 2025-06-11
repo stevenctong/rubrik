@@ -40,7 +40,10 @@ param (
   [CmdletBinding()]
   # Set to $true to exclude all VMDKs matching the tag
   [Parameter(Mandatory=$false)]
-  [bool]$excludeVMDKs = $false
+  [bool]$excludeVMDKs = $false,
+  # CSV of VMs to perform exclusions on
+  [Parameter(Mandatory=$false)]
+  [string]$csvVMlist = ''
 )
 
 ### Variables - BEGIN ###
@@ -370,8 +373,28 @@ Write-Host "Connecting to Rubrik Security Cloud"
 Import-Module RubrikSecurityCloud
 Connect-Rsc
 
-$vmTagList = Get-Tagged-VMs -vSphereTagName $vSphereTagName -vsphereTagCategory $vsphereTagCategory
-$vmdkList = Get-VMDKs -vmTagList $vmTagList
+if ($csvVMlist -ne '') {
+  $vmTagList = Get-Tagged-VMs -vSphereTagName $vSphereTagName -vsphereTagCategory $vsphereTagCategory
+  $vmdkList = Get-VMDKs -vmTagList $vmTagList
+} else {
+  Write-Host "Getting a list of all VMs from Rubrik"
+  $vmList = @()
+  $afterCursor = $null
+  do {
+    $varGetVMs.after = $afterCursor
+    $vmInventory = (Invoke-RSC -gqlquery $queryGetVMs -var $varGetVMs)
+    $vmList += $vmInventory.edges.node
+    Write-Host "Found $($vmList.count) VMs so far..."
+    $afterCursor = $vmInventory.pageInfo.endCursor
+  } while ($vmInventory.pageInfo.hasNextPage)
+
+  Write-Host ""
+  Write-Host "Importing list of VMs for exclusion from: $csvVMlist"
+  $vmExcludeList = Import-CSV -Path $csvVMlist
+  Write-Host "Found $($vmList.count) VMs to exclude"
+  $vmList = $vmList | Where-Object { $_.Name -eq $vmExcludeList.Name}
+  $vmdkList = Get-VMDKs -vmTagList $vmList
+}
 
 $vmdkList | Export-CSV -Path $csvOutputPre -NoTypeInformation
 Write-Host "VMDK info output to: $csvOutputPre" -foregroundcolor green
