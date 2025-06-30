@@ -1580,7 +1580,7 @@ $count = 1
 
 # Go through each object and get the backup detail list for each
 foreach ($obj in $allObjProtected) {
-  Write-Host "Processing $count / $protectedCount"
+  Write-Host "[$count / $protectedCount] Getting details for: $($obj.name) ($($obj.objectType))"
   # Get the object ID for each object, different types may have it at different levels
   $objID = ''
   $workload = $obj.objectType
