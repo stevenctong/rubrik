@@ -1672,6 +1672,7 @@ foreach ($obj in $allObjProtected) {
       "Local Info Exp UTC" = $localInfo
       "Archival Info Exp UTC" = $archivalInfos
       "Replication Info Exp UTC" = $replicationInfos
+      "Custom Retention" = $backup.snapshotRetentionInfo.isCustomRetentionApplied
       "Legal Hold Info" = $backup.legalHoldInfo
       "Snapshot ID" = $backup.id
       "Assign SLA ID" = ""
