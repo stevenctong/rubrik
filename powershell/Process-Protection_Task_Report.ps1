@@ -8,10 +8,11 @@ This script will process a Protection Task Detail report and pull the first
 backup as the 'first full' and average out all subsequent backups as incrementals.
 
 Feed in a Protection Task Detail report CSV with the following columns:
-1. Object Name
-2. Object Type
-3. Start Time
-4. Duration
+1. Time Range - enough to cover the first full
+2. Object Name
+3. Object Type
+4. Start Time
+5. Duration
 6. Data Transferred
 7. Data Stored
 
