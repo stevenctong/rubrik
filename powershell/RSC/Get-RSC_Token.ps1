@@ -17,7 +17,7 @@ For authentication, use a RSC Service Account:
 ** Define the service account JSON path in the script: $serviceAccountPath
 
 .EXAMPLE
-./Get-RSC_Token.ps1
+./Get-RSC_Token.ps1 -serviceAccountPath <filepath to RSC json>
 Runs the script to output the RSC bearer token.
 #>
 
