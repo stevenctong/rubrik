@@ -99,6 +99,6 @@ $headers = @{
 
 Write-Host "Successfully connected to: $rubrikURL" -foregroundcolor green
 
-Write-Host "Bearer token: $($rubrikConnection.accessToken)"
+Write-Host "Bearer $($rubrikConnection.accessToken)"
 
 ###### RUBRIK AUTHENTICATION - END ######
