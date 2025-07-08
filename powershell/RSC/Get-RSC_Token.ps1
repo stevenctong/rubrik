@@ -118,8 +118,10 @@ if ($cluster -eq '') {
           secret = "$($serviceAccountFile.client_secret)"
       } | ConvertTo-Json
   }
-
-  if ($PSVersiontable.PSVersion.Major -gt 5) {$RestSplat.SkipCertificateCheck = $true}
+  if ($PSVersiontable.PSVersion.Major -gt 5) {$RestSplat.SkipCertificateCheck = $true} else {
+    # Ignore invalid/self-signed SSL certificates (for this script/session only):
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+  }
   $response = Invoke-RestMethod @RestSplat -Verbose
   $token = $response.token
   $contentType = "application/json"

@@ -125,7 +125,10 @@ if ($clusterIP -eq '') {
       } | ConvertTo-Json
   }
 
-  if ($PSVersiontable.PSVersion.Major -gt 5) {$RestSplat.SkipCertificateCheck = $true}
+  if ($PSVersiontable.PSVersion.Major -gt 5) {$RestSplat.SkipCertificateCheck = $true} else {
+    # Ignore invalid/self-signed SSL certificates (for this script/session only):
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+  }
   $response = Invoke-RestMethod @RestSplat -Verbose
   $token = $response.token
   $contentType = "application/json"
@@ -161,7 +164,11 @@ $headers = @{
 
 $url = "https://$cluster/api/v1/vmware/vm?is_relic=false"
 
-$rubrikVMs = Invoke-RestMethod -Uri $url -Method GET -Headers $headers -SkipCertificateCheck
+if ($PSVersiontable.PSVersion.Major -gt 5) {
+  $rubrikVMs = Invoke-RestMethod -Uri $url -Method GET -Headers $headers -SkipCertificateCheck
+} else {
+  $rubrikVMs = Invoke-RestMethod -Uri $url -Method GET -Headers $headers
+}
 $rubrikVMs = $rubrikVMs.data
 
 # Have the header of the CSV "VM"
@@ -175,6 +182,11 @@ foreach ($vm in $vmList) {
   $vmInfo = $rubrikVMs | Where { $_.Name -eq $vm.vm }
   Write-Host "Forcing full on: $($vmInfo.name) / $($vminfo.id)"
   $forceURL = "https://$cluster/api/v1/vmware/vm/$($vmInfo.id)/request/force_full_snapshot"
-  $response = Invoke-RestMethod -Uri $forceURL -Method POST -Body $body -Headers $headers -SkipCertificateCheck
+  if ($PSVersiontable.PSVersion.Major -gt 5) {
+    $response = Invoke-RestMethod -Uri $forceURL -Method POST -Body $body -Headers $headers -SkipCertificateCheck
+  } else {
+    $response = Invoke-RestMethod -Uri $forceURL -Method POST -Body $body -Headers $headers
+  }
+
   $response
 }
