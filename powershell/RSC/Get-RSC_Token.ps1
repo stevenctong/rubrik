@@ -70,7 +70,7 @@ if ($missingServiceAccount.count -gt 0){
   throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
 }
 
-if ($clusterIP -eq '') {
+if ($cluster -eq '') {
   $headers = @{
     'Content-Type' = 'application/json';
     'Accept' = 'application/json';
