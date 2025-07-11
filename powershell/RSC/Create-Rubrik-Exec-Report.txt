@@ -8,38 +8,29 @@ Rubrik tasks. The html can be emailed if SMTP details are provided.
 This script creates a custom html report for Rubrik object compliance and
 Rubrik tasks. The html can be emailed if SMTP details are provided.
 
-Users will need to create four custom reports in RSC and provide access
-to those reports via a RSC service account w/read-only permissions.
+Users will need to create two custom reports in Rubrik Security Cloud and
+provide access to those reports via a RSC service account w/read-only permissions.
 
-This script requires the corresponding .psd1 file that contains the variables
-for this script: Create-Rubrik-Exec-Report.psd1.
+The script can be scheduled to run on a server daily in order to generate
+the html report.
 
-This script requires communication to RSC via outbound HTTPS (TCP 443).
+The script requires communication to RSC via outbound HTTPS (TCP 443).
 
-This script requires PowerShell v7+.
+The script requires PowerShell v7+.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/1/25
-Updated: 7/11/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
 ** Download the service account JSON
 ** Define the service account JSON path in the script: $serviceAccountPath
 
-For Service Account custom role:
-** Create a role with 'View' permission for Reports
-
-Four RSC custom reports will need to be created:
+Two RSC custom reports will need to be created:
 1. Object Compliance Report - Filters: Past 24 hours
 2. Protection Task Details Report - Filter: Past 24 hours, backup jobs
-3. Object Capacity Report - Filters: None
-4. Capacity over Time Report - Filters: Last 12 months
-
-You can apply additional filters on the reports if you want to restrict the data
-to a given view.
 
 For each report, grab the report ID. This can be seen as the # in the URL
 when you have the report open.
@@ -55,7 +46,7 @@ the variable $sendEmail to $true.
 
 
 .EXAMPLE
-./Create-Rubrik-Exec-Report.ps1 -configFile <Create-Rubrik-Exec-Report.psd1>
+./Generate-Rubrik-Custom_Compliance_Report.ps1
 Runs the script to generate the custom html report.
 #>
 
@@ -63,50 +54,70 @@ Runs the script to generate the custom html report.
 
 param (
   [CmdletBinding()]
-  # Location of the config file - psd1
+  # Sort order options: "Start time", "End time", "Duration", "Data transferred"
   [Parameter(Mandatory=$false)]
-  [string]$configFile = ''
+  [string]$sortOrder = 'Start time'
 )
 
-if ($configFile -ne '') {
-  $config = Import-PowerShellDataFile -Path $configFile
-  foreach ($key in $Config.Keys) {
-      Set-Variable -Name $key -Value $Config[$key] -Scope Script
-  }
-} else {
-  Write-Error "Please include a .psd1 $configFile for this script to work"
-  Write-Error "Exiting..."
+if ($PSVersionTable.PSVersion.Major -le 5) {
+  Write-Error "Current PS version: $PSVersionTable.PSVersion.Major"
+  Write-Error "Script requires PS version 7+, exiting..."
   exit
 }
 
+# File location of the RSC service account json
+$serviceAccountPath = "./rsc-gaia.json"
+
+# The report IDs for the two custom reports that are created
+$reportIDdailyComplianceReport = 3170
+$reportIDdailyTaskReport = 3173
+$reportIDobjectCapacityReport = 3189
+$reportIDobjectCapacityOverTimeReport = 3190
+
 $date = Get-Date
-$dateString = $date.ToString("yyyy-MM-dd_HHmm")
 $utcDate = $date.ToUniversalTime()
 
-# Append the date and extensions to the various file outputs
-$htmlOutput = $htmlOutput + "-$dateString.html"
-# Append the date and extension to the saved report CSVs
-$csvReportTasks = Join-Path $csvReportDir "$csvReportTasks-$dateString.csv"
-$csvReportCompliance = Join-Path $csvReportDir "$csvReportCompliance-$dateString.csv"
-$csvReportCapacity = Join-Path $csvReportDir "$csvReportCapacity-$dateString.csv"
-$csvReportCapacityOverTime = Join-Path $csvReportDir "$csvReportCapacityOverTime-$dateString.csv"
-# Appending email subject with the date
-$emailSubject = $emailSubject + " - $($date.ToString("yyyy-MM-dd HH:MM"))"
+# Whether to list Succeeded tasks or not in the report
+$showSucceeded = $false
 
-# Variables used for testing - ignore
-$useSaved = $false
+# Whether to also highlight objects that are out of replication or archival compliance
+# Will not be added to the summary tables, just the list of objects
+$allCompliance = $true
+
+# Location to save the summarized data
+$csvComplianceData = "./csvData/rubrik_compliance_data.csv"
+
+# Directory to save the working charts in
+$chartsDir = "C:\scripts\charts"
+
+# Whether save the report CSV for each run or not
+$saveCSV = $true
+$csvReportTasks = "./csvReports/rubrik_task_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvReportCompliance = "./csvReports/rubrik_compliance_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvReportCapacity = "./csvReports/rubrik_capacity_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$csvReportCapacityOverTime = "./csvReports/rubrik_capacity_over_time_report-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
+# Whether to export the html as a file along with file path
+$exportHTML = $true
+$htmlOutput = "./Rubrik-Daily_Exec_Report-$($date.ToString("yyyy-MM-dd_HHmm")).html"
+
+# SMTP configuration if you want to send an email at the end of this script
+$emailTo = @('')
+$emailFrom = ''
+$SMTPServer = ''
+$SMTPPort = '25'
+$emailSubject = "Rubrik Daily Exec Report - " + $date.ToString("yyyy-MM-dd HH:MM")
+
+# Set to $true to send out email at the end of this script
+$sendEmail = $false
+
+$useSaved = $true
 $savedCompliance = './csvReports/rubrik_compliance_report-2025-07-02_0439.csv'
 $savedTasks = './csvReports/rubrik_task_report-2025-07-02_0439.csv'
 $savedCapacity = './csvReports/rubrik_capacity_report-2025-07-02_0551.csv'
 $savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-07-02_0726.csv'
 
 ### End Variables section
-
-if ($PSVersionTable.PSVersion.Major -le 5) {
-  Write-Error "Current PS version: $PSVersionTable.PSVersion.Major"
-  Write-Error "Script requires PS version 7+"
-  Write-Error "This script may have errors running"
-}
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 if ($useSaved -eq $false) {
@@ -481,113 +492,6 @@ Function Export-LineChart {
 #     -YValues $values `
 #     -OutputPath "$HOME\Desktop\ComplianceGaps.jpg"
 
-Function Export-MultiLineChart {
-    param (
-        [Parameter(Mandatory)]
-        [string]$ChartTitle,
-        [Parameter(Mandatory)]
-        [string]$XAxisTitle,
-        [Parameter(Mandatory)]
-        [string]$YAxisTitle,
-        [Parameter(Mandatory)]
-        [string[]]$XValues,
-        # Important change: Array of Arrays for multiple Y series
-        [Parameter(Mandatory)]
-        [float[][]]$YValueSets,
-        # New parameter: Names of each data series
-        [Parameter(Mandatory)]
-        [string[]]$SeriesNames,
-        # Optional defined colors per series (optional)
-        [Parameter(Mandatory=$false)]
-        [System.Drawing.Color[]]$Colors,
-        [Parameter(Mandatory=$false)]
-        [array] $chartWidthHeight,
-        [Parameter(Mandatory)]
-        [string]$OutputPath
-    )
-    # Input validation
-    if ($SeriesNames.Count -ne $YValueSets.Count) {
-        throw "SeriesNames count must match number of YValueSets!"
-    }
-    foreach ($YValues in $YValueSets) {
-        if ($XValues.Count -ne $YValues.Count) {
-            throw "XValues and each YValues set counts must match!"
-        }
-    }
-    Add-Type -AssemblyName System.Windows.Forms.DataVisualization
-    # Create a fresh Chart object
-    $Chart = New-Object System.Windows.Forms.DataVisualization.Charting.Chart
-    if (!$chartWidthHeight){
-        $Chart.Width  = 600
-        $Chart.Height = 300
-    }
-    else {
-        $Chart.Width  = $chartWidthHeight[0]
-        $Chart.Height = $chartWidthHeight[1]
-    }
-    $Chart.ChartAreas.Clear()
-    $Chart.Titles.Clear()
-    $Chart.Series.Clear()
-    $Chart.Legends.Clear()
-    # Add Title
-    $Title = New-Object System.Windows.Forms.DataVisualization.Charting.Title
-    $Title.Text = $ChartTitle
-    $Title.Font = New-Object System.Drawing.Font("Arial",14,[System.Drawing.FontStyle]::Bold)
-    $Chart.Titles.Add($Title)
-    # Add ChartArea
-    $ChartArea = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
-    $ChartArea.AxisX.Title = $XAxisTitle
-    $ChartArea.AxisY.Title = $YAxisTitle
-    $ChartArea.AxisX.Interval = 1
-    $ChartArea.AxisX.LabelStyle.Angle = -45
-    $ChartArea.AxisX.MajorGrid.Enabled = $False
-    $ChartArea.AxisY.MajorGrid.Enabled = $False
-    $Chart.ChartAreas.Add($ChartArea)
-    # Add a Legend
-    $Legend = New-Object System.Windows.Forms.DataVisualization.Charting.Legend
-    $Chart.Legends.Add($Legend)
-    # Default color assignment if not provided
-    $defaultColors = @(
-        [System.Drawing.Color]::ForestGreen,
-        [System.Drawing.Color]::RoyalBlue,
-        [System.Drawing.Color]::Orange,
-        [System.Drawing.Color]::Red,
-        [System.Drawing.Color]::Purple,
-        [System.Drawing.Color]::Brown
-    )
-    # Loop clearly through multiple YValueSets
-    for ($s = 0; $s -lt $YValueSets.Count; $s++)
-    {
-        $Series = New-Object System.Windows.Forms.DataVisualization.Charting.Series
-        $Series.ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::Line
-        $Series.Name = $SeriesNames[$s]
-        $Series.BorderWidth = 3
-        # Assign color (use provided or default)
-        if ($Colors -and ($Colors.Count -gt $s)) {
-            $Series.Color = $Colors[$s]
-        }
-        else {
-            $Series.Color = $defaultColors[$s % $defaultColors.Count]
-        }
-        # Handle points in each series
-        for ($i = 0; $i -lt $XValues.Count; $i++){
-            $point = New-Object System.Windows.Forms.DataVisualization.Charting.DataPoint
-            $point.AxisLabel = $XValues[$i]
-            if ([double]::IsNaN($YValueSets[$s][$i])) {
-                $point.IsEmpty = $true
-            } else {
-                $point.YValues = @($YValueSets[$s][$i])
-            }
-            $Series.Points.Add($point)
-        }
-        # Add current series to chart
-        $Chart.Series.Add($Series)
-    }
-    # Save JPG
-    $Chart.SaveImage($OutputPath,[System.Drawing.Imaging.ImageFormat]::Jpeg)
-    Write-Host "Multi-Line Chart saved at: $OutputPath" -ForegroundColor Green
-}
-
 
 Function Export-BarChart {
     [CmdletBinding()]
@@ -686,110 +590,6 @@ Function Export-BarChart {
 #                 -Categories $categories `
 #                 -Values $capacityValues `
 #                 -OutputPath "$HOME\Desktop\WorkloadCapacityUniformColor.jpg"
-
-
-Function Export-GroupedBarChart {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]
-        [string] $ChartTitle,
-        [Parameter(Mandatory)]
-        [string] $XAxisTitle,
-        [Parameter(Mandatory)]
-        [string] $YAxisTitle,
-        [Parameter(Mandatory=$false)]
-        [float] $YAxisMaximum,
-        [Parameter(Mandatory=$false)]
-        [array] $chartWidthHeight,
-        [Parameter(Mandatory=$false)]
-        [bool] $IsValueShownAsLabel = $false,
-        [Parameter(Mandatory)]
-        [string[]] $Categories,
-        [Parameter(Mandatory)]
-        [float[][]] $Values, # multiple sets for grouped bars
-        [Parameter(Mandatory)]
-        [string[]] $SeriesNames,
-        [Parameter(Mandatory)]
-        [string] $OutputPath,
-        [Parameter(Mandatory=$false)]
-        [string[]] $BarColorsHtml  # colors for each series, optional
-    )
-    # Validate Inputs Clearly
-    if ($Values.Count -ne $SeriesNames.Count){
-        throw "Count of Values sets must match count of SeriesNames!"
-    }
-    foreach ($valSet in $Values){
-        if ($valSet.Count -ne $Categories.Count){
-            throw "Each Values set must match Categories count!"
-        }
-    }
-    if ($BarColorsHtml -and ($BarColorsHtml.Count -ne $SeriesNames.Count)){
-        throw "When using BarColorsHtml, its count must match SeriesNames count!"
-    }
-    # Load Charting Assembly explicitly
-    Add-Type -AssemblyName System.Windows.Forms.DataVisualization
-    # Initialize Chart Object explicitly
-    $chart = New-Object System.Windows.Forms.DataVisualization.Charting.Chart
-    if (!$chartWidthHeight) {
-        $chart.Width = 1000
-        $chart.Height = 300
-    } else {
-        $chart.Width = $chartWidthHeight[0]
-        $chart.Height = $chartWidthHeight[1]
-    }
-    # Clearing Chart collections explicitly clearly
-    $Chart.ChartAreas.Clear()
-    $Chart.Titles.Clear()
-    $Chart.Series.Clear()
-    $Chart.Legends.Clear()
-    # Clearly add Title
-    $Title = New-Object System.Windows.Forms.DataVisualization.Charting.Title
-    $Title.Text = $ChartTitle
-    $Title.Font = New-Object System.Drawing.Font("Arial",14,[System.Drawing.FontStyle]::Bold)
-    $Chart.Titles.Add($Title)
-    # Define ChartArea without gridlines clearly
-    $chartArea = New-Object System.Windows.Forms.DataVisualization.Charting.ChartArea
-    $chartArea.AxisX.Title = $XAxisTitle
-    $chartArea.AxisY.Title = $YAxisTitle
-    $chartArea.AxisX.MajorGrid.Enabled = $False
-    $chartArea.AxisY.MajorGrid.Enabled = $False
-    $chartArea.AxisX.Interval = 1
-    $chartArea.AxisX.LabelStyle.Angle = -30
-    if ($YAxisMaximum) {
-        $chartArea.AxisY.Maximum = $YAxisMaximum
-    }
-    $chart.ChartAreas.Add($chartArea)
-    # Add Legend explicitly to identify grouped sets
-    $Legend = New-Object System.Windows.Forms.DataVisualization.Charting.Legend
-    $Chart.Legends.Add($Legend)
-    # Default colors explicitly
-    $defaultColors = @("#00B2A9","#F57C00","#3E92CC","#D72631","#AE81FF","#008744","#0094FF")
-    # Generate bars for each series explicitly clear looping
-    for ($s = 0; $s -lt $SeriesNames.Count; $s++){
-        $series = New-Object System.Windows.Forms.DataVisualization.Charting.Series($SeriesNames[$s])
-        $series.ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::Column
-        $series.IsValueShownAsLabel = $IsValueShownAsLabel
-        $series.Font = New-Object System.Drawing.Font("Arial",9,[System.Drawing.FontStyle]::Regular)
-        # Assign explicit color or default to the Series directly:
-        if ($BarColorsHtml -and $BarColorsHtml[$s]){
-            $barColor = [System.Drawing.ColorTranslator]::FromHtml($BarColorsHtml[$s])
-        } else {
-            $barColor = [System.Drawing.ColorTranslator]::FromHtml($defaultColors[$s % $defaultColors.Count])
-        }
-        $series.Color = $barColor  # <-- SET COLOR ON SERIES, NOT INDIVIDUAL DATA POINTS
-        # Add data points explicitly clearly
-        for ($i = 0; $i -lt $Categories.Count; $i++){
-            $dp = New-Object System.Windows.Forms.DataVisualization.Charting.DataPoint
-            $dp.AxisLabel = $Categories[$i]
-            $dp.YValues = @($Values[$s][$i])
-            $series.Points.Add($dp)
-        }
-        $chart.Series.Add($series)
-    }
-    # Export explicitly to JPG
-    $chart.SaveImage($OutputPath,[System.Drawing.Imaging.ImageFormat]::Jpeg)
-    Write-Host "Grouped Bar chart saved at: $OutputPath" -ForegroundColor Green
-}
 
 
 ###### FUNCTIONS - END ######
@@ -1052,9 +852,6 @@ $workloadList = $rubrikCompliance | Select-Object 'Object Type' -unique -expandP
 $barCompWorkloadCategories = @()
 $barCompWorkloadValues = @()
 
-# Workload hash table to keep capacity counts
-$workloadHash = @{}
-
 # Create a hash table to keep the task status and compliance counts for each workload
 foreach ($workload in $workloadList)
 {
@@ -1106,20 +903,6 @@ foreach ($j in $objectsOutCompliance)
 
 $objectsOutCompliance = $objectsOutCompliance | Sort-Object -Property 'Local Days Behind' -Descending
 
-# Get the workload list from Capacity report
-$capacityWorkloadList = $rubrikCapacity | Select-Object 'Object Type' -unique -expandProperty 'Object Type'
-
-foreach ($workload in $capacityWorkloadList) {
-  $workloadObj = [PSCustomObject] @{
-    "ProvisionedSize" = [double]0
-    "UsedSize" = [double]0
-    "LocalStored" = [double]0
-    "ArchiveStored" = [double]0
-    "ReplicaStored" = [double]0
-  }
-  $workloadHash.add($($workload),$workloadObj)
-}
-
 # Working on capacity metrics
 $totalProvisionedSize = 0
 $totalUsedSize = 0
@@ -1134,26 +917,20 @@ $rubrikCapacityCount = $rubrikCapacity.count
 Write-Host "Found $rubrikCapacityCount Protected Objects, calcuating capacities..."
 
 foreach ($obj in $rubrikCapacity) {
-  $workloadType = $obj.'Object Type'
   if ($obj.'Provisioned Size' -ne 'N/A') {
     $totalProvisionedSize += [double]$obj.'Provisioned Size'
-    $workloadHash[$workloadType].ProvisionedSize += [double]$obj.'Provisioned Size'
   }
   if ($obj.'Used Size' -ne 'N/A') {
     $totalUsedSize += [double]$obj.'Used Size'
-    $workloadHash[$workloadType].UsedSize += [double]$obj.'Used Size'
   }
   if ($obj.'Local Storage' -ne 'N/A') {
     $totalLocalStored += [double]$obj.'Local Storage'
-    $workloadHash[$workloadType].LocalStored += [double]$obj.'Local Storage'
   }
   if ($obj.'Archival Storage' -ne 'N/A') {
     $totalArchiveStored += [double]$obj.'Archival Storage'
-    $workloadHash[$workloadType].ArchiveStored += [double]$obj.'Archival Storage'
   }
   if ($obj.'Replica Storage' -ne 'N/A') {
     $totalReplicaStored += [double]$obj.'Replica Storage'
-    $workloadHash[$workloadType].ReplicaStored += [double]$obj.'Replica Storage'
   }
 }
 
@@ -1165,7 +942,6 @@ $capacityValues = @([int]($totalProvisionedSize / 1000000000000),
   [int]($totalArchiveStored / 1000000000000),
   [int]($totalReplicaStored / 1000000000000))
 
-# Create bar chart by total capacities
 Export-BarChart -ChartTitle 'Capacity Under Protection' `
                 -XAxisTitle 'Capacity' `
                 -YAxisTitle 'Size (TB)' `
@@ -1175,41 +951,6 @@ Export-BarChart -ChartTitle 'Capacity Under Protection' `
                 -Values $capacityValues `
                 -OutputPath "$chartsDir\TotalCapacities.jpg"
 
-
-$groupedCapacityWorkloads = @()
-$groupedProvisionedSize = @()
-$groupedLocalStored = @()
-$groupedArchival = @()
-$groupedReplica = @()
-
-foreach ($workloadCap in $workloadHash.GetEnumerator()) {
-  if ( $workloadCap.value.localStored -gt 0 -or
-        $workloadCap.value.archiveStored -gt 0 -or
-        $workloadCap.value.replicaStored -gt 0) {
-    $groupedCapacityWorkloads += $workloadCap.name
-    $groupedProvisionedSize += [math]::Round($workloadCap.value.provisionedSize / 1000000000000, 2)
-    $groupedLocalStored += [math]::Round($workloadCap.value.LocalStored / 1000000000000, 2)
-    $groupedArchival += [math]::Round($workloadCap.value.ArchiveStored / 1000000000000, 2)
-    $groupedReplica +=  [math]::Round($workloadCap.value.ReplicaStored / 1000000000000, 2)
-  }
-}
-
-$groupedValues = @($groupedProvisionedSize, $groupedLocalStored,
-  $groupedArchival, $groupedReplica)
-
-$groupedLabels = @('FETB Provisioned', 'Local Stored', 'Archival', 'Replica')
-
-# Create multi-bar grouped chart
-Export-GroupedBarChart `
-    -ChartTitle "Capacity by Workload" `
-    -XAxisTitle "Workload" `
-    -YAxisTitle "Size (TB)" `
-    -Categories $groupedCapacityWorkloads `
-    -Values $groupedValues `
-    -SeriesNames $groupedLabels `
-    -chartWidthHeight @(1000,300) `
-    -IsValueShownAsLabel $false `
-    -OutputPath "$chartsDir\CapacityByWorkload.jpg"
 
 # Capacity over Time - Get unique monthly dates
 $capacityDates = $rubrikCapacityOverTime | Select-Object 'Time' -unique -expandProperty 'Time'
@@ -1246,51 +987,25 @@ foreach ($obj in $rubrikCapacityOverTime) {
   }
 }
 
+
 # Initialze arrays for creating capacity over time line charts
-# $capacityOverTimeCategories = @()
-# $capacityOverTimeValues = @()
-
-# foreach ($capMonth in $capacityOverTimeHash.GetEnumerator())
-# {
-#   $capacityOverTimeCategories += $capMonth.Name
-#   $capacityOverTimeValues += [int]($capMonth.value.localStored / 1000000000000)
-# }
-
-# Export-LineChart `
-#     -ChartTitle "Capacity - Last 12 Months" `
-#     -XAxisTitle "Date" `
-#     -YAxisTitle "Local Used (TB)" `
-#     -XValues $capacityOverTimeCategories `
-#     -YValues $capacityOverTimeValues `
-#     -chartWidthHeight @(600, 300) `
-#     -OutputPath "$chartsDir\CapacityLast12Months.jpg"
-
-$capacityMonths = @()
-$capacityProvisioned = @()
-$capacityLocalStored = @()
-$capacityArchiveStored = @()
-$capacityReplicaStored = @()
-$capacityCategories = @('FETB Provisioned', 'Local Stored', 'Archival', 'Replica')
+$capacityOverTimeCategories = @()
+$capacityOverTimeValues = @()
 
 foreach ($capMonth in $capacityOverTimeHash.GetEnumerator())
 {
-  $capacityMonths += $capMonth.Name
-  $capacityProvisioned += [int]($capMonth.value.provisionedSize / 1000000000000)
-  $capacityLocalStored += [int]($capMonth.value.localStored / 1000000000000)
-  $capacityArchiveStored += [int]($capMonth.value.archiveStored / 1000000000000)
-  $capacityReplicaStored += [int]($capMonth.value.replicaStored / 1000000000000)
+  $capacityOverTimeCategories += $capMonth.Name
+  $capacityOverTimeValues += [int]($capMonth.value.localStored / 1000000000000)
 }
 
-$capacityLines = @($capacityProvisioned, $capacityLocalStored,
-  $capacityArchiveStored, $capacityReplicaStored)
-
-Export-MultiLineChart -ChartTitle "Capacity - Last 12 Months" `
-                     -XAxisTitle "Date" `
-                     -YAxisTitle "Capacity (TB)" `
-                     -XValues $capacityMonths `
-                     -YValueSets $capacityLines `
-                     -SeriesNames $capacityCategories `
-                     -OutputPath "$chartsDir\CapacityLast12Months.jpg"
+Export-LineChart `
+    -ChartTitle "Capacity - Last 12 Months" `
+    -XAxisTitle "Date" `
+    -YAxisTitle "Local Used (TB)" `
+    -XValues $capacityOverTimeCategories `
+    -YValues $capacityOverTimeValues `
+    -chartWidthHeight @(600, 300) `
+    -OutputPath "$chartsDir\CapacityLast12Months.jpg"
 
 Write-Host "Creating HTML tables" -foregroundcolor green
 
@@ -1337,10 +1052,10 @@ $chartHTML = @"
     <h2 style="text-align:center;">Rubrik Daily Executive Report ($reportDate)</h2>
     <div class="charts-container">
         <div>
-            <img src="$chartsDir\DailyBackupCompliance.jpg" alt="Backup Compliance" width="400" height="300"/>
+            <img src="$chartsDir\DailyBackupCompliance.jpg" alt="Compliance Pie" width="400" height="300"/>
         </div>
         <div>
-            <img src="$chartsDir\BackupComplianceLast30Days.jpg" alt="Backup Compliance Last 30 Days " width="600" height="300"/>
+            <img src="$chartsDir\BackupComplianceLast30Days.jpg" alt="Line Chart" width="600" height="300"/>
         </div>
     </div>
     <p>Daily Compliance: SLA Protected Objects are "Out-Of-Compliance" if they Failed or Missed a backup that should have taken on that date.
@@ -1348,25 +1063,18 @@ $chartHTML = @"
     <br>
     <div class="charts-container">
         <div>
-            <img src="$chartsDir\TotalCapacities.jpg" alt="Capacities" width="400" height="300"/>
+            <img src="$chartsDir\BackupComplianceByCluster.jpg" alt="Compliance Pie" width="400" height="300"/>
         </div>
         <div>
-            <img src="$chartsDir\CapacityLast12Months.jpg" alt="Capacities Last 12 Months" width="600" height="300"/>
-        </div>
-    </div>
-    <br>
-    <div class="charts-container">
-        <div>
-            <img src="$chartsDir\CapacityByWorkload.jpg" alt="Capacity by Workload" width="1000" height="300"/>
+            <img src="$chartsDir\BackupComplianceByWorkload.jpg" alt="Line Chart" width="600" height="300"/>
         </div>
     </div>
-    <br>
     <div class="charts-container">
         <div>
-            <img src="$chartsDir\BackupComplianceByCluster.jpg" alt="Compliance by Cluster" width="400" height="300"/>
+            <img src="$chartsDir\TotalCapacities.jpg" alt="Compliance Pie" width="400" height="300"/>
         </div>
         <div>
-            <img src="$chartsDir\BackupComplianceByWorkload.jpg" alt="Compliance by Workload" width="600" height="300"/>
+            <img src="$chartsDir\CapacityLast12Months.jpg" alt="Compliance Pie" width="600" height="300"/>
         </div>
     </div>
 </body>
@@ -1633,7 +1341,7 @@ $HTMLTaskTableMiddle = $null
 $HTMLTaskTableStart = @"
   <table class="table2">
     <tr>
-      <th colspan="9">Daily Object Task Report</th>
+      <th colspan="8">Daily Object Task Report</th>
     </tr>
     <tr>
       <th>Object Name</th>
@@ -1644,7 +1352,6 @@ $HTMLTaskTableStart = @"
       <th>Started</th>
       <th>Ended</th>
       <th>Duration</th>
-      <th>Status Reason</th>
     </tr>
 "@
 
@@ -1688,7 +1395,6 @@ foreach ($task in $taskTable)
       <td>$($task.'Start Time')</td>
       <td>$($task.'End Time')</td>
       <td>$($task.'Duration Text')</td>
-      <td>$($task.'Status Reason')</td>
     </tr>
 "@
 
@@ -1703,8 +1409,11 @@ $HTMLTaskTable += $HTMLTaskTableStart + $HTMLTaskTableMiddle + $HTMLTaskTableEnd
 $HTMLReport = $chartHTML + $HTMLStart + $HTMLComplianceSummaryTable + $HTMLTaskSummaryTable + $HTMLOutComplianceTable + $HTMLTaskTable + $HTMLEnd
 # $HTMLReport = $chartHTML + $HTMLStart + $HTMLHeader + $HTMLComplianceSummaryTable + $HTMLTaskSummaryTable + $HTMLOutComplianceTable + $HTMLTaskTable + $HTMLEnd
 
-$HTMLReport | Out-File -FilePath $htmlOutput
-Write-Host "`nHTML report output to: $htmlOutput" -foregroundcolor green
+# Export results to HTML file
+if ($exportHTML) {
+  $HTMLReport | Out-File -FilePath $htmlOutput
+  Write-Host "`nHTML report output to: $htmlOutput" -foregroundcolor green
+}
 
 # Send an email with CSV attachment
 if ($sendEmail) {
