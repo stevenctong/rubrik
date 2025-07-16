@@ -30,10 +30,16 @@ param (
   [CmdletBinding()]
   # Filter reports by last x hours based on End Time, up to 24
   [Parameter(Mandatory=$false)]
-  [int]$lastHours = 8,
-  # Object Type filters, comma seprated string
+  [int]$lastHours = 1,
+  # Task type filters, comma seprated string
   [Parameter(Mandatory=$false)]
-  [string]$taskType = 'Backup',
+  [string]$taskType = 'Backup, Archival',
+  # Object type filters, comma separated string
+  [Parameter(Mandatory=$false)]
+  [string]$objectType = '',
+  # Cluster filter by cluster name
+  [Parameter(Mandatory=$false)]
+  [string]$cluster = '',
   # Time zone to report in. Could be 'America/New_York', 'America/Chicago',
   # 'America/Denver', or 'America/Los_Angeles'
   [Parameter(Mandatory=$false)]
@@ -47,7 +53,7 @@ param (
   # Whether to get Canceled Tasks
   [Parameter(Mandatory=$false)]
   [bool]$statusCanceled = $true,
-  # Whether to get In Progress Tasks
+  # Whether to get In Progress Tasks, you should gather In Progress separately
   [Parameter(Mandatory=$false)]
   [bool]$statusInProgress = $false
 )
@@ -370,11 +376,33 @@ if ($statusCanceled -eq $true) {
   $allTasks += $tasksCanceled
 }
 
-[array]$taskTypeArray = $taskType -split ',' | ForEach-Object { $_.Trim() }
+$filteredAllTasks = $allTasks
 
-Write-Host "Filtering tasks by task types: $taskType"
-$filteredAllTasks = $allTasks | Where { $_.'Task Type' -in $taskTypeArray }
-Write-Host "Found a total of $($filteredAllTasks.count) tasks"
+# Filter the tasks by Cluster
+if ($cluster -ne '') {
+  Write-Host ""
+  Write-Host "Filtering tasks by cluster: $cluster"
+  $filteredAllTasks = $filteredAllTasks | Where { $_.'Cluster Name' -eq $cluster }
+  Write-Host "Found a total of $($filteredAllTasks.count) tasks"
+}
+
+# Filter the tasks by Task Type
+if ($taskType -ne '') {
+  [array]$taskTypeArray = $taskType -split ',' | ForEach-Object { $_.Trim() }
+  Write-Host ""
+  Write-Host "Filtering tasks by task types: $taskType"
+  $filteredAllTasks = $filteredAllTasks | Where { $_.'Task Type' -in $taskTypeArray }
+  Write-Host "Found a total of $($filteredAllTasks.count) tasks"
+}
+
+# Filter the tasks by Object Type
+if ($objectType -ne '') {
+  [array]$objectTypeArray = $objectType -split ',' | ForEach-Object { $_.Trim() }
+  Write-Host ""
+  Write-Host "Filtering tasks by object types: $objectType"
+  $filteredAllTasks = $filteredAllTasks | Where { $_.'Object Type' -in $objectTypeArray }
+  Write-Host "Found a total of $($filteredAllTasks.count) tasks"
+}
 
 $sortedTasks = $filteredAllTasks | Sort-Object {
     [datetime]::ParseExact($_.'End Time','MM/dd/yyyy hh:mm:ss tt',$null)
