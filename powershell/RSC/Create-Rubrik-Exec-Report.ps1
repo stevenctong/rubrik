@@ -94,7 +94,7 @@ $csvReportCapacityOverTime = Join-Path $csvReportDir "$csvReportCapacityOverTime
 $emailSubject = $emailSubject + " - $($date.ToString("yyyy-MM-dd HH:MM"))"
 
 # Variables used for testing - ignore
-$useSaved = $false
+$useSaved = $true
 $savedCompliance = './csvReports/rubrik_compliance_report-2025-07-02_0439.csv'
 $savedTasks = './csvReports/rubrik_task_report-2025-07-02_0439.csv'
 $savedCapacity = './csvReports/rubrik_capacity_report-2025-07-02_0551.csv'
@@ -963,55 +963,6 @@ $clusterTotal.OutCompliance = $objectsOutCompliance.count
 $clusterTotal.TotalCompliance = $clusterTotal.InCompliance + $clusterTotal.OutCompliance
 $clusterTotal.ComplianceRate = [math]::round($clusterTotal.InCompliance / $clusterTotal.TotalCompliance * 100, 1)
 
-# Creating a historical record of the compliance data
-$complianceDataDetail = [PSCustomObject] @{
-  "Date" = (Get-Date).ToString("MM/dd/yyyy")
-  "InCompliance" = $clusterTotal.InCompliance
-  "OutCompliance" = $clusterTotal.OutCompliance
-  "TotalCompliance" = $clusterTotal.TotalCompliance
-  "ComplianceRate" = $clusterTotal.ComplianceRate
-}
-# Checking if the compliance data CSV exists already, if not create
-if (-not (Test-Path -Path $csvComplianceData)) {
-  Write-Host "Creating $csvComplianceData to store historical data."
-  New-Item -Path $csvComplianceData -ItemType File -Force
-}
-# Import existing data to only add today's entry once
-Write-Host "Importing $csvComplianceData"
-$complianceData = @(Import-Csv $csvComplianceData)
-if ($complianceData.date -contains (Get-Date).ToString("MM/dd/yyyy")) {
-  Write-Host "For compliance data, today's data already exists as an entry, skipping..."
-} else {
-  $complianceData += $complianceDataDetail
-  $complianceData | Export-CSV -Path $csvComplianceData -NoTypeInformation
-}
-
-# Create a pie chart of the compliance rate
-Export-PieChart -ChartTitle "Daily Backup Compliance (%)" `
-                -DataValues @($clusterTotal.ComplianceRate,$(100 - $clusterTotal.ComplianceRate)) `
-                -DataLabels @("In Compliance","Out Of Compliance") `
-                -OutputPath "$chartsDir\DailyBackupCompliance.jpg"
-
-# Create line chart of last 30 days
-$values = @()
-$days = (29..0 | ForEach-Object { $date.AddDays(-$_).ToString('MM/dd/yyyy') })
-foreach ($day in $days) {
-  if ($complianceData.Date -contains $day) {
-    $dataToGet = $complianceData | Where { $_.date -eq $day }
-    $values += $dataToGet.ComplianceRate
-  } else {
-    $values += [double]::NaN
-  }
-}
-
-Export-LineChart `
-    -ChartTitle "Backup Compliance (%) - Last 30 Days" `
-    -XAxisTitle "Date" `
-    -YAxisTitle "Backup Compliance (%)" `
-    -XValues $days `
-    -YValues $values `
-    -OutputPath "$chartsDir\BackupComplianceLast30Days.jpg"
-
 # Initialze arrays for creating bar chart for compliance by cluster
 $barCompCategories = @()
 $barCompValues = @()
@@ -1076,6 +1027,106 @@ Export-BarChart -ChartTitle 'Backup Compliance - By Workload' `
                 -Categories $barCompWorkloadCategories `
                 -Values $barCompWorkloadValues `
                 -OutputPath "$chartsDir\BackupComplianceByWorkload.jpg"
+
+# Creating a historical record of the compliance data
+$complianceDataDetail = [PSCustomObject] @{
+  "Date" = (Get-Date).ToString("MM/dd/yyyy")
+  "InCompliance" = $clusterTotal.InCompliance
+  "OutCompliance" = $clusterTotal.OutCompliance
+  "TotalCompliance" = $clusterTotal.TotalCompliance
+  "ComplianceRate" = $clusterTotal.ComplianceRate
+}
+# Checking if the compliance data CSV exists already, if not create
+if (-not (Test-Path -Path $csvComplianceData)) {
+  Write-Host "Creating $csvComplianceData to store historical data."
+  New-Item -Path $csvComplianceData -ItemType File -Force
+}
+# Import existing data to only add today's entry once
+Write-Host "Importing $csvComplianceData"
+$complianceData = @(Import-Csv $csvComplianceData)
+# Get a list of all current headers
+$complianceHeaders = $complianceData | Select-Object -First 1 | Get-Member -MemberType NoteProperty | Select-Object -ExpandProperty Name
+if ($complianceData.date -contains (Get-Date).ToString("MM/dd/yyyy")) {
+  Write-Host "For compliance data, today's data already exists as an entry, skipping..."
+} else {
+  $compCount = 0
+  foreach ($workloadComp in $barCompWorkloadCategories) {
+    Add-Member -InputObject $complianceDataDetail -MemberType NoteProperty `
+      -name $workloadComp -value $($barCompWorkloadValues[$compCount]) -Force
+    # If there is a new workload, add it to the array
+    if ($complianceHeaders -notcontains $workloadComp ) {
+      $complianceHeaders += $workloadComp
+    }
+    $compCount += 1
+  }
+  $complianceData += $complianceDataDetail
+  foreach ($obj in $complianceData) {
+    foreach ($property in $complianceHeaders) {
+      if (-not ($obj | Get-Member -Name $property -MemberType NoteProperty)) {
+          # Add the property if it doesn't exist
+          $obj | Add-Member -MemberType NoteProperty -Name $property -Value $null -Force
+      }
+    }
+  }
+  $complianceData | Export-CSV -Path $csvComplianceData -NoTypeInformation
+}
+
+# Create a pie chart of the compliance rate
+Export-PieChart -ChartTitle "Daily Backup Compliance (%)" `
+                -DataValues @($clusterTotal.ComplianceRate,$(100 - $clusterTotal.ComplianceRate)) `
+                -DataLabels @("In Compliance","Out Of Compliance") `
+                -OutputPath "$chartsDir\DailyBackupCompliance.jpg"
+
+# Create line chart of last 30 days
+$values = @()
+$days = (29..0 | ForEach-Object { $date.AddDays(-$_).ToString('MM/dd/yyyy') })
+foreach ($day in $days) {
+  if ($complianceData.Date -contains $day) {
+    $dataToGet = $complianceData | Where { $_.date -eq $day }
+    $values += $dataToGet.ComplianceRate
+    $compByWorkloadArray = @()
+    $count = 0
+    # Loop through to build compliance by workload data
+    foreach ($h in $complianceHeaders) {
+      if (-not $compByWorkloadArray[$count]) {
+          # Write-Host "Initializing $count as a nested array"
+          if ($($dataToGet.$h -ne $null)) {
+            $compArray = @([double]::$dataToGet.$h)
+          } else {
+            $compArray = @([double]::NaN)
+          }
+          $compByWorkloadArray += $compArray
+      }
+      if ($($dataToGet.$h -ne $null)) {
+        $compByWorkloadArray[$count] += [double]::$dataToGet.$h
+      } else {
+        $compByWorkloadArray[$count] += [double]::NaN
+      }
+      $count += 1
+    }
+  } else {
+    $values += [double]::NaN
+  }
+}
+
+Export-LineChart `
+    -ChartTitle "Backup Compliance (%) - Last 30 Days" `
+    -XAxisTitle "Date" `
+    -YAxisTitle "Backup Compliance (%)" `
+    -XValues $days `
+    -YValues $values `
+    -OutputPath "$chartsDir\BackupComplianceLast30Days.jpg"
+
+
+Export-MultiLineChart -ChartTitle "Backup Compliance (%) - Last 30 Days by Workload" `
+                     -XAxisTitle "Date" `
+                     -YAxisTitle "Capacity (TB)" `
+                     -XValues $days `
+                     -YValueSets $complianceLines `
+                     -SeriesNames $complianceCategories `
+                     -OutputPath "$chartsDir\CapacityLast30DaysByWorkload.jpg"
+
+
 
 # If we want to build list with objects also out of replication and archival compliance
 if ($allCompliance = $true) {
