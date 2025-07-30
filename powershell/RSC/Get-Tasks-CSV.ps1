@@ -12,6 +12,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 7/12/25
+Updated 7/29/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a custom role
@@ -67,6 +68,9 @@ $utcDate = $date.ToUniversalTime()
 
 # CSV file info
 $csvOutput = "./rubrik-task-details-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+
+# CSV file info
+$htmlOutput = "./rubrik-task-details-$($date.ToString("yyyy-MM-dd_HHmm")).html"
 
 # SMTP configuration if you want to send an email at the end of this script
 $emailTo = @('')
@@ -336,6 +340,47 @@ Function Get-TaskCSVLink {
   }
 }  ### Function Get-ReportCSVLink
 
+# Function to generate an HTML table with conditional row coloring
+function ConvertTo-HTMLTable {
+    param (
+        [Parameter(Mandatory)]
+        [array]$Data, # The array of objects to convert
+        [string]$Title = "" # Table title (optional)
+    )
+    # Start building the HTML table
+    $html = @()
+    if ($Title) {
+        $html += "<h2>$Title</h2>"
+    }
+    $html += '<table border="1" cellspacing="0" cellpadding="5" style="border-collapse: collapse; width: 100%;">'
+    # Generate the table header from the property names
+    $html += '<thead><tr>'
+    foreach ($property in $Data[0].PsObject.Properties.Name) {
+        $html += "<th>$property</th>"
+    }
+    $html += '</tr></thead>'
+    # Generate the table rows
+    $html += '<tbody>'
+    foreach ($row in $Data) {
+        # Determine the row style based on the Status property
+        $rowStyle = "background-color: white;" # Default style
+        if ($row.'Task Status' -like 'Success*') { $rowStyle = "background-color: #D4EDDA; color: #155724;" } # Green (Success)
+        elseif ($row.'Task Status' -like 'Fail*')   { $rowStyle = "background-color: #F8D7DA; color: #721C24;" } # Red (Fail)
+        elseif ($row.'Task Status' -like 'Cancel*') { $rowStyle = "background-color: #FFF3CD; color: #856404;" } # Yellow (Cancel)
+        # Build the row with the style
+        $html += "<tr style='$rowStyle'>"
+        foreach ($property in $row.PsObject.Properties.Name) {
+            $html += "<td>$($row.$property)</td>"
+        }
+        $html += '</tr>'
+    }
+    $html += '</tbody>'
+    $html += '</table>'
+    # Return the HTML as a string
+    return $html -join "`n"
+} ### ConvertTo-HTMLTable
+
+
 ###### FUNCTIONS - END ######
 
 $allTasks = @()
@@ -429,12 +474,69 @@ $recentTasks = $sortedTasks | Where-Object {
 Write-Host "Found a total of $($recentTasks.count) tasks from last $lastHours hours"
 Write-Host ""
 
+# Holds the list of formatted tasks
+$taskList = @()
+
+foreach ($t in $recentTasks) {
+  # Convert $t.duration from seconds to mm:ss
+  $minutes = [math]::Floor($t.duration / 60)    # Get the whole minutes
+  $seconds = $t.duration % 60                   # Get the remaining seconds
+  $durationMMSS = "{0:00}:{1:00}" -f $minutes, $seconds
+  # Convert Bytes to GB
+  $objLogicalSizeGB = [math]::Round($t.'Object Logical Size' / 1000000000, 2)
+  $dataTransGB = [math]::Round($t.'Data Transferred' / 1000000000, 2)
+  # Calculate throughput in GB/s
+  $throughputMBpS = [math]::Round($dataTransGB / $t.duration * 1000, 2)
+  # Create the task detail item with the proper order
+  # 'Log Task': whether a log backup, but would also be represented in 'Task Type'
+  # ""
+  $taskDetail = [PSCustomObject]@{
+    "Object Name" = $t.'Object Name'
+    "SLA Domain" = $t.'SLA Domain'
+    "Object Type" = $t.'Object Type'
+    "Task Type" = $t.'Task Type'
+    "Status" = $t.'Status'
+    "Task Status" = $t.'Task Status'
+    "Start Time" = $t.'Start Time'
+    "End Time" = $t.'End Time'
+    "Duration MM:SS" = $durationMMSS
+    "Object Logical Size GB" = $objLogicalSizeGB
+    "Data Transferred GB" = $dataTransGB
+    "Throughput MBpS" = $throughputMBpS
+    "Source Cluster" = $t.'Source Cluster'    # Might not need
+    "Cluster Name" = $t.'Cluster Name'
+    "Location" = $t.'Location'
+    "Error Code" = $t.'Error Code'
+    "Error Message" = $t.'Error Message'
+    "Error Reason" = $t.'Error Reason'
+    "Error Remedy" = $t.'Error Remedy'
+  }
+  $taskList += $taskDetail
+}
+
 Write-Host "Exporting to CSV: $csvOutput"
 $recentTasks | Export-CSV -Path $csvOutput -NoTypeInformation
 
+# Create the HTML table from the $taskList table
+$htmlTable = ConvertTo-HTMLTable -Data $taskList -Title "Rubrik Tasks - Last $lastHours hours"
+# Create a basic HTML page with the table
+$fullHTML = @"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Rubrik Tasks - Last $lastHours hours</title>
+</head>
+<body>
+    $htmlTable
+</body>
+</html>
+"@
+
+Write-Host "Exporting to HTML: $htmlOutput"
+$fullHTML | Out-File -FilePath $htmlOutput -Encoding utf8
+
 # Send an email with CSV attachment
 if ($sendEmail) {
-  $htmlReport = ""
   Write-Host "Sending email to: $emailTo with subject: $emailSubject"
-  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $HTMLReport -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
+  Send-MailMessage -To $emailTo -From $emailFrom -Subject $emailSubject -BodyAsHtml -Body $fullHTML -SmtpServer $SMTPServer -Port $SMTPPort -Attachments $csvOutput
 }
