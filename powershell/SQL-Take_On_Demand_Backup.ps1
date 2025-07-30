@@ -63,10 +63,10 @@ param (
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
-$cluster = ’10.8.49.104’
-$serviceAccountPath = './rsc-service-account-rr.json'
+# $cluster = ’10.8.49.104’
+# $serviceAccountPath = './rsc-service-account-rr.json'
 
-$secondsToCheck = 3
+$secondsToCheck = 30
 
 if ($cluster -eq '' -or $sqlDbId -eq '' -or $slaID -eq '') {
   Write-Error "Missing a required parameter, exiting..."
