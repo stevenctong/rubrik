@@ -487,15 +487,19 @@ foreach ($t in $recentTasks) {
   $dataTransGB = [math]::Round($t.'Data Transferred' / 1000000000, 2)
   # Calculate throughput in GB/s
   $throughputMBpS = [math]::Round($dataTransGB / $t.duration * 1000, 2)
+  # Populate Status since it doesn't populate for Failed tasks
+  if ($t.status -eq $null) {
+    $status = $t.'Task Status'
+  } else {
+    $status = $t.'Status'
+  }
   # Create the task detail item with the proper order
-  # 'Log Task': whether a log backup, but would also be represented in 'Task Type'
-  # ""
   $taskDetail = [PSCustomObject]@{
     "Object Name" = $t.'Object Name'
     "SLA Domain" = $t.'SLA Domain'
     "Object Type" = $t.'Object Type'
     "Task Type" = $t.'Task Type'
-    "Status" = $t.'Status'
+    "Status" = $status
     "Task Status" = $t.'Task Status'
     "Start Time" = $t.'Start Time'
     "End Time" = $t.'End Time'
