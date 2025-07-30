@@ -519,7 +519,7 @@ foreach ($t in $recentTasks) {
 }
 
 Write-Host "Exporting to CSV: $csvOutput"
-$recentTasks | Export-CSV -Path $csvOutput -NoTypeInformation
+$taskList | Export-CSV -Path $csvOutput -NoTypeInformation
 
 # Create the HTML table from the $taskList table
 $htmlTable = ConvertTo-HTMLTable -Data $taskList -Title "Rubrik Tasks - Last $lastHours hours"
