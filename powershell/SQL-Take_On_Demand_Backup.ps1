@@ -16,6 +16,10 @@ Provide the following ID's in the script or as a parameter:
     This can be found by going to the local UI, browsing to the SLA
     and looking att he URL. Eg 506fcfba-10f3-4c2e-8181-0f877ee538cb
 
+$sqlDbID and $slaId should be an array, eg: @('<value1>', '<value2>')
+Match the array positions of both together in order to take a specific SQL DB
+with a specific SLA ID.
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
