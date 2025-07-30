@@ -20,12 +20,12 @@ Provide the following ID's in the script or as a parameter:
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 7/20/25
+Updated: 7/29/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a custom role
 ** Download the service account JSON
 ** Define the service account JSON path in the script: $serviceAccountPath
-
 
 .EXAMPLE
 ./SQL-TakeOnDemadBackup.ps1
@@ -43,22 +43,37 @@ param (
   [Parameter(Mandatory=$false)]
   [string]$cluster = '',
   # SQL DB UUID from CDM
+  # Put one or more into the PowerShell array format
   [Parameter(Mandatory=$false)]
-  [string]$sqlDbId = '',
+  [array]$sqlDbId = @('MssqlDatabase:::459ed96c-c70a-4fdd-b7be-dfc0560ccba0',
+    'MssqlDatabase:::fef964ed-c450-4ede-ade3-24ccfd98e686'),
   # SLA ID to associate the backup with
+  # Put one or more into the PowerShell array format
+  # The number of SLA IDs should match and be ordered with the SQL DBs
   [Parameter(Mandatory=$false)]
-  [string]$slaID = ''
+  [array]$slaID = @('506fcfba-10f3-4c2e-8181-0f877ee538cb',
+    '506fcfba-10f3-4c2e-8181-0f877ee538cb')
 )
 
 ### End Variables section
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
-$secondsToCheck = 30
+$cluster = ’10.8.49.104’
+$serviceAccountPath = './rsc-service-account-rr.json'
+
+$secondsToCheck = 3
 
 if ($cluster -eq '' -or $sqlDbId -eq '' -or $slaID -eq '') {
   Write-Error "Missing a required parameter, exiting..."
   exit 200
+}
+
+if ( $sqlDbId.count -ne $slaID.count) {
+  Write-Error "SQL DB IDs must equal SLA IDs."
+  Write-Error "Put them in the matching order for each SQL DB ID to SLA ID pair."
+  Write-Error "Exiting..."
+  exit 210
 }
 
 Write-Host "Attempting to read the Service Account file: $serviceAccountPath"
@@ -141,45 +156,77 @@ $headers = @{
 
 $baseUrl = "https://$cluster/api"
 
-$takeOnDemandUrl = $baseUrl + "/v1/mssql/db/$sqlDbId/snapshot"
-$takeOnDemandBody = @{
-    slaId = $slaID
-}
+# Holds list of on demand backup results
+$resultList = @()
 
-try {
-  if ($PSVersiontable.PSVersion.Major -gt 5) {
-    $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
-      -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers -SkipCertificateCheck
-  } else {
-    $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
-      -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers
+# Since we are looping through two arrays, we need to manually reference them together
+$count = 0
+$total = $sqlDbId.count
+foreach ($database in $sqlDbId) {
+  $takeOnDemandUrl = $baseUrl + "/v1/mssql/db/$($sqlDbId[$count])/snapshot"
+  $takeOnDemandBody = @{
+      slaId = $slaID[$count]
   }
-} catch {
-  Write-Error $_.Exception
-  exit 300
+  try {
+    if ($PSVersiontable.PSVersion.Major -gt 5) {
+      $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
+        -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers -SkipCertificateCheck
+    } else {
+      $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
+        -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers
+    }
+  } catch {
+    Write-Error $_.Exception
+    exit 300
+  }
+  $result
+  $resultDetail = [PSCustomObject] @{
+    "sqlID" = $sqlDbId[$count]
+    "href" = $result.links.href
+    "status" = ''
+  }
+  $resultList += $resultDetail
+  $count += 1
 }
 
-$result
-
-$reqUrl = $result.links.href
+# Job states where the job is still running
+$runningStates = @('QUEUED','ACQUIRING','RUNNING','FINISHING','TO_CANCEL')
 
 # Wait until task completes and return state
 do {
-  if ($PSVersiontable.PSVersion.Major -gt 5) {
-    $req = Invoke-RestMethod -Uri $reqUrl -Method Get -Headers $headers -SkipCertificateCheck
-  } else {
-    $req = Invoke-RestMethod -Uri $reqUrl -Method Get -Headers $headers
+  # Contains state information, starts false.
+  # Sets to $true if we detect any non-terminating state
+  $reqState = $false
+  foreach ($db in $resultList) {
+    if ($PSVersiontable.PSVersion.Major -gt 5) {
+      $req = Invoke-RestMethod -Uri $db.href -Method Get -Headers $headers -SkipCertificateCheck
+    } else {
+      $req = Invoke-RestMethod -Uri $db.href -Method Get -Headers $headers
+    }
+    $db.status = $req.status
+    Write-Host "Current status for $($db.sqlID): $($req.status), checking again in $secondsToCheck seconds..."
   }
-  $reqState = @('QUEUED','ACQUIRING','RUNNING','FINISHING','TO_CANCEL') -contains $req.status
-  Write-Host "Current status: $($req.status), checking again in $secondsToCheck seconds..."
+  if ($runningStates -contains $req.status) {
+    $reqState = $true
+  }
   if ($reqState) { Start-Sleep -Seconds $secondsToCheck }
 } while ( $reqState )
-$req
 
-if ($req.status -match 'SUCC') {
-  Write-Host "On Demand Backup completed successfully"
+$fullySuccesful = $true
+foreach ($res in $resultList) {
+  if ($res.status -match 'SUCC') {
+    Write-Host "Successful On Demand Backup for: $($res.sqlID)"
+  } elseif ($res.status -match 'CANCEL') {
+    Write-Host "Canceled On Demand Backup for: $($res.sqlID)"
+  }
+  else {
+    Write-Error "Failed On Demand Backup for: $($res.sqlID)"
+    $fullySuccesful = $false
+  }
+}
+
+if ($fullySuccessful) {
   exit 0
 } else {
-  Write-Error "On Demand Backup did not complete successfully"
   exit 500
 }
