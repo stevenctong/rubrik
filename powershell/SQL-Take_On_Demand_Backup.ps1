@@ -66,6 +66,7 @@ param (
 # $cluster = ’10.8.49.104’
 # $serviceAccountPath = './rsc-service-account-rr.json'
 
+# How often to check the status of the backup job, in seconds
 $secondsToCheck = 30
 
 if ($cluster -eq '' -or $sqlDbId -eq '' -or $slaID -eq '') {
