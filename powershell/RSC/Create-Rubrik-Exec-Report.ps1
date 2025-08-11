@@ -22,7 +22,7 @@ This script requires PowerShell v7+.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/1/25
-Updated: 7/11/25
+Updated: 8/10/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -94,11 +94,16 @@ $csvReportCapacityOverTime = Join-Path $csvReportDir "$csvReportCapacityOverTime
 $emailSubject = $emailSubject + " - $($date.ToString("yyyy-MM-dd HH:MM"))"
 
 # Variables used for testing - ignore
-$useSaved = $true
-$savedCompliance = './csvReports/rubrik_compliance_report-2025-07-02_0439.csv'
-$savedTasks = './csvReports/rubrik_task_report-2025-07-02_0439.csv'
-$savedCapacity = './csvReports/rubrik_capacity_report-2025-07-02_0551.csv'
-$savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-07-02_0726.csv'
+$useSaved = $false
+# $savedCompliance = './csvReports/rubrik_compliance_report-2025-07-02_0439.csv'
+# $savedTasks = './csvReports/rubrik_task_report-2025-07-02_0439.csv'
+# $savedCapacity = './csvReports/rubrik_capacity_report-2025-07-02_0551.csv'
+# $savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-07-02_0726.csv'
+
+$savedCompliance = './csvReports/rubrik_compliance_report-2025-08-03_0800.csv'
+$savedTasks = './csvReports/rubrik_task_report-2025-08-03_0800.csv'
+$savedCapacity = './csvReports/rubrik_capacity_report-2025-08-03_0800.csv'
+$savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-08-03_0800.csv'
 
 ### End Variables section
 
@@ -830,6 +835,30 @@ if ($useSaved -eq $false) {
   $rubrikCapacityOverTime = Import-CSV -Path $savedCapacityOverTime
 }
 
+# Get unique workloads from Tasks report
+$workloadTaskList = $rubrikTasks | Select-Object 'Object Type' -unique -expandProperty 'Object Type'
+
+# Create a hash table to keep the task status and compliance counts for each workload
+$workloadTaskHash = @{}
+foreach ($workload in $workloadTaskList)
+{
+  $workloadObj = [PSCustomObject] @{
+    "SucceededCount" = 0
+    "SucceededWithWarningsCount" = 0
+    "CanceledCount" = 0
+    "FailedCount" = 0
+    "TotalCount" = 0
+    "SucceededRate" = [float]0
+    "InCompliance" = 0
+    "OutCompliance" = 0
+    "TotalCompliance" = 0
+    "ComplianceRate" = [float]0
+  }
+  $workloadTaskHash.add($($workload),$workloadObj)
+}
+
+
+
 # Get unique Clusters
 $clusterList = $rubrikTasks | Select-Object 'Cluster Name' -unique -expandProperty 'Cluster Name'
 
@@ -878,16 +907,22 @@ foreach ($i in $rubrikTasks)
     Write-Host "Processing tasks: $count of $rubrikTasksCount"
   }
   $count += 1
+  # Track the task status counts for each workload
+  $workloadTaskHash[$i.'Object Type'].'TotalCount' += 1
   # Track the task status counts for each cluster
   $clusterCountHash[$i.'Cluster Name'].'TotalCount' += 1
   if ($i.'Task Status' -contains 'Succeeded') {
     $clusterCountHash[$i.'Cluster Name'].'SucceededCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'SucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Succeeded with Warnings') {
     $clusterCountHash[$i.'Cluster Name'].'SucceededWithWarningsCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'SucceededWithWarningsCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
     $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'FailedCount' += 1
   } elseif ($i.'Task Status' -match 'Canceled') {
     $clusterCountHash[$i.'Cluster Name'].'CanceledCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'CanceledCount' += 1
   }
   # Update the timestamps to Powershell 'datetime' format so we can do comparisons
   $i.'Start Time' = ([datetime]($i.'Start Time'.replace("UTC", "GMT"))).ToUniversalTime()
@@ -917,6 +952,16 @@ foreach ($i in $rubrikTasks)
   }
 }
 
+# Calculate succeeded rate for workloads
+foreach ($workloadStatus in $workloadTaskHash.GetEnumerator())
+{
+  $value = $($workloadStatus.Value)
+  $value.SucceededRate = [math]::round(($value.SucceededCount + $value.SucceededWithWarningsCount) /
+    ($value.SucceededCount + $value.SucceededWithWarningsCount + $value.FailedCount) * 100, 1)
+}
+
+
+# Calculate succeeded rate for clusters
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
   $value = $($clusterStatus.Value)
@@ -1004,7 +1049,10 @@ $barCompWorkloadCategories = @()
 $barCompWorkloadValues = @()
 
 # Workload hash table to keep capacity counts
-$workloadHash = @{}
+$workloadCapacityHash = @{}
+
+# Workload hash table to keep compliance counts
+$workloadComplianceArray = @()
 
 # Create a hash table to keep the task status and compliance counts for each workload
 foreach ($workload in $workloadList)
@@ -1016,6 +1064,14 @@ foreach ($workload in $workloadList)
     $workloadComplianceRate = [math]::round($workloadInCompliance / $workloadTotalCompliance * 100, 1)
     $barCompWorkloadCategories += $workload
     $barCompWorkloadValues += [int]$workloadComplianceRate
+    $workloadComplianceItem = [PSCustomObject] @{
+      "Workload" = $workload
+      "In Compliance" = $workloadInCompliance
+      "Out Compliance" = $workloadOutCompliance
+      "Total Compliance" = $workloadTotalCompliance
+      "Compliance Rate" = $workloadComplianceRate
+    }
+    $workloadComplianceArray += $workloadComplianceItem
   }
 }
 
@@ -1168,7 +1224,7 @@ foreach ($workload in $capacityWorkloadList) {
     "ArchiveStored" = [double]0
     "ReplicaStored" = [double]0
   }
-  $workloadHash.add($($workload),$workloadObj)
+  $workloadCapacityHash.add($($workload),$workloadObj)
 }
 
 # Working on capacity metrics
@@ -1188,23 +1244,23 @@ foreach ($obj in $rubrikCapacity) {
   $workloadType = $obj.'Object Type'
   if ($obj.'Provisioned Size' -ne 'N/A') {
     $totalProvisionedSize += [double]$obj.'Provisioned Size'
-    $workloadHash[$workloadType].ProvisionedSize += [double]$obj.'Provisioned Size'
+    $workloadCapacityHash[$workloadType].ProvisionedSize += [double]$obj.'Provisioned Size'
   }
   if ($obj.'Used Size' -ne 'N/A') {
     $totalUsedSize += [double]$obj.'Used Size'
-    $workloadHash[$workloadType].UsedSize += [double]$obj.'Used Size'
+    $workloadCapacityHash[$workloadType].UsedSize += [double]$obj.'Used Size'
   }
   if ($obj.'Local Storage' -ne 'N/A') {
     $totalLocalStored += [double]$obj.'Local Storage'
-    $workloadHash[$workloadType].LocalStored += [double]$obj.'Local Storage'
+    $workloadCapacityHash[$workloadType].LocalStored += [double]$obj.'Local Storage'
   }
   if ($obj.'Archival Storage' -ne 'N/A') {
     $totalArchiveStored += [double]$obj.'Archival Storage'
-    $workloadHash[$workloadType].ArchiveStored += [double]$obj.'Archival Storage'
+    $workloadCapacityHash[$workloadType].ArchiveStored += [double]$obj.'Archival Storage'
   }
   if ($obj.'Replica Storage' -ne 'N/A') {
     $totalReplicaStored += [double]$obj.'Replica Storage'
-    $workloadHash[$workloadType].ReplicaStored += [double]$obj.'Replica Storage'
+    $workloadCapacityHash[$workloadType].ReplicaStored += [double]$obj.'Replica Storage'
   }
 }
 
@@ -1233,7 +1289,7 @@ $groupedLocalStored = @()
 $groupedArchival = @()
 $groupedReplica = @()
 
-foreach ($workloadCap in $workloadHash.GetEnumerator()) {
+foreach ($workloadCap in $workloadCapacityHash.GetEnumerator()) {
   if ( $workloadCap.value.localStored -gt 0 -or
         $workloadCap.value.archiveStored -gt 0 -or
         $workloadCap.value.replicaStored -gt 0) {
@@ -1290,7 +1346,7 @@ foreach ($obj in $rubrikCapacityOverTime) {
     $capacityOverTimeHash[$obj.Time].'localStored' += [double]$obj.'Local Storage'
   }
   if ($obj.'Archival Storage' -ne 'N/A') {
-    $capacityOverTimeHash[$obj.Time].'archiveStored' += [double]$obj.'Archival Storage'
+    $capacityOverTimeHash[$obj.Time].'archiveStored' += [double]$obj.'Archive Storage'
   }
   if ($obj.'Replica Storage' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'replicaStored' += [double]$obj.'Replica Storage'
@@ -1345,6 +1401,10 @@ Export-MultiLineChart -ChartTitle "Capacity - Last 12 Months" `
 
 Write-Host "Creating HTML tables" -foregroundcolor green
 
+# <div>
+#     <img src="$chartsDir\BackupComplianceByCluster.jpg" alt="Compliance by Cluster" width="400" height="300"/>
+# </div>
+
 ### Creating HTML table styles ###
 ### HTML formatting borrowed from: @joshuastenhouse
 
@@ -1394,6 +1454,11 @@ $chartHTML = @"
             <img src="$chartsDir\BackupComplianceLast30Days.jpg" alt="Backup Compliance Last 30 Days " width="600" height="300"/>
         </div>
     </div>
+    <div class="charts-container">
+        <div>
+            <img src="$chartsDir\BackupComplianceByWorkload.jpg" alt="Compliance by Workload" width="600" height="300"/>
+        </div>
+    </div>
     <p>Daily Compliance: SLA Protected Objects are "Out-Of-Compliance" if they Failed or Missed a backup that should have taken on that date.
                       <br>Objects are "In Compliance" if all backups that should be taken are succesful.
     <br>
@@ -1412,14 +1477,6 @@ $chartHTML = @"
         </div>
     </div>
     <br>
-    <div class="charts-container">
-        <div>
-            <img src="$chartsDir\BackupComplianceByCluster.jpg" alt="Compliance by Cluster" width="400" height="300"/>
-        </div>
-        <div>
-            <img src="$chartsDir\BackupComplianceByWorkload.jpg" alt="Compliance by Workload" width="600" height="300"/>
-        </div>
-    </div>
 </body>
 </html>
 "@
@@ -1499,7 +1556,7 @@ $HTMLComplianceSummaryTableStart = @"
       <th colspan="5">Daily Compliance Summary</th>
     </tr>
     <tr>
-      <th>Cluster</th>
+      <th>Workload</th>
       <th>Total</th>
       <th>In Compliance</th>
       <th>Out of Compliance</th>
@@ -1512,16 +1569,15 @@ $HTMLComplianceSummaryTableEnd = @"
   <br>
 "@
 
-foreach ($clusterStatus in $clusterCountHash.GetEnumerator() | Sort-Object -Property 'name')
+foreach ($workload in $workloadComplianceArray | Sort-Object -Property 'Workload')
 {
-  $value = $($clusterStatus.Value)
   $HTMLComplianceSummaryTableRow = @"
   <tr>
-    <td style=text-align:right>$($clusterStatus.Name)</td>
-    <td style=color:$HTMLRubrikColor><b>$($value.'TotalCompliance')</b></td>
-    <td style=color:black;background:$HTMLGreenColor>$($value.'InCompliance')</td>
-    <td style=color:white;background:$HTMLRedColor>$($value.'OutCompliance')</td>
-    <td style=color:$HTMLRubrikColor><b>$($value.'ComplianceRate')</b></td>
+    <td style=text-align:right>$($workload.'Workload')</td>
+    <td style=color:$HTMLRubrikColor><b>$($workload.'Total Compliance')</b></td>
+    <td style=color:black;background:$HTMLGreenColor>$($workload.'In Compliance')</td>
+    <td style=color:white;background:$HTMLRedColor>$($workload.'Out Compliance')</td>
+    <td style=color:$HTMLRubrikColor><b>$($workload.'Compliance Rate')</b></td>
   </tr>
 "@
   $HTMLComplianceSummaryTableMiddle += $HTMLComplianceSummaryTableRow
@@ -1551,7 +1607,7 @@ $HTMLTaskSummaryTableStart = @"
       <th colspan="7">Daily Backup Task Summary</th>
     </tr>
     <tr>
-      <th>Cluster</th>
+      <th>Workload</th>
       <th>Total</th>
       <th>Succeeded</th>
       <th>Succeeded with Warnings</th>
@@ -1566,12 +1622,12 @@ $HTMLTaskSummaryTableEnd = @"
   <br>
 "@
 
-foreach ($clusterStatus in $clusterCountHash.GetEnumerator() | Sort-Object -Property 'name' )
+foreach ($workloadStatus in $workloadTaskHash.GetEnumerator() | Sort-Object -Property 'Name' )
 {
-  $value = $($clusterStatus.Value)
+  $value = $($workloadStatus.Value)
   $HTMLTaskSummaryTableRow = @"
   <tr>
-    <td style=text-align:right>$($clusterStatus.Name)</td>
+    <td style=text-align:right>$($workloadStatus.'Name')</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'TotalCount')</b></td>
     <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededCount')</td>
     <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededWithWarningsCount')</td>
@@ -1592,6 +1648,11 @@ $HTMLTaskSummaryTableMiddle += @"
     <td>$($clusterTotal.FailedCount)</td>
     <td>$($clusterTotal.CanceledCount)</td>
     <td>$($clusterTotal.SucceededRate)</td>
+  </tr>
+  <tr>
+  <p>Tasks: A task is an individual backup job. This may differ slightly from compliance depending on when a task was scheduled.
+        <br> There could be more or less daily backups for each object depending on the SLA backup frequency.
+  <br>
   </tr>
 "@
 
@@ -1752,7 +1813,7 @@ $HTMLTaskTable += $HTMLTaskTableStart + $HTMLTaskTableMiddle + $HTMLTaskTableEnd
 
 # Put all pieces of HTML together
 $HTMLReport = $chartHTML + $HTMLStart + $HTMLComplianceSummaryTable + $HTMLTaskSummaryTable + $HTMLOutComplianceTable + $HTMLTaskTable + $HTMLEnd
-# $HTMLReport = $chartHTML + $HTMLStart + $HTMLHeader + $HTMLComplianceSummaryTable + $HTMLTaskSummaryTable + $HTMLOutComplianceTable + $HTMLTaskTable + $HTMLEnd
+$HTMLReport = $chartHTML + $HTMLStart + $HTMLComplianceSummaryTable + $HTMLTaskSummaryTable + $HTMLEnd
 
 $HTMLReport | Out-File -FilePath $htmlOutput
 Write-Host "`nHTML report output to: $htmlOutput" -foregroundcolor green
