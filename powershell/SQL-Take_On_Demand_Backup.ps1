@@ -72,6 +72,12 @@ $secondsToCheck = 30
 # How long to timeout the script
 $timeoutSeconds = 5400
 
+if ($psversiontable.PSVersion.Major -lt 6) {
+  Write-Error "Script requires PowerShell 7+, current version: $psversiontable.PSVersion.Major"
+  Write-Error "Exiting..."
+  exit 500
+}
+
 if ($cluster -eq '' -or $sqlDbId -eq '' -or $slaID -eq '') {
   Write-Error "Missing a required parameter, exiting..."
   exit 200
