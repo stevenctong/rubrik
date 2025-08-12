@@ -2,11 +2,11 @@
 <#
 .SYNOPSIS
 This script perform a restore of an entire bucket or specific prefixes / files
-from a source S3 bucket to a targt S3 bucket.
+from a source S3 bucket to either a target S3 bucket or in place.
 
 .DESCRIPTION
 This script perform a restore of an entire bucket or specific prefixes / files
-from a source S3 bucket to a targt S3 bucket.
+from a source S3 bucket to either a target S3 bucket or in place.
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
@@ -34,6 +34,14 @@ Selects the snapshot right before the provided date and restores the entire sour
   -restoreType 'Export'
 Selects the snapshot right before the provided date and restores the comma separated
 list of prefixes / files to the target bucket.
+
+.EXAMPLE
+./Get-Restore-AWS_S3.ps1 -sourceAccount 'Account S' -sourceBucket 'Bucket S'
+  -targetAccount 'Account T' -targetBucket 'Bucket T'
+  -restoreDateUTC '2025-08-08 20:00' -restorePrefixFiles 'Source S/Files,Source S/Data'
+  -restoreType 'InPlaceRecovery'
+Selects the snapshot right before the provided date and restores the comma separated
+list of prefixes / files to restore in place.
 
 #>
 
@@ -669,30 +677,44 @@ Function Export-S3 {
 #   -restoreDateUTC '2025-08-08 20:00' -restorePrefixFiles 'rubrik-gaia-s3-native/Finance Department/,rubrik-gaia-s3-native/HR Department/' `
 #   -restoreType 'Export'
 
-# $restoreDateUTC = "2025-08-08 20:00"
-# $sourceAccount = 'Rubrik Gaia Native'
-# $sourceBucket = 'rubrik-gaia-s3-native'
+$restoreDateUTC = "2025-08-08 20:00"
+$sourceAccount = 'Rubrik Gaia Native'
+$sourceBucket = 'rubrik-gaia-s3-native'
 # $targetAccount = 'Rubrik Gaia Native'
 # $targetBucket = 'rubrik-gaia-s3-native-export-target'
 # $restorePrefixFiles = 'rubrik-gaia-s3-native/Finance Department/,rubrik-gaia-s3-native/HR Department/'
 
+if ([string]::IsNullOrWhiteSpace($sourceAccount) -or [string]::IsNullOrWhiteSpace($sourceBucket)) {
+    Write-Error "Source account and/or source bucket cannot be empty. Exiting..."
+    exit
+}
+
+if ([string]::IsNullOrWhiteSpace($restoreType)) {
+    Write-Error "RestoreType should either be Export or InPlaceRecovery. Exiting..."
+    exit
+}
+
+Write-Host ""
 Write-Host "Getting AWS S3 buckets..."
 $s3List = Get-AWSS3Buckets
 
 try {
-  $sourceWorkload = $s3List | Where { $_.name -eq $sourceBucket -and
+  $sourceBucketDetail = $s3List | Where { $_.name -eq $sourceBucket -and
     $_.awsNativeAccountDetails.name -eq $sourceAccount }
-  if ($sourceWorkload.count -eq 1) {
-    $sourceWorkloadID = $sourceWorkload.id
+  if ($sourceBucketDetail.count -eq 1) {
+    $sourceBucketId = $sourceBucketDetail.id
+    $sourceBucketArn = $sourceBucketDetail.cloudNativeId
   }
 } catch {
-  Write-Error "Error getting a unique source bucket ID..."
+  Write-Error "Error getting a unique source bucket ID, exiting..."
+  exit
 }
-Write-Host "Found Source Account ($sourceAccount), Source Bucket ($sourceBucket): $sourceWorkloadID"
+Write-Host "Found Source Account ($sourceAccount), Source Bucket ($sourceBucket)"
+Write-Host "With ID: $sourceBucketID, ARN: $sourceBucketArn"
 Write-Host ""
 
 Write-Host "Getting snapshots (recovery points)..."
-$sourceSnapshots = Get-S3Snapshots -bucketID $sourceWorkloadID
+$sourceSnapshots = Get-S3Snapshots -bucketID $sourceBucketID
 
 # Get the closest snapshot before this recovery date
 $restoreDateTimeUTC = [datetime]$restoreDateUTC
@@ -714,40 +736,50 @@ Write-Host "Found snapshot from: $($selectedSnapshot.date) right before the prov
 Write-Host "Snapshot ID: $sourceSnapshotID"
 Write-Host ""
 
+# Remains $null if no restore type is specified
+$destinationBucketArn = $null
+
+if ($restoreType -eq 'InPlaceRecovery') {
+  $destinationBucketArn = $sourceBucketArn
+}
+
 if ($restoreType -eq 'Export') {
   # Find target account ID and bucket ID
   $awsAccounts = Get-AWSAccounts
   $targetAccountID = $($awsAccounts | Where { $_.accountName -eq $targetAccount }).id
   $recoveryBuckets = Get-AWSRecoveryBuckets -accountID $targetAccountID
   $targetBucketDetail = $recoveryBuckets | Where { $_.name -eq $targetBucket }
-  # If doing a full bucket restore
-  if ($restoreBucket -eq $true) {
-    $exportInput = @{
-      "destinationBucketArn" = $($targetBucketDetail.arn)
-      "objectKeys" = @()
-      "shouldRecoverFullBucket" = $true
-      "snapshotId" = $sourceSnapshotID
-      "workloadId" = $sourceWorkloadID
-      "targetAwsAccountRubrikId" = $targetAcountID
-    }
-    Write-Host "Initiating export to restore entire bucket for source: $($sourceWorkload.Name)"
-    Write-Host "Target: $($targetBucketDetail.name), $($targetBucketDetail.region)"
-    $result = Export-S3 -ExportInput $exportInput
-    $result.data
+  $destinationBucketArn = $targetBucketDetail.arn
+}
+
+# If doing a full bucket restore
+if ($restoreBucket -eq $true) {
+  $exportInput = @{
+    "destinationBucketArn" = $destinationBucketArn
+    "objectKeys" = @()
+    "shouldRecoverFullBucket" = $true
+    "snapshotId" = $sourceSnapshotID
+    "workloadId" = $sourceBucketId
+    "targetAwsAccountRubrikId" = $targetAcountID
   }
-  if ($restorePrefixFiles -ne '') {
-    $restoreArray = $restorePrefixFiles -split ','
-    $exportInput = @{
-      "destinationBucketArn" = $($targetBucketDetail.arn)
-      "objectKeys" = $restoreArray
-      "shouldRecoverFullBucket" = $false
-      "snapshotId" = $sourceSnapshotID
-      "workloadId" = $sourceWorkloadID
-      "targetAwsAccountRubrikId" = $targetAccountID
-    }
-    Write-Host "Initiating export to restore: $restorePrefixFiles"
-    Write-Host "Target: $($targetBucketDetail.name), $($targetBucketDetail.region)"
-    $result = Export-S3 -ExportInput $exportInput
-    $result.data
+  Write-Host "Initiating export to restore entire bucket for source: $($sourceBucketDetail.Name)"
+  Write-Host "Target: $($targetBucketDetail.name), $($targetBucketDetail.region)"
+  $result = Export-S3 -ExportInput $exportInput
+  $result.data
+}
+
+if ($restorePrefixFiles -ne '') {
+  $restoreArray = $restorePrefixFiles -split ','
+  $exportInput = @{
+    "destinationBucketArn" = $destinationBucketArn
+    "objectKeys" = $restoreArray
+    "shouldRecoverFullBucket" = $false
+    "snapshotId" = $sourceSnapshotID
+    "workloadId" = $sourceBucketId
+    "targetAwsAccountRubrikId" = $targetAccountID
   }
+  Write-Host "Initiating export to restore: $restorePrefixFiles"
+  Write-Host "Target: $($targetBucketDetail.name), $($targetBucketDetail.region)"
+  $result = Export-S3 -ExportInput $exportInput
+  $result.data
 }
