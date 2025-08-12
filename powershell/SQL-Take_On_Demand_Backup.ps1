@@ -24,7 +24,7 @@ with a specific SLA ID.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 7/20/25
-Updated: 7/29/25
+Updated: 8/12/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a custom role
@@ -68,6 +68,9 @@ param (
 
 # How often to check the status of the backup job, in seconds
 $secondsToCheck = 30
+
+# How long to timeout the script
+$timeoutSeconds = 5400
 
 if ($cluster -eq '' -or $sqlDbId -eq '' -or $slaID -eq '') {
   Write-Error "Missing a required parameter, exiting..."
@@ -168,15 +171,18 @@ $resultList = @()
 $count = 0
 $total = $sqlDbId.count
 foreach ($database in $sqlDbId) {
+  $getSqlDetailsUrl = $baseUrl + "/v1/mssql/db/$($sqlDbId[$count])"
   $takeOnDemandUrl = $baseUrl + "/v1/mssql/db/$($sqlDbId[$count])/snapshot"
   $takeOnDemandBody = @{
       slaId = $slaID[$count]
   }
   try {
     if ($PSVersiontable.PSVersion.Major -gt 5) {
+      $sqlDetail = Invoke-RestMethod -Uri $getSqlDetailsUrl -Method GET -Headers $headers -SkipCertificateCheck
       $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
         -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers -SkipCertificateCheck
     } else {
+      $sqlDetail = Invoke-RestMethod -Uri $getSqlDetailsUrl -Method GET -Headers $headers
       $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
         -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers
     }
@@ -189,6 +195,9 @@ foreach ($database in $sqlDbId) {
     "sqlID" = $sqlDbId[$count]
     "href" = $result.links.href
     "status" = ''
+    "name" = $sqlDetail.name
+    "instance" = $sqlDetail.instanceName
+    "host" = $sqlDetail.rootProperties.rootName
   }
   $resultList += $resultDetail
   $count += 1
@@ -196,6 +205,9 @@ foreach ($database in $sqlDbId) {
 
 # Job states where the job is still running
 $runningStates = @('QUEUED','ACQUIRING','RUNNING','FINISHING','TO_CANCEL')
+
+$totalCount = $timeoutSeconds / $secondsToCheck
+$currentCount = 0
 
 # Wait until task completes and return state
 do {
@@ -209,10 +221,16 @@ do {
       $req = Invoke-RestMethod -Uri $db.href -Method Get -Headers $headers
     }
     $db.status = $req.status
-    Write-Host "Current status for $($db.sqlID): $($req.status), checking again in $secondsToCheck seconds..."
+    Write-Host "Current status for $($db.name) / $($db.host): $($req.status), checking again in $secondsToCheck seconds..."
+    if ($runningStates -contains $req.status) {
+      $reqState = $true
+    }
   }
-  if ($runningStates -contains $req.status) {
-    $reqState = $true
+  # Check if we are greater than the timeout, if so exit
+  $currentCount += 1
+  if ($currentCount -gt $totalCount) {
+    Write-Error "Timeout of $timeoutSeconds seconds reached, exiting..."
+    exit 300
   }
   if ($reqState) { Start-Sleep -Seconds $secondsToCheck }
 } while ( $reqState )
@@ -220,12 +238,14 @@ do {
 $fullySuccesful = $true
 foreach ($res in $resultList) {
   if ($res.status -match 'SUCC') {
-    Write-Host "Successful On Demand Backup for: $($res.sqlID)"
+    Write-Host "Successful On Demand Backup for: $($db.name) / $($db.host)"
   } elseif ($res.status -match 'CANCEL') {
-    Write-Host "Canceled On Demand Backup for: $($res.sqlID)"
-  }
-  else {
-    Write-Error "Failed On Demand Backup for: $($res.sqlID)"
+    Write-Host "Canceled On Demand Backup for: $($db.name) / $($db.host)"
+  } elseif ($res.status -match 'FAIL') {
+    Write-Error "Failed On Demand Backup for: $($db.name) / $($db.host)"
+    $fullySuccesful = $false
+  } else {
+    Write-Error "Non-terminal state for: $($db.name) / $($db.host), $($res.status)"
     $fullySuccesful = $false
   }
 }
