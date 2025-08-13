@@ -241,7 +241,7 @@ do {
   if ($reqState) { Start-Sleep -Seconds $secondsToCheck }
 } while ( $reqState )
 
-$fullySuccesful = $true
+$fullySuccessful = $true
 foreach ($res in $resultList) {
   if ($res.status -match 'SUCC') {
     Write-Host "Successful On Demand Backup for: $($db.name) / $($db.host)"
@@ -249,10 +249,10 @@ foreach ($res in $resultList) {
     Write-Host "Canceled On Demand Backup for: $($db.name) / $($db.host)"
   } elseif ($res.status -match 'FAIL') {
     Write-Error "Failed On Demand Backup for: $($db.name) / $($db.host)"
-    $fullySuccesful = $false
+    $fullySuccessful = $false
   } else {
     Write-Error "Non-terminal state for: $($db.name) / $($db.host), $($res.status)"
-    $fullySuccesful = $false
+    $fullySuccessful = $false
   }
 }
 
