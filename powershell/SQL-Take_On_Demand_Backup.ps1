@@ -177,6 +177,7 @@ $resultList = @()
 $count = 0
 $total = $sqlDbId.count
 foreach ($database in $sqlDbId) {
+  Write-Host "Getting info for: $sqlDbId[$count]"
   $getSqlDetailsUrl = $baseUrl + "/v1/mssql/db/$($sqlDbId[$count])"
   $takeOnDemandUrl = $baseUrl + "/v1/mssql/db/$($sqlDbId[$count])/snapshot"
   $takeOnDemandBody = @{
@@ -185,6 +186,7 @@ foreach ($database in $sqlDbId) {
   try {
     if ($PSVersiontable.PSVersion.Major -gt 5) {
       $sqlDetail = Invoke-RestMethod -Uri $getSqlDetailsUrl -Method GET -Headers $headers -SkipCertificateCheck
+      Write-Host "Found: $($sqlDetail.name) on $($sqlDetail.rootProperties.rootName)"
       $result = Invoke-RestMethod -Uri $takeOnDemandUrl -Method POST `
         -Body $($takeOnDemandBody | ConvertTo-JSON -Depth 100) -Headers $headers -SkipCertificateCheck
     } else {
