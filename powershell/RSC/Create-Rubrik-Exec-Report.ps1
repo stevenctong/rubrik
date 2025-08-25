@@ -22,7 +22,7 @@ This script requires PowerShell v7+.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/1/25
-Updated: 8/10/25
+Updated: 8/22/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -79,6 +79,8 @@ if ($configFile -ne '') {
   exit
 }
 
+$dcProtected = 3
+
 $date = Get-Date
 $dateString = $date.ToString("yyyy-MM-dd_HHmm")
 $utcDate = $date.ToUniversalTime()
@@ -94,16 +96,11 @@ $csvReportCapacityOverTime = Join-Path $csvReportDir "$csvReportCapacityOverTime
 $emailSubject = $emailSubject + " - $($date.ToString("yyyy-MM-dd HH:MM"))"
 
 # Variables used for testing - ignore
-$useSaved = $false
-# $savedCompliance = './csvReports/rubrik_compliance_report-2025-07-02_0439.csv'
-# $savedTasks = './csvReports/rubrik_task_report-2025-07-02_0439.csv'
-# $savedCapacity = './csvReports/rubrik_capacity_report-2025-07-02_0551.csv'
-# $savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-07-02_0726.csv'
-
-$savedCompliance = './csvReports/rubrik_compliance_report-2025-08-03_0800.csv'
-$savedTasks = './csvReports/rubrik_task_report-2025-08-03_0800.csv'
-$savedCapacity = './csvReports/rubrik_capacity_report-2025-08-03_0800.csv'
-$savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-08-03_0800.csv'
+$useSaved = $true
+$savedCompliance = './csvReports/rubrik_compliance_report-2025-07-31_0800.csv'
+$savedTasks = './csvReports/rubrik_task_report-2025-07-31_0800.csv'
+$savedCapacity = './csvReports/rubrik_capacity_report-2025-07-31_0800.csv'
+$savedCapacityOverTime = './csvReports/rubrik_capacity_over_time_report-2025-07-31_0800.csv'
 
 ### End Variables section
 
@@ -575,9 +572,11 @@ Function Export-MultiLineChart {
             $Series.Color = $defaultColors[$s % $defaultColors.Count]
         }
         # Handle points in each series
-        for ($i = 0; $i -lt $XValues.Count; $i++){
+        for ($i = 0; $i -lt $XValues.Count; $i++) {
             $point = New-Object System.Windows.Forms.DataVisualization.Charting.DataPoint
-            $point.AxisLabel = $XValues[$i]
+            # Explicitly set XValue to maintain order
+            $point.XValue = $i
+            $point.AxisLabel = $XValues[$i]  # Assign the corresponding label to the X-axis
             if ([double]::IsNaN($YValueSets[$s][$i])) {
                 $point.IsEmpty = $true
             } else {
@@ -857,8 +856,6 @@ foreach ($workload in $workloadTaskList)
   $workloadTaskHash.add($($workload),$workloadObj)
 }
 
-
-
 # Get unique Clusters
 $clusterList = $rubrikTasks | Select-Object 'Cluster Name' -unique -expandProperty 'Cluster Name'
 
@@ -960,7 +957,6 @@ foreach ($workloadStatus in $workloadTaskHash.GetEnumerator())
     ($value.SucceededCount + $value.SucceededWithWarningsCount + $value.FailedCount) * 100, 1)
 }
 
-
 # Calculate succeeded rate for clusters
 foreach ($clusterStatus in $clusterCountHash.GetEnumerator())
 {
@@ -1059,6 +1055,13 @@ foreach ($workload in $workloadList)
 {
   $workloadInCompliance = @($objectsInCompliance | Where { $_.'Object Type' -match $workload }).count
   $workloadOutCompliance = @($objectsOutCompliance | Where { $_.'Object Type' -match $workload }).count
+  # Handle AD separately
+  if ($workload -eq 'Active Directory Domain Controller') {
+    $workloadOutCompliance = $dcProtected - $workloadInCompliance
+    if ($workloadOutCompliance -lt 0) {
+      $workloadOutCompliance = 0
+    }
+  }
   $workloadTotalCompliance = $workloadInCompliance + $workloadOutCompliance
   if ($workloadTotalCompliance -gt 0) {
     $workloadComplianceRate = [math]::round($workloadInCompliance / $workloadTotalCompliance * 100, 1)
@@ -1133,36 +1136,55 @@ Export-PieChart -ChartTitle "Daily Backup Compliance (%)" `
                 -DataLabels @("In Compliance","Out Of Compliance") `
                 -OutputPath "$chartsDir\DailyBackupCompliance.jpg"
 
+# Compliance categories should only contain the workloads
+$excludeHeaders = @('ComplianceRate', 'InCompliance', 'OutCompliance', 'TotalCompliance', 'Date')
+$complianceCategories = $complianceHeaders | Where-Object { $excludeHeaders -notcontains $_ } | sort-Object
+
+# For each workload, will hold the values
+$complianceHashtable = @{}
+
+# Loop through complianceCategories and populate the hashtable
+foreach ($category in $complianceCategories) {
+  # Create an empty array for each category
+  $complianceHashtable[$category] = @()
+}
+
+
+
 # Create line chart of last 30 days
 $values = @()
 $days = (29..0 | ForEach-Object { $date.AddDays(-$_).ToString('MM/dd/yyyy') })
 foreach ($day in $days) {
+  $workloadCount = 0
   if ($complianceData.Date -contains $day) {
+    # Add the compliance rate to the array in the position of the current date
     $dataToGet = $complianceData | Where { $_.date -eq $day }
     $values += $dataToGet.ComplianceRate
-    $compByWorkloadArray = @()
-    $count = 0
-    # Loop through to build compliance by workload data
-    foreach ($h in $complianceHeaders) {
-      if (-not $compByWorkloadArray[$count]) {
-          # Write-Host "Initializing $count as a nested array"
-          if ($($dataToGet.$h -ne $null)) {
-            $compArray = @([double]::$dataToGet.$h)
-          } else {
-            $compArray = @([double]::NaN)
-          }
-          $compByWorkloadArray += $compArray
-      }
-      if ($($dataToGet.$h -ne $null)) {
-        $compByWorkloadArray[$count] += [double]::$dataToGet.$h
+    # Work on building out compliance by workload table
+    foreach ($h in $complianceCategories) {
+      if ($dataToGet.$h -ne $null) {
+        $complianceHashtable[$h] += $dataToGet.$h
       } else {
-        $compByWorkloadArray[$count] += [double]::NaN
+        $complianceHashtable[$h] += [double]::NaN
       }
-      $count += 1
+      $workloadCount += 1
     }
   } else {
     $values += [double]::NaN
+    # Loop through to build compliance by workload data, null values
+    foreach ($h in $complianceCategories) {
+      $complianceHashtable[$h] += [double]::NaN
+      $workloadCount += 1
+    }
   }
+}
+
+
+# Holds the values per day, per workload
+$complianceLines = [System.Collections.ArrayList]::new()  # Create a new ArrayList
+# Loop through $complianceCategories and add the arrays from $complianceHashTable
+foreach ($h in $complianceCategories) {
+  $complianceLines.Add($complianceHashTable[$h]) | Out-Null  # Use .Add() to append items
 }
 
 Export-LineChart `
@@ -1174,15 +1196,14 @@ Export-LineChart `
     -OutputPath "$chartsDir\BackupComplianceLast30Days.jpg"
 
 
-Export-MultiLineChart -ChartTitle "Backup Compliance (%) - Last 30 Days by Workload" `
+Export-MultiLineChart -ChartTitle "Backup Compliance - Last 30 Days by Workload" `
                      -XAxisTitle "Date" `
                      -YAxisTitle "Capacity (TB)" `
                      -XValues $days `
                      -YValueSets $complianceLines `
                      -SeriesNames $complianceCategories `
-                     -OutputPath "$chartsDir\CapacityLast30DaysByWorkload.jpg"
-
-
+                     -chartWidthHeight @(1000,300)`
+                     -OutputPath "$chartsDir\BackupComplianceLast30DaysByWorkload.jpg"
 
 # If we want to build list with objects also out of replication and archival compliance
 if ($allCompliance = $true) {
@@ -1372,21 +1393,30 @@ foreach ($obj in $rubrikCapacityOverTime) {
 #     -chartWidthHeight @(600, 300) `
 #     -OutputPath "$chartsDir\CapacityLast12Months.jpg"
 
-$capacityMonths = @()
+# $capacityMonths = @()
 $capacityProvisioned = @()
 $capacityLocalStored = @()
 $capacityArchiveStored = @()
 $capacityReplicaStored = @()
 $capacityCategories = @('FETB Provisioned', 'Local Stored', 'Archival', 'Replica')
 
-foreach ($capMonth in $capacityOverTimeHash.GetEnumerator())
-{
-  $capacityMonths += $capMonth.Name
-  $capacityProvisioned += [int]($capMonth.value.provisionedSize / 1000000000000)
-  $capacityLocalStored += [int]($capMonth.value.localStored / 1000000000000)
-  $capacityArchiveStored += [int]($capMonth.value.archiveStored / 1000000000000)
-  $capacityReplicaStored += [int]($capMonth.value.replicaStored / 1000000000000)
+$reverseCapacityDates = $capacityDates | Sort-Object -Descending
+
+foreach ($capMonth in $reverseCapacityDates) {
+  $capacityProvisioned += [int]($capacityOverTimeHash[$capMonth].provisionedSize / 1000000000000)
+  $capacityLocalStored += [int]($capacityOverTimeHash[$capMonth].localStored / 1000000000000)
+  $capacityArchiveStored += [int]($capacityOverTimeHash[$capMonth].archiveStored / 1000000000000)
+  $capacityReplicaStored += [int]($capacityOverTimeHash[$capMonth].replicaStored / 1000000000000)
 }
+
+# foreach ($capMonth in $capacityOverTimeHash.GetEnumerator())
+# {
+#   $capacityMonths += $capMonth.Name
+#   $capacityProvisioned += [int]($capMonth.value.provisionedSize / 1000000000000)
+#   $capacityLocalStored += [int]($capMonth.value.localStored / 1000000000000)
+#   $capacityArchiveStored += [int]($capMonth.value.archiveStored / 1000000000000)
+#   $capacityReplicaStored += [int]($capMonth.value.replicaStored / 1000000000000)
+# }
 
 $capacityLines = @($capacityProvisioned, $capacityLocalStored,
   $capacityArchiveStored, $capacityReplicaStored)
@@ -1394,7 +1424,7 @@ $capacityLines = @($capacityProvisioned, $capacityLocalStored,
 Export-MultiLineChart -ChartTitle "Capacity - Last 12 Months" `
                      -XAxisTitle "Date" `
                      -YAxisTitle "Capacity (TB)" `
-                     -XValues $capacityMonths `
+                     -XValues $reverseCapacityDates `
                      -YValueSets $capacityLines `
                      -SeriesNames $capacityCategories `
                      -OutputPath "$chartsDir\CapacityLast12Months.jpg"
@@ -1457,6 +1487,11 @@ $chartHTML = @"
     <div class="charts-container">
         <div>
             <img src="$chartsDir\BackupComplianceByWorkload.jpg" alt="Compliance by Workload" width="600" height="300"/>
+        </div>
+    </div>
+    <div class="charts-container">
+        <div>
+            <img src="$chartsDir\BackupComplianceLast30DaysByWorkload.jpg" alt="Compliance by Workload Last 30 Days" width="1000" height="300"/>
         </div>
     </div>
     <p>Daily Compliance: SLA Protected Objects are "Out-Of-Compliance" if they Failed or Missed a backup that should have taken on that date.
