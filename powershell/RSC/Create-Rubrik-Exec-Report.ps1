@@ -22,7 +22,7 @@ This script requires PowerShell v7+.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/1/25
-Updated: 8/22/25
+Updated: 10/18/25
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -660,6 +660,7 @@ Function Export-BarChart {
     } else {
       $series.IsValueShownAsLabel = $false
     }
+    $series.LabelFormat = "N1"
     $series.Font = New-Object System.Drawing.Font("Arial", 10, [System.Drawing.FontStyle]::Bold)
     # Translate HTML (hex) color explicitly for uniform bar color
     $customBarColor = [System.Drawing.ColorTranslator]::FromHtml($BarColorHtml)
@@ -773,6 +774,7 @@ Function Export-GroupedBarChart {
         $series = New-Object System.Windows.Forms.DataVisualization.Charting.Series($SeriesNames[$s])
         $series.ChartType = [System.Windows.Forms.DataVisualization.Charting.SeriesChartType]::Column
         $series.IsValueShownAsLabel = $IsValueShownAsLabel
+        $series.LabelFormat = "N1"
         $series.Font = New-Object System.Drawing.Font("Arial",9,[System.Drawing.FontStyle]::Regular)
         # Assign explicit color or default to the Series directly:
         if ($BarColorsHtml -and $BarColorsHtml[$s]){
@@ -844,6 +846,7 @@ foreach ($workload in $workloadTaskList)
   $workloadObj = [PSCustomObject] @{
     "SucceededCount" = 0
     "SucceededWithWarningsCount" = 0
+    "TotalSucceededCount" = 0
     "CanceledCount" = 0
     "FailedCount" = 0
     "TotalCount" = 0
@@ -911,9 +914,11 @@ foreach ($i in $rubrikTasks)
   if ($i.'Task Status' -contains 'Succeeded') {
     $clusterCountHash[$i.'Cluster Name'].'SucceededCount' += 1
     $workloadTaskHash[$i.'Object Type'].'SucceededCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'TotalSucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Succeeded with Warnings') {
     $clusterCountHash[$i.'Cluster Name'].'SucceededWithWarningsCount' += 1
     $workloadTaskHash[$i.'Object Type'].'SucceededWithWarningsCount' += 1
+    $workloadTaskHash[$i.'Object Type'].'TotalSucceededCount' += 1
   } elseif ($i.'Task Status' -match 'Failed') {
     $clusterCountHash[$i.'Cluster Name'].'FailedCount' += 1
     $workloadTaskHash[$i.'Object Type'].'FailedCount' += 1
@@ -1084,6 +1089,7 @@ Export-BarChart -ChartTitle 'Backup Compliance - By Workload' `
                 -YAxisMaximum 100 `
                 -chartWidthHeight @(600, 300) `
                 -Categories $barCompWorkloadCategories `
+                -IsValueShownAsLabel $true `
                 -Values $barCompWorkloadValues `
                 -OutputPath "$chartsDir\BackupComplianceByWorkload.jpg"
 
@@ -1255,6 +1261,25 @@ $totalLocalStored = 0
 $totalArchiveStored = 0
 $totalReplicaStored = 0
 
+
+# Get unique cluster names
+$capacityClusters = $rubrikCapacityOverTime | Select-Object 'Cluster Name' -unique -expandProperty 'Cluster Name'
+
+# Create a hash table for the clusters to store the sum of the capacities
+$clusterCapacityHash = @{}
+foreach ($cluster in $capacityClusters)
+{
+  $capacityObj = [PSCustomObject] @{
+    "ProvisionedSize" = [double]0
+    "UsedSize" = [double]0
+    "LocalStored" = [double]0
+    "ArchiveStored" = [double]0
+    "ReplicaStored" = [double]0
+  }
+  $clusterCapacityHash.add($($cluster),$capacityObj)
+}
+
+
 $rubrikCapacity = $rubrikCapacity | Where { $_.'SLA Domain' -ne 'Do Not Protect' -and
   $_.'SLA Domain' -ne 'Unprotected' -and $_.'SLA Domain' -ne ''}
 $rubrikCapacityCount = $rubrikCapacity.count
@@ -1263,25 +1288,31 @@ Write-Host "Found $rubrikCapacityCount Protected Objects, calcuating capacities.
 
 foreach ($obj in $rubrikCapacity) {
   $workloadType = $obj.'Object Type'
+  $clusterName = $obj.'Cluster'
   if ($obj.'Provisioned Size' -ne 'N/A') {
     $totalProvisionedSize += [double]$obj.'Provisioned Size'
     $workloadCapacityHash[$workloadType].ProvisionedSize += [double]$obj.'Provisioned Size'
+    $clusterCapacityHash[$clusterName].ProvisionedSize += [double]$obj.'Provisioned Size'
   }
   if ($obj.'Used Size' -ne 'N/A') {
     $totalUsedSize += [double]$obj.'Used Size'
     $workloadCapacityHash[$workloadType].UsedSize += [double]$obj.'Used Size'
+    $clusterCapacityHash[$clusterName].UsedSize += [double]$obj.'Used Size'
   }
   if ($obj.'Local Storage' -ne 'N/A') {
     $totalLocalStored += [double]$obj.'Local Storage'
     $workloadCapacityHash[$workloadType].LocalStored += [double]$obj.'Local Storage'
+    $clusterCapacityHash[$clusterName].LocalStored += [double]$obj.'Local Storage'
   }
   if ($obj.'Archival Storage' -ne 'N/A') {
     $totalArchiveStored += [double]$obj.'Archival Storage'
     $workloadCapacityHash[$workloadType].ArchiveStored += [double]$obj.'Archival Storage'
+    $clusterCapacityHash[$clusterName].ArchiveStored += [double]$obj.'Archival Storage'
   }
   if ($obj.'Replica Storage' -ne 'N/A') {
     $totalReplicaStored += [double]$obj.'Replica Storage'
     $workloadCapacityHash[$workloadType].ReplicaStored += [double]$obj.'Replica Storage'
+    $clusterCapacityHash[$clusterName].ReplicaStored += [double]$obj.'Replica Storage'
   }
 }
 
@@ -1303,6 +1334,7 @@ Export-BarChart -ChartTitle 'Capacity Under Protection' `
                 -Values $capacityValues `
                 -OutputPath "$chartsDir\TotalCapacities.jpg"
 
+## Create bar chart by workload
 
 $groupedCapacityWorkloads = @()
 $groupedProvisionedSize = @()
@@ -1339,6 +1371,54 @@ Export-GroupedBarChart `
     -IsValueShownAsLabel $false `
     -OutputPath "$chartsDir\CapacityByWorkload.jpg"
 
+
+## Create bar chart by cluster
+
+# $capacityClusters
+# $byClusterCapacityCluster = @()
+$byClusterProvisionedSize = @()
+$byClusterLocalStored = @()
+$byClusterArchival = @()
+$byClusterReplica = @()
+
+foreach ($clusterCap in $capacityClusters) {
+  $clusterCapValue = $clusterCapacityHash.$clusterCap
+  $byClusterProvisionedSize += [math]::Round($clusterCapValue.provisionedSize / 1000000000000, 2)
+  $byClusterLocalStored += [math]::Round($clusterCapValue.LocalStored / 1000000000000, 2)
+  $byClusterArchival += [math]::Round($clusterCapValue.ArchiveStored / 1000000000000, 2)
+  $byClusterReplica +=  [math]::Round($clusterCapValue.ReplicaStored / 1000000000000, 2)
+}
+
+# foreach ($clusterCap in $clusterCapacityHash.GetEnumerator()) {
+#   if ( $clusterCap.value.localStored -gt 0 -or
+#         $clusterCap.value.archiveStored -gt 0 -or
+#         $clusterCap.value.replicaStored -gt 0) {
+#     $byClusterCapacityCluster += $clusterCap.name
+#     $byClusterProvisionedSize += [math]::Round($clusterCap.value.provisionedSize / 1000000000000, 2)
+#     $byClusterLocalStored += [math]::Round($clusterCap.value.LocalStored / 1000000000000, 2)
+#     $byClusterArchival += [math]::Round($clusterCap.value.ArchiveStored / 1000000000000, 2)
+#     $byClusterReplica +=  [math]::Round($clusterCap.value.ReplicaStored / 1000000000000, 2)
+#   }
+# }
+
+$byClusterValues = @($byClusterProvisionedSize, $byClusterLocalStored,
+  $byClusterArchival, $byClusterReplica)
+
+$byCapacityLabels = @('FETB Provisioned', 'Local Stored', 'Archival', 'Replica')
+
+# Create multi-bar grouped chart
+Export-GroupedBarChart `
+    -ChartTitle "Capacity by Cluster" `
+    -XAxisTitle "Cluster" `
+    -YAxisTitle "Size (TB)" `
+    -Categories $capacityClusters `
+    -Values $byClusterValues `
+    -SeriesNames $byCapacityLabels `
+    -chartWidthHeight @(1000,300) `
+    -IsValueShownAsLabel $false `
+    -OutputPath "$chartsDir\CapacityByCluster.jpg"
+
+
 # Capacity over Time - Get unique monthly dates
 $capacityDates = $rubrikCapacityOverTime | Select-Object 'Time' -unique -expandProperty 'Time'
 
@@ -1356,23 +1436,31 @@ foreach ($month in $capacityDates)
   $capacityOverTimeHash.add($($month),$capacityObj)
 }
 
+# Loop through each object and add to the monthly and cluster hash tables
 foreach ($obj in $rubrikCapacityOverTime) {
   if ($obj.'Provisioned Size' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'provisionedSize' += [double]$obj.'Provisioned Size'
+    # $capacityClustersHash[$obj.'Cluster Name'].'provisionedSize' += [double]$obj.'Provisioned Size'
   }
   if ($obj.'Used Size' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'usedSize' += [double]$obj.'Used Size'
+    # $capacityClustersHash[$obj.'Cluster Name'].'usedSize' += [double]$obj.'Used Size'
   }
   if ($obj.'Local Storage' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'localStored' += [double]$obj.'Local Storage'
+    # $capacityClustersHash[$obj.'Cluster Name'].'localStored' += [double]$obj.'Local Storage'
   }
   if ($obj.'Archival Storage' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'archiveStored' += [double]$obj.'Archive Storage'
+    # $capacityClustersHash[$obj.'Cluster Name'].'archiveStored' += [double]$obj.'Archive Storage'
   }
   if ($obj.'Replica Storage' -ne 'N/A') {
     $capacityOverTimeHash[$obj.Time].'replicaStored' += [double]$obj.'Replica Storage'
+    # $capacityClustersHash[$obj.'Cluster Name'].'replicaStored' += [double]$obj.'Replica Storage'
   }
 }
+
+## Create multi-line chart for capacity per month
 
 # Initialze arrays for creating capacity over time line charts
 # $capacityOverTimeCategories = @()
@@ -1427,7 +1515,34 @@ Export-MultiLineChart -ChartTitle "Capacity - Last 12 Months" `
                      -XValues $reverseCapacityDates `
                      -YValueSets $capacityLines `
                      -SeriesNames $capacityCategories `
-                     -OutputPath "$chartsDir\CapacityLast12Months.jpg"
+                     -OutputPath "$chartsDir\CapacityByMonthLast12Months.jpg"
+
+## Create multi-line chart for capacity per cluster
+
+# $capacityClusterProvisioned = @()
+# $capacityClusterLocalStored = @()
+# $capacityClusterArchiveStored = @()
+# $capacityClusterReplicaStored = @()
+# $capacityClusterCategories = @('FETB Provisioned', 'Local Stored', 'Archival', 'Replica')
+#
+# foreach ($capCluster in $capacityClusters) {
+#  $capacityClusterProvisioned += [int]($capacityClustersHash[$capCluster].provisionedSize / 1000000000000)
+#  $capacityClusterLocalStored += [int]($capacityClustersHash[$capCluster].localStored / 1000000000000)
+#  $capacityClusterArchiveStored += [int]($capacityClustersHash[$capCluster].archiveStored / 1000000000000)
+#  $capacityClusterReplicaStored += [int]($capacityClustersHash[$capCluster].replicaStored / 1000000000000)
+# }
+#
+# $capacityClusterLines = @($capacityClusterProvisioned, $capacityClusterLocalStored,
+#  $capacityClusterArchiveStored, $capacityClusterReplicaStored)
+#
+# Export-MultiLineChart -ChartTitle "Capacity - By Cluster" `
+#                     -XAxisTitle "Date" `
+#                     -YAxisTitle "Capacity (TB)" `
+#                     -XValues $capacityClusters `
+#                     -YValueSets $capacityClusterLines `
+#                     -SeriesNames $capacityCategories `
+#                     -OutputPath "$chartsDir\CapacityByClusterLast12Months.jpg"
+
 
 Write-Host "Creating HTML tables" -foregroundcolor green
 
@@ -1502,7 +1617,13 @@ $chartHTML = @"
             <img src="$chartsDir\TotalCapacities.jpg" alt="Capacities" width="400" height="300"/>
         </div>
         <div>
-            <img src="$chartsDir\CapacityLast12Months.jpg" alt="Capacities Last 12 Months" width="600" height="300"/>
+            <img src="$chartsDir\CapacityByMonthLast12Months.jpg" alt="Capacities Last 12 Months" width="600" height="300"/>
+        </div>
+    </div>
+    <br>
+    <div class="charts-container">
+        <div>
+            <img src="$chartsDir\CapacityByCluster.jpg" alt="Capacity by Cluster" width="1000" height="300"/>
         </div>
     </div>
     <br>
@@ -1519,6 +1640,7 @@ $chartHTML = @"
 $HTMLHighlightColor="#FFC000"
 $HTMLRubrikColor="#00B2A9"
 $HTMLRedColor="#FF3355"
+$HTMLLightGreenColor="#6FFA5B"
 $HTMLGreenColor="#2ED51A"
 
 $HTMLStart = @"
@@ -1646,6 +1768,7 @@ $HTMLTaskSummaryTableStart = @"
       <th>Total</th>
       <th>Succeeded</th>
       <th>Succeeded with Warnings</th>
+      <th>Total Succeeded</th>
       <th>Failed</th>
       <th>Canceled</th>
       <th>Succeeded Rate</th>
@@ -1664,8 +1787,9 @@ foreach ($workloadStatus in $workloadTaskHash.GetEnumerator() | Sort-Object -Pro
   <tr>
     <td style=text-align:right>$($workloadStatus.'Name')</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'TotalCount')</b></td>
-    <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededCount')</td>
-    <td style=color:black;background:$HTMLGreenColor>$($value.'SucceededWithWarningsCount')</td>
+    <td style=color:black;background:$HTMLLightGreenColor>$($value.'SucceededCount')</td>
+    <td style=color:black;background:$HTMLLightGreenColor>$($value.'SucceededWithWarningsCount')</td>
+    <td style=color:black;background:$HTMLGreenColor>$($value.'TotalSucceededCount')</td>
     <td style=color:white;background:$HTMLRedColor>$($value.'FailedCount')</td>
     <td style=color:black;background:yellow>$($value.'CanceledCount')</td>
     <td style=color:$HTMLRubrikColor><b>$($value.'SucceededRate')</b></td>
@@ -1680,6 +1804,7 @@ $HTMLTaskSummaryTableMiddle += @"
     <td>$($clusterTotal.TotalCount)</td>
     <td>$($clusterTotal.SucceededCount)</td>
     <td>$($clusterTotal.SucceededWithWarningsCount)</td>
+    <td>$($clusterTotal.SucceededCount + $clusterTotal.SucceededWithWarningsCount)</td>
     <td>$($clusterTotal.FailedCount)</td>
     <td>$($clusterTotal.CanceledCount)</td>
     <td>$($clusterTotal.SucceededRate)</td>
