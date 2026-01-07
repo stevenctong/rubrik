@@ -59,70 +59,70 @@ if ($PSVersionTable.PSVersion.Major -le 5) {
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
-# Write-Host "Attempting to read the Service Account file: $serviceAccountPath"
-# try {
-#   $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
-# } catch {
-#   $errorMessage = $_.Exception | Out-String
-#   if($errorMessage.Contains('because it does not exist')) {
-#     throw "The Service Account JSON secret file was not found. Ensure the file is location at $serviceAccountPath."
-#   }
-#   throw $_.Exception
-# }
+Write-Host "Attempting to read the Service Account file: $serviceAccountPath"
+try {
+  $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
+} catch {
+  $errorMessage = $_.Exception | Out-String
+  if($errorMessage.Contains('because it does not exist')) {
+    throw "The Service Account JSON secret file was not found. Ensure the file is location at $serviceAccountPath."
+  }
+  throw $_.Exception
+}
 
-# Write-Debug -Message "Determing if the Service Account file contains all required variables."
-# $missingServiceAccount = @()
-# if ($serviceAccountFile.client_id -eq $null) {
-#   $missingServiceAccount += "'client_id'"
-# }
+Write-Debug -Message "Determing if the Service Account file contains all required variables."
+$missingServiceAccount = @()
+if ($serviceAccountFile.client_id -eq $null) {
+  $missingServiceAccount += "'client_id'"
+}
 
-# if ($serviceAccountFile.client_secret -eq $null) {
-#   $missingServiceAccount += "'client_secret'"
-# }
+if ($serviceAccountFile.client_secret -eq $null) {
+  $missingServiceAccount += "'client_secret'"
+}
 
-# if ($serviceAccountFile.access_token_uri -eq $null) {
-#   $missingServiceAccount += "'access_token_uri'"
-# }
+if ($serviceAccountFile.access_token_uri -eq $null) {
+  $missingServiceAccount += "'access_token_uri'"
+}
 
-# if ($missingServiceAccount.count -gt 0){
-#   throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
-# }
+if ($missingServiceAccount.count -gt 0){
+  throw "The Service Account JSON secret file is missing the required paramaters: $missingServiceAccount"
+}
 
-# $headers = @{
-#   'Content-Type' = 'application/json';
-#   'Accept' = 'application/json';
-# }
+$headers = @{
+  'Content-Type' = 'application/json';
+  'Accept' = 'application/json';
+}
 
-# $payload = @{
-#   grant_type = "client_credentials";
-#   client_id = $serviceAccountFile.client_id;
-#   client_secret = $serviceAccountFile.client_secret
-# }
+$payload = @{
+  grant_type = "client_credentials";
+  client_id = $serviceAccountFile.client_id;
+  client_secret = $serviceAccountFile.client_secret
+}
 
-# $rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
+$rubrikURL = $serviceAccountFile.access_token_uri.Replace("/api/client_token", "")
 
-# Write-Host "Connecting to RSC to get an auth token: $rubrikURL"
-# $response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+Write-Host "Connecting to RSC to get an auth token: $rubrikURL"
+$response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
 
-# $global:rubrikConnection = @{
-#   accessToken = $response.access_token;
-#   rubrikURL = $rubrikURL
-# }
+$global:rubrikConnection = @{
+  accessToken = $response.access_token;
+  rubrikURL = $rubrikURL
+}
 
-# if ($null -eq $rubrikConnection.accessToken) {
-#   throw "Error getting access token, exiting..."
-# }
+if ($null -eq $rubrikConnection.accessToken) {
+  throw "Error getting access token, exiting..."
+}
 
-# # Rubrik GraphQL API URL
-# $endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
+# Rubrik GraphQL API URL
+$endpoint = $rubrikConnection.rubrikURL + "/api/graphql"
 
-# $headers = @{
-#   'Content-Type'  = 'application/json';
-#   'Accept' = 'application/json';
-#   'Authorization' = $('Bearer ' + $rubrikConnection.accessToken);
-# }
+$headers = @{
+  'Content-Type'  = 'application/json';
+  'Accept' = 'application/json';
+  'Authorization' = $('Bearer ' + $rubrikConnection.accessToken);
+}
 
-# Write-Host "Successfully connected to: $rubrikURL" -foregroundcolor green
+Write-Host "Successfully connected to: $rubrikURL" -foregroundcolor green
 
 ###### RUBRIK AUTHENTICATION - END ######
 
@@ -1218,7 +1218,6 @@ Write-Host "Getting a list of all Salesforce objects with sensitive hits..."
 $sfdcList = @()
 $afterCursor = ''
 do {
-  $afterCursor
   $sfdcInventory = Get-SensitiveSalesforceObjects -afterCursor $afterCursor
   $sfdcList += $sfdcInventory.edges.node
   Write-Host "Found $($sfdcList.count) objects..."
@@ -1265,3 +1264,4 @@ foreach ($i in $sfdcList) {
 }
 
 $resultList | Export-Csv -Path $csvOutput -NoTypeInformation
+Write-Host "Exported results to CSV file: $csvOutput" -ForegroundColor Green
