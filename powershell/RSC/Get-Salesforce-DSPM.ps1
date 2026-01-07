@@ -1237,28 +1237,37 @@ foreach ($obj in $sfdcList) {
   # Get the file detail
   $fileDetail = Get-FileDetails -objectID $obj.id -snapshotID $obj.snapshotFid -path $objDetail.stdPath
 
-  $categoryList = @()
-  foreach ($i in $fileDetail.columnDatatypeResults) {
-    $categoryList += [PSCustomObject]@{
-      'DataType' = $i.dataType.name
-      'TotalHits' = $i.result.totalHits
+  $fieldInfo = [PSCustomObject]@{}
+
+  foreach ($i in $fileDetail) {
+    $joinHits = $i.columnDatatypeResults | ForEach-Object {
+      "$($_.DataType.Name): $($_.result.TotalHits)"
     }
+    $singleHits = $joinHits -join ", "
+    $fieldInfo | Add-Member -MemberType NoteProperty -Name $i.columnName -Value $singleHits
   }
-  $categoryList = $categoryList | Sort-Object -Property DataType 
-  $obj | Add-Member -MemberType NoteProperty -Name "CategoryList" -Value $categoryList
+
+  $obj | Add-Member -MemberType NoteProperty -Name "FieldInfo" -Value $fieldInfo -Force
 }
 
 # Process the results
 $resultList = @()
+
+$uniqueFields = $sfdcList |
+    ForEach-Object { $_.FieldInfo.PSObject.Properties.Name } |   # Extract all keys in FieldInfo
+    Select-Object -Unique                    # Get unique keys
+
 foreach ($i in $sfdcList) {
-  $joinHits = $i.categoryList | ForEach-Object {
-    "$($_.DataType): $($_.TotalHits)"
-  }
-  $singleHits = $joinHits -join ", "
   $res = [PSCustomObject]@{
     Name = $i.assetMetadata.name
     ID = $i.id
     Hits = $singleHits
+  }
+  foreach ($unique in $uniqueFields) {
+    $res | Add-Member -MemberType NoteProperty -Name $unique -Value "" -Force
+  }
+  foreach ($getKey in $i.fieldInfo.PSObject.Properties.Name) {
+    $res.$getKey = $i.FieldInfo.$getKey
   }
   $resultList += $res
 }
