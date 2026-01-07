@@ -1259,9 +1259,9 @@ $uniqueFields = $sfdcList |
 
 foreach ($i in $sfdcList) {
   $res = [PSCustomObject]@{
-    Name = $i.assetMetadata.name
-    ID = $i.id
-    Hits = $singleHits
+    ObjectName = $i.assetMetadata.name
+    ObjectAccount = $i.assetMetadata.cloudAccountInfo.accountName
+    ObjectID = $i.id
   }
   foreach ($unique in $uniqueFields) {
     $res | Add-Member -MemberType NoteProperty -Name $unique -Value "" -Force
