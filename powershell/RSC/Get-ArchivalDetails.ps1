@@ -26,7 +26,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/1/25
-Updated: 5/16/25
+Updated: 1/13/26
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -57,7 +57,7 @@ param (
 $slaIgnoreList = @('IDOC-VM-BKP-STD')
 
 # File location of the RSC service account json
-# $serviceAccountPath = "./rsc-service-account-rr.json"
+# $serviceAccountPath = "./rsc-gaia-tong.json"
 $serviceAccountPath = "./ArchivalDetailsScripts.json"
 
 $date = Get-Date
@@ -1392,24 +1392,19 @@ Function Get-BackupDetail {
             isCustomRetentionApplied
             archivalInfos {
               name
-              isExpirationDateCalculated
               expirationTime
               locationId
-              __typename
             }
             localInfo {
               name
               isExpirationDateCalculated
               expirationTime
-              __typename
             }
             replicationInfos {
               name
               isExpirationDateCalculated
               expirationTime
               locationId
-              isExpirationInformationUnavailable
-              __typename
             }
             __typename
           }
@@ -1478,6 +1473,9 @@ Function Get-BackupDetail {
 
 ###### FUNCTIONS - END ######
 
+# Holds list of all objects
+$allObjList = @()
+
 # Holds list of objects to check archival for
 $objList = @()
 
@@ -1490,12 +1488,13 @@ $afterCursor = ''
 do {
   $vmInventory = Get-VMList -afterCursor $afterCursor
   $vmList += $vmInventory.edges.node
+  Write-Host "Found $($vmList.count) VMs so far..." -foregroundcolor yellow
   $afterCursor = $vmInventory.pageInfo.endCursor
 } while ($vmInventory.pageInfo.hasNextPage)
 
 Write-Host "Found $($vmList.count) VMs" -foregroundcolor green
 
-$objList += $vmList
+$allObjList += $vmList
 
 Write-Host "Getting a list of all SQL DBs"
 $sqlList = @()
@@ -1503,12 +1502,13 @@ $afterCursor = ''
 do {
   $sqlInventory = Get-SQLList -afterCursor $afterCursor
   $sqlList += $sqlInventory.edges.node
+  Write-Host "Found $($sqlList.count) DBs so far..." -foregroundcolor yellow
   $afterCursor = $sqlInventory.pageInfo.endCursor
 } while ($sqlInventory.pageInfo.hasNextPage)
 
 Write-Host "Found $($sqlList.count) DBs" -foregroundcolor green
 
-$objList += $sqlList
+$allObjList += $sqlList
 
 Write-Host "Getting a list of all Oracle DBs"
 $oracleList = @()
@@ -1516,12 +1516,13 @@ $afterCursor = ''
 do {
   $oracleInventory = Get-OracleList -afterCursor $afterCursor
   $oracleList += $oracleInventory.edges.node
+  Write-Host "Found $($oracleList.count) DBs so far..." -foregroundcolor yellow
   $afterCursor = $oracleInventory.pageInfo.endCursor
 } while ($oracleInventory.pageInfo.hasNextPage)
 
 Write-Host "Found $($oracleList.count) DBs" -foregroundcolor green
 
-$objList += $oracleList
+$allObjList += $oracleList
 
 Write-Host "Getting a list of all Active Directory Domain Controllers"
 $afterCursor = ''
@@ -1530,7 +1531,7 @@ $adList = $adList.edges.node
 
 Write-Host "Found $($adList.count) AD Domain Controllers" -foregroundcolor green
 
-$objList += $adList
+$allObjList += $adList
 
 # NAS shares will not be added to $objList yet since it needs to be separately filtered
 Write-Host "Getting a list of all NAS shares"
@@ -1539,6 +1540,7 @@ $afterCursor = ''
 do {
   $nasInventory = Get-nasList -afterCursor $afterCursor
   $nasList += $nasInventory.edges.node
+  Write-Host "Found $($nasList.count) NAS shares so far..." -foregroundcolor yellow
   $afterCursor = $nasInventory.pageInfo.endCursor
 } while ($nasInventory.pageInfo.hasNextPage)
 
@@ -1551,12 +1553,13 @@ $afterCursor = ''
 do {
   $vgInventory = Get-VGList -afterCursor $afterCursor
   $vgList += $vgInventory.edges.node
+  Write-Host "Found $($vgList.count) Volume Groups so far..." -foregroundcolor yellow
   $afterCursor = $vgInventory.pageInfo.endCursor
 } while ($vgInventory.pageInfo.hasNextPage)
 
 Write-Host "Found $($vgList.count) Volume Groups" -foregroundcolor green
 
-$allObjCount = $objList.count + $nasList.count + $vgList.count
+$allObjCount = $allObjList.count + $nasList.count + $vgList.count
 
 Write-Host ""
 Write-Host "Total object count so far: $allObjCount" -foregroundcolor green
@@ -1564,8 +1567,10 @@ Write-Host "Now filtering out objects by Protected, SLA, and Cluster" -foregroun
 Write-Host ""
 
 # Filter list by protected objects
-$objList = $objList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
-  $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$vmList = $vmList | Where-Object { $_.SnapshotConnection.edges.node -ne $null }
+
+# Create a new list with the filtered VM objects
+$objList = $vmList + $sqlList + $oracleList + $adList
 
 # Handle NAS separately since we need to look at the primary fileset to see what's protected
 $nasListProtected = $nasList | Where-Object { $null -ne $_.primaryFileset -and $_.primaryFileset.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
