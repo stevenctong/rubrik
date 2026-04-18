@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Capacity Over Time - Rubrik Report Charts</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; }
+    h1   { color: #333; }
+    .meta-bar { color: #666; font-size: 13px; margin-bottom: 30px; }
+    .chart-container {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      padding: 24px;
+      margin-bottom: 30px;
+      max-width: 1000px;
+    }
+    h2   { margin: 0 0 4px; color: #1a1a1a; font-size: 18px; }
+    .meta { color: #888; font-size: 12px; margin: 0 0 16px; }
+    canvas { max-height: 400px; }
+  </style>
+</head>
+<body>
+  <h1>Capacity Over Time</h1>
+  <p class="meta-bar">Cluster: 10.8.49.104 &nbsp;|&nbsp; Report ID: CustomReport:::928d3a0a-52f7-4f3d-a0d6-fbb9e3de9d08 &nbsp;|&nbsp; Generated: 2026-04-17 22:52</p>
+  <div class="chart-container">
+    <h2>Local Data Transferred</h2>
+    <p class="meta">Attribute: Month &nbsp;|&nbsp; Measure: LocalIngestedBytes</p>
+    <canvas id="chart_chart0"></canvas>
+  </div>
+  <script>
+    new Chart(document.getElementById('chart_chart0'), {
+      type: 'line',
+      data: {
+        labels: ['Feb 2025', 'Mar 2025', 'Apr 2025', 'May 2025', 'Jun 2025', 'Jul 2025', 'Aug 2025', 'Sep 2025', 'Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026', 'Mar 2026', 'Apr 2026'],
+        datasets: [
+      {
+        label: 'Local Data Transferred',
+        data: [0.77, 0.9, 1.26, 1.32, 1.35, 1.72, 1.6, 1.99, 0.88, 0.96, 0.62, 0.79, 0.73, 0.9, 0.77],
+        backgroundColor: '#4e79a733',
+        borderColor: '#4e79a7',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        fill: true,
+        tension: 0.3
+      }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Month' },
+            ticks: { maxRotation: 45, minRotation: 30 }
+          },
+          y: {
+            title: { display: true, text: 'LocalIngestedBytes (PB)' },
+            beginAtZero: false
+          }
+        }
+      }
+    });
+  </script>
+  <div class="chart-container">
+    <h2>Total Capacity</h2>
+    <p class="meta">Attribute: Month &nbsp;|&nbsp; Measure: LocalStorage</p>
+    <canvas id="chart_chart1"></canvas>
+  </div>
+  <script>
+    new Chart(document.getElementById('chart_chart1'), {
+      type: 'line',
+      data: {
+        labels: ['Feb 2025', 'Mar 2025', 'Apr 2025', 'May 2025', 'Jun 2025', 'Jul 2025', 'Aug 2025', 'Sep 2025', 'Oct 2025', 'Nov 2025', 'Dec 2025', 'Jan 2026', 'Feb 2026', 'Mar 2026', 'Apr 2026'],
+        datasets: [
+      {
+        label: 'Total Capacity',
+        data: [28.42, 34.51, 30.19, 30.06, 34.25, 38.45, 57.12, 35.17, 29.02, 57.68, 17.11, 32.12, 26.68, 39.18, 35.59],
+        backgroundColor: '#4e79a733',
+        borderColor: '#4e79a7',
+        borderWidth: 2,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        fill: true,
+        tension: 0.3
+      }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          x: {
+            title: { display: true, text: 'Month' },
+            ticks: { maxRotation: 45, minRotation: 30 }
+          },
+          y: {
+            title: { display: true, text: 'LocalStorage (TB)' },
+            beginAtZero: false
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

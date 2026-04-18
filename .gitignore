@@ -7,3 +7,5 @@ powershell/*reports
 __pycache__
 settings.json
 CLAUDE.md
+*service-account*.json
+*service_account*.json
