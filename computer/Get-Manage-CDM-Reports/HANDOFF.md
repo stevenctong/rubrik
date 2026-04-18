@@ -9,7 +9,7 @@
 
 Two standalone tools for working with Rubrik CDM custom reports:
 
-1. **`Manage-CDM-Reports.ps1`** — PowerShell CLI for interactively (or non-interactively) listing, viewing, creating, and deleting CDM reports via the internal REST API. Outputs CSVs and HTML chart files to disk.
+1. **`Get-Manage-CDM-Reports.ps1`** — PowerShell CLI for interactively (or non-interactively) listing, viewing, creating, and deleting CDM reports via the internal REST API. Outputs CSVs and HTML chart files to disk.
 2. **`csv-report-viewer.html`** — Static browser-based CSV viewer with filtering, sorting, column type detection, and Rubrik branding. No backend or server required. Reads the CSVs that the script produces.
 
 The two tools are intentionally decoupled. The script writes files to disk; the web app reads them via drag-and-drop or file picker. This avoids CORS and credential exposure — the browser never touches the cluster directly.
@@ -25,8 +25,8 @@ computer/
 │   └── README.md
 ├── rsc-service-account-rr.json         # Service account credentials (gitignored)
 │
-└── Manage-CDM-Reports/
-    ├── Manage-CDM-Reports.ps1          # Main PowerShell script
+└── Get-Manage-CDM-Reports/
+    ├── Get-Manage-CDM-Reports.ps1          # Main PowerShell script
     ├── HANDOFF.md                      # This file
     ├── docs/
     │   ├── Rubrik CDM 9.2 User Guide Excerpt- Chapter 27 Reports.pdf
@@ -38,7 +38,7 @@ computer/
 
 ---
 
-## Manage-CDM-Reports.ps1
+## Get-Manage-CDM-Reports.ps1
 
 ### Parameters
 
@@ -55,7 +55,7 @@ Test defaults for `-serviceAccountPath` and `-clusterIP` are hardcoded in the `p
 ### Usage — Interactive Mode
 
 ```powershell
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-service-account-rr.json' -clusterIP '10.8.49.104'
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-service-account-rr.json' -clusterIP '10.8.49.104'
 ```
 
 Launches the persistent interactive loop. Lists all reports; enter a row number or Report ID to select one. Enter `new` to create a report, `r` to refresh the list, or press Enter to exit.
@@ -64,13 +64,13 @@ Launches the persistent interactive loop. Lists all reports; enter a row number 
 
 ```powershell
 # Download CSV only
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV
 
 # Generate HTML chart only
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getHTML
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getHTML
 
 # Both at once
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV -getHTML
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rsc-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV -getHTML
 ```
 
 `-getCSV` and `-getHTML` can be combined. Both require `-reportID`; the script will error and exit if it is missing.
@@ -192,7 +192,7 @@ Each template has two modes:
 
 ## csv-report-viewer.html
 
-A fully self-contained single-file web app. Open directly in a browser — no server needed. Located at `computer/HTML-Apps/csv-report-viewer.html`. Works with any report CSV, not just output from `Manage-CDM-Reports.ps1`.
+A fully self-contained single-file web app. Open directly in a browser — no server needed. Located at `computer/HTML-Apps/csv-report-viewer.html`. Works with any report CSV, not just output from `Get-Manage-CDM-Reports.ps1`.
 
 ### Loading Data
 

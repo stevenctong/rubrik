@@ -73,27 +73,27 @@ The CDM Bearer token is obtained via POST /api/v1/service_account/session
 and is deleted on exit via DELETE /api/v1/session/{id}.
 
 .EXAMPLE
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
 
 Launches the interactive report manager. Lists all reports; enter a row number or
 Report ID to select one, then choose to view charts, download CSV, view config JSON,
 or delete. Enter 'new' to create a report using the wizard. Press Enter to exit.
 
 .EXAMPLE
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV
 
 Non-interactive: downloads the CSV export for the specified report and exits.
 Output file: ./rubrik_<ReportName>-yyyy-MM-dd_HHmm.csv
 
 .EXAMPLE
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getHTML
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getHTML
 
 Non-interactive: generates an HTML chart file for the specified report, opens it
 in the browser, and exits.
 Output file: ./rubrik_<ReportName>-yyyy-MM-dd_HHmm.html
 
 .EXAMPLE
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV -getHTML
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV -getHTML
 
 Non-interactive: downloads both the CSV export and the HTML chart file for the
 specified report and exits.

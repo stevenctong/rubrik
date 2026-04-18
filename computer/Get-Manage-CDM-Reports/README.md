@@ -1,4 +1,4 @@
-# Manage-CDM-Reports
+# Get-Manage-CDM-Reports
 
 PowerShell script for managing custom reports on a Rubrik CDM cluster via the internal REST API. Supports interactive and non-interactive (scripted) operation.
 
@@ -35,7 +35,7 @@ The script uses an **RSC Service Account JSON file**, passed into the CDM cluste
 ### Interactive
 
 ```powershell
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
 ```
 
 Lists all reports. Enter a row number or Report ID to select a report, then choose:
@@ -53,15 +53,15 @@ Enter `new` to create a report using the wizard. Enter `r` to refresh the list. 
 
 ```powershell
 # Download CSV for a specific report
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
   -reportID 'ReportId:::abc123' -getCSV
 
 # Generate HTML chart file
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
   -reportID 'ReportId:::abc123' -getHTML
 
 # Both at once
-./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' `
   -reportID 'ReportId:::abc123' -getCSV -getHTML
 ```
 
@@ -113,8 +113,8 @@ Each template supports **Default** mode (uses the template's standard config) an
 ## Files in This Folder
 
 ```
-Manage-CDM-Reports/
-├── Manage-CDM-Reports.ps1   # Main script
+Get-Manage-CDM-Reports/
+├── Get-Manage-CDM-Reports.ps1   # Main script
 ├── README.md                # This file
 ├── HANDOFF.md               # Developer/maintainer notes
 ├── docs/                    # Reference PDFs

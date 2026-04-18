@@ -18,8 +18,8 @@ Load a CSV by dragging it onto the drop zone or clicking to browse.
 
 ## Cross-Reference
 
-### Manage-CDM-Reports
+### Get-Manage-CDM-Reports
 
-Located separately at [`computer/Manage-CDM-Reports/`](../Manage-CDM-Reports/) — not part of this app, but pairs well with it.
+Located separately at [`computer/Get-Manage-CDM-Reports/`](../Get-Manage-CDM-Reports/) — not part of this app, but pairs well with it.
 
 It is a PowerShell script that connects to a Rubrik CDM cluster via the REST API to list, create, delete, and export custom reports. Use it to download report CSVs, then drag them into `csv-report-viewer.html`.
