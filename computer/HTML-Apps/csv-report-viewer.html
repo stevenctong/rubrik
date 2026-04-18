@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rubrik Report Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body { height: 100%; overflow: hidden; }
+    body { display: flex; flex-direction: column; font-family: Arial, sans-serif; background: #f0f2f5; color: #1a1a1a; }
+
+    /* ── Top bar ── */
+    .topbar {
+      flex-shrink: 0;
+      background: #00B2A9; color: white;
+      padding: 10px 20px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      z-index: 100;
+    }
+    .topbar h1 { font-size: 17px; font-weight: 600; flex: 0 0 auto; margin-right: 8px; }
+    .topbar-divider { width: 1px; height: 22px; background: rgba(255,255,255,0.3); flex-shrink: 0; }
+    .group-label { color: rgba(255,255,255,0.75); font-size: 12px; white-space: nowrap; }
+    .btn-group { display: flex; align-items: center; gap: 4px; }
+    input[type="file"] { display: none; }
+
+    .btn { padding: 5px 11px; border-radius: 4px; border: none; cursor: pointer; font-size: 12px; font-weight: 600; }
+    .btn-seg           { background: rgba(0,0,0,0.15); color: rgba(255,255,255,0.9); border: 1px solid rgba(255,255,255,0.3); }
+    .btn-seg.active    { background: white; color: #00B2A9; border-color: white; }
+    .btn-seg:hover:not(.active) { background: rgba(0,0,0,0.1); }
+
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+    .mini-drop {
+      border: 2px dashed rgba(255,255,255,0.4); border-radius: 6px;
+      padding: 5px 14px; cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      color: rgba(255,255,255,0.85); font-size: 12px; font-weight: 600;
+      transition: border-color 0.15s, background 0.15s;
+      user-select: none;
+    }
+    .mini-drop:hover, .mini-drop.drag-over {
+      border-color: white; background: rgba(0,0,0,0.1); color: white;
+    }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      flex-shrink: 0;
+      background: white; padding: 8px 20px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid #dde2ea; flex-wrap: wrap;
+      z-index: 99;
+    }
+    .search-wrap { position: relative; }
+    .search-wrap input {
+      padding: 5px 10px 5px 28px;
+      border: 1px solid #ccc; border-radius: 5px;
+      font-size: 13px; width: 220px; outline: none;
+    }
+    .search-wrap input:focus { border-color: #00B2A9; }
+    .search-icon { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: #999; font-size: 12px; }
+    .clear-btn { background: none; border: 1px solid #ccc; border-radius: 4px; padding: 5px 10px; font-size: 12px; cursor: pointer; color: #555; }
+    .clear-btn:hover { background: #f5f5f5; }
+    .toolbar-right { margin-left: auto; color: #666; font-size: 12px; }
+
+    /* ── Main scrollable area ── */
+    #main-scroll { flex: 1; overflow: auto; }
+
+    /* ── Drop zone ── */
+    #drop-zone {
+      margin: 40px auto; max-width: 480px; background: white;
+      border: 2px dashed #b0bcd0; border-radius: 12px;
+      padding: 60px 40px; text-align: center; color: #666;
+      cursor: pointer; transition: border-color 0.2s, background 0.2s;
+    }
+    #drop-zone:hover, #drop-zone.drag-over { border-color: #00B2A9; background: #f0fffe; }
+    #drop-zone .dz-icon { font-size: 40px; margin-bottom: 12px; }
+    #drop-zone p { font-size: 15px; margin-bottom: 6px; }
+    #drop-zone small { font-size: 12px; color: #999; }
+
+    /* ── Table ── */
+    #table-section { display: none; }
+
+    table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: max-content; }
+
+    thead tr.header-names th {
+      background: #007A73; color: white;
+      padding: 9px 12px; text-align: left; white-space: nowrap;
+      position: sticky; top: 0; z-index: 10;
+      user-select: none; cursor: pointer;
+      border-right: 1px solid rgba(255,255,255,0.15);
+    }
+    thead tr.header-names th:hover { background: #006960; }
+    thead tr.header-names th .col-label { display: flex; align-items: center; gap: 5px; }
+    thead tr.header-names th .sort-icon { font-size: 10px; opacity: 0.45; margin-left: auto; padding-left: 6px; }
+    thead tr.header-names th.sorted-asc  .sort-icon,
+    thead tr.header-names th.sorted-desc .sort-icon { opacity: 1; color: #b2f0ec; }
+
+    .col-badge { font-size: 10px; border-radius: 3px; padding: 1px 4px; font-weight: normal; flex-shrink: 0; }
+    .cap-badge  { background: #3b7dd8; color: white; }
+    .date-badge { background: #2a7a5a; color: #c0f0dd; }
+    .dur-badge  { background: #7a4a9a; color: #e8d0ff; }
+
+    thead tr.header-filters th {
+      background: #f7f9fc; padding: 3px 5px;
+      position: sticky; top: 36px; z-index: 9;
+      border-right: 1px solid #dde2ea;
+      border-bottom: 2px solid #b0d8d6;
+    }
+    thead tr.header-filters th input.text-filter {
+      width: 100%; padding: 3px 6px;
+      border: 1px solid #ccd4e0; border-radius: 4px;
+      font-size: 12px; outline: none; background: white;
+    }
+    thead tr.header-filters th input.text-filter:focus { border-color: #00B2A9; }
+
+    tbody tr { border-bottom: 1px solid #edf0f5; }
+    tbody tr:hover { background: #f0fffe; }
+    tbody tr:nth-child(even) { background: #fafbfd; }
+    tbody tr:nth-child(even):hover { background: #f0fffe; }
+    tbody td {
+      padding: 7px 12px; border-right: 1px solid #edf0f5;
+      white-space: nowrap; max-width: 320px;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    tbody td.cap-cell  { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody td.num-cell  { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody td.dur-cell  { text-align: right; font-variant-numeric: tabular-nums; }
+    tbody td.date-cell { color: #2a5a4a; font-family: monospace; font-size: 12px; }
+
+    .no-results { text-align: center; padding: 40px; color: #999; font-size: 14px; }
+
+    /* ── Fixed footer ── */
+    .app-footer {
+      flex-shrink: 0;
+      background: #00B2A9; color: white;
+      padding: 0 20px;
+      height: 40px;
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12px; z-index: 100;
+      border-top: 1px solid rgba(0,0,0,0.15);
+    }
+    .footer-info { flex: 1; }
+    .footer-page { display: flex; align-items: center; gap: 10px; }
+    .page-btn {
+      background: rgba(0,0,0,0.15); color: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
+      padding: 3px 10px; font-size: 12px; cursor: pointer;
+    }
+    .page-btn:hover:not(:disabled) { background: rgba(0,0,0,0.25); color: white; }
+    .page-btn:disabled { opacity: 0.35; cursor: default; }
+    .page-label { color: rgba(255,255,255,0.75); }
+
+    /* ── Multi-select dropdown ── */
+    .ms-wrap { position: relative; }
+    .ms-trigger {
+      width: 100%; padding: 3px 20px 3px 6px;
+      border: 1px solid #ccd4e0; border-radius: 4px;
+      font-size: 12px; background: white; cursor: pointer;
+      text-align: left; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; color: #333; position: relative;
+    }
+    .ms-trigger::after { content: '▾'; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); color: #888; font-size: 10px; }
+    .ms-trigger.has-selection { border-color: #00B2A9; background: #e6faf9; color: #007A73; font-weight: 600; }
+
+    .ms-panel {
+      display: none; position: fixed;
+      background: white; border: 1px solid #b0dedd;
+      border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+      z-index: 500; min-width: 200px; max-width: 320px;
+    }
+    .ms-panel.open { display: block; }
+    .ms-search-wrap { padding: 7px 7px 4px; border-bottom: 1px solid #eee; }
+    .ms-search { width: 100%; padding: 4px 7px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; outline: none; }
+    .ms-search:focus { border-color: #00B2A9; }
+    .ms-actions { display: flex; gap: 8px; padding: 3px 8px 5px; border-bottom: 1px solid #eee; }
+    .ms-action-btn { background: none; border: none; cursor: pointer; font-size: 11px; color: #00B2A9; padding: 0; }
+    .ms-action-btn:hover { text-decoration: underline; }
+    .ms-list { max-height: 220px; overflow-y: auto; padding: 3px 0; }
+    .ms-item { display: flex; align-items: center; gap: 7px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+    .ms-item:hover { background: #f0fffe; }
+    .ms-item input[type="checkbox"] { cursor: pointer; accent-color: #00B2A9; flex-shrink: 0; }
+    .ms-item label { cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ms-no-match { padding: 10px; text-align: center; color: #999; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <h1>Rubrik Report Viewer</h1>
+
+  <!-- Timezone -->
+  <div class="topbar-divider"></div>
+  <span class="group-label">Timezone:</span>
+  <div class="btn-group" id="tz-controls">
+    <button class="btn btn-seg active" onclick="setTz('UTC')">UTC</button>
+    <button class="btn btn-seg" onclick="setTz('America/Los_Angeles')">PT</button>
+    <button class="btn btn-seg" onclick="setTz('America/Denver')">MT</button>
+    <button class="btn btn-seg" onclick="setTz('America/Chicago')">CT</button>
+    <button class="btn btn-seg" onclick="setTz('America/New_York')">ET</button>
+  </div>
+
+  <!-- Capacity unit -->
+  <div class="topbar-divider" id="cap-divider"></div>
+  <span class="group-label" id="cap-label">Capacity:</span>
+  <div class="btn-group" id="cap-controls">
+    <button class="btn btn-seg active" id="btn-gb" onclick="setUnit('GB')">GB</button>
+    <button class="btn btn-seg"        id="btn-tb" onclick="setUnit('TB')">TB</button>
+  </div>
+
+  <!-- Duration unit -->
+  <div class="topbar-divider"></div>
+  <span class="group-label">Duration:</span>
+  <div class="btn-group" id="dur-controls">
+    <button class="btn btn-seg active" id="btn-sec" onclick="setDurUnit('Seconds')">Sec</button>
+    <button class="btn btn-seg"        id="btn-min" onclick="setDurUnit('Minutes')">Min</button>
+    <button class="btn btn-seg"        id="btn-hr"  onclick="setDurUnit('Hours')">Hr</button>
+  </div>
+
+  <div class="topbar-right">
+    <div class="mini-drop" id="mini-drop" onclick="document.getElementById('file-input').click()">
+      <span>📂</span>
+      <div style="line-height:1.3">
+        <div>Import CSV</div>
+        <div style="font-weight:normal;font-size:10px;color:rgba(255,255,255,0.65)">click or drag &amp; drop</div>
+      </div>
+    </div>
+    <input type="file" id="file-input" accept=".csv">
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div class="toolbar" id="toolbar" style="display:none">
+  <div class="search-wrap">
+    <span class="search-icon">&#128269;</span>
+    <input type="text" id="global-search" placeholder="Search all columns…" oninput="applyFilters()">
+  </div>
+  <button class="clear-btn" onclick="clearAllFilters()">Clear filters</button>
+  <div class="toolbar-right" id="toolbar-info"></div>
+</div>
+
+<!-- Drop zone -->
+<div id="main-scroll">
+  <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+    <div class="dz-icon">📂</div>
+    <p>Click to import a CSV file</p>
+    <p>or drag and drop here</p>
+    <small>Exports from Get-Reports.ps1</small>
+  </div>
+
+  <!-- Table -->
+  <div id="table-section">
+    <table id="data-table">
+      <thead>
+        <tr class="header-names"   id="header-names"></tr>
+        <tr class="header-filters" id="header-filters"></tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Footer -->
+<footer class="app-footer" id="app-footer" style="display:none">
+  <div class="footer-info" id="footer-info"></div>
+  <div class="footer-page">
+    <button class="page-btn" id="btn-prev" onclick="prevPage()">&#8592; Prev</button>
+    <span class="page-label" id="page-label"></span>
+    <button class="page-btn" id="btn-next" onclick="nextPage()">Next &#8594;</button>
+  </div>
+</footer>
+
+<!-- Multi-select panel (shared) -->
+<div class="ms-panel" id="ms-panel">
+  <div class="ms-search-wrap">
+    <input class="ms-search" id="ms-search" type="text" placeholder="Search values…" oninput="renderMsItems()">
+  </div>
+  <div class="ms-actions">
+    <button class="ms-action-btn" onclick="msSelectAll()">Select all</button>
+    <button class="ms-action-btn" onclick="msClearAll()">Clear</button>
+  </div>
+  <div class="ms-list" id="ms-list"></div>
+</div>
+
+<script>
+  // ── Column-type keywords ───────────────────────────────────────────
+  // Exact normalized column names that are capacities
+  const CAP_EXACT    = new Set(['logicalbytes','bytestransferred','localmetereddata']);
+  // Substring matches (normalized) — anything containing these is a capacity
+  const CAP_CONTAINS = ['size','storage','datatransferred','datastored'];
+  const ENUM_KEYWORDS = ['taskstatus','tasktype','objecttype','clustername'];
+  const DATE_NAME_RE    = /(Time|Date|Snapshot|Stamp|On)$/;
+  const DATE_VAL_RE     = /^\d{4}-\d{2}-\d{2}/;
+  const DATE_EXPLICIT   = ['starttime','endtime']; // always treat as date regardless of value format
+
+  function normCol(n)       { return n.toLowerCase().replace(/[\s_]/g,''); }
+  function isCapCol(name)   { const n=normCol(name); return CAP_EXACT.has(n) || CAP_CONTAINS.some(k=>n.includes(k)); }
+  function isDurCol(name)   { return normCol(name).includes('duration'); }
+  function isEnumCol(name)  { const n=normCol(name); return ENUM_KEYWORDS.some(k=>n.includes(k)); }
+  function isDateCol(name, ci) {
+    const norm = normCol(name);
+    if (DATE_EXPLICIT.includes(norm)) return true;
+    if (!DATE_NAME_RE.test(name)) return false;
+    const sample = rawRows.slice(0,20).find(r => r[ci] && DATE_VAL_RE.test(r[ci]));
+    return !!sample;
+  }
+
+  // ── State ──────────────────────────────────────────────────────────
+  const PAGE_SIZE = 10000;
+
+  let rawRows     = [];
+  let columns     = [];
+  let capCols     = [];
+  let durCols     = [];
+  let numCols     = [];
+  let enumCols    = [];
+  let dateCols    = [];
+  let enumValues  = {};
+  let enumFilters = {};
+  let colFilters  = [];
+  let unit        = 'GB';
+  let durUnit     = 'Seconds';
+  let tz          = 'UTC';        // timezone string
+  let tzLabel     = 'UTC';
+  let sortCol     = -1;
+  let sortAsc     = true;
+  let displayRows = [];           // filtered+sorted full result
+  let currentPage = 0;
+
+  const DIVISOR     = { GB: 1e9, TB: 1e12 };
+  const DUR_DIVISOR = { Seconds: 1, Minutes: 60, Hours: 3600 };
+  const TZ_MAP  = {
+    'UTC': 'UTC',
+    'America/Los_Angeles': 'PT',
+    'America/Denver':      'MT',
+    'America/Chicago':     'CT',
+    'America/New_York':    'ET'
+  };
+
+  // ── File input / drag-drop ─────────────────────────────────────────
+  document.getElementById('file-input').addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0]);
+  });
+  const dz = document.getElementById('drop-zone');
+  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', e => {
+    e.preventDefault(); dz.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+
+  const md = document.getElementById('mini-drop');
+  md.addEventListener('dragover',  e => { e.preventDefault(); md.classList.add('drag-over'); });
+  md.addEventListener('dragleave', () => md.classList.remove('drag-over'));
+  md.addEventListener('drop', e => {
+    e.preventDefault(); md.classList.remove('drag-over');
+    if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+  });
+  function loadFile(f) { const r=new FileReader(); r.onload=e=>parseCSV(e.target.result); r.readAsText(f); }
+
+  // ── CSV parser ─────────────────────────────────────────────────────
+  function parseCSV(text) {
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) return;
+
+    columns     = parseLine(lines[0]);
+    rawRows     = lines.slice(1).map(parseLine);
+    capCols     = columns.map(c => isCapCol(c));
+    durCols     = columns.map(c => isDurCol(c));
+    enumCols    = columns.map(c => isEnumCol(c));
+    dateCols    = columns.map((c, ci) => isDateCol(c, ci));
+    colFilters  = columns.map(() => '');
+    enumFilters = {};
+    enumValues  = {};
+
+    columns.forEach((_, ci) => {
+      if (!enumCols[ci]) return;
+      enumValues[ci]  = [...new Set(rawRows.map(r=>r[ci]).filter(v=>v!==''))].sort();
+      enumFilters[ci] = new Set();
+    });
+
+    numCols = columns.map((_, ci) => {
+      if (capCols[ci] || durCols[ci] || enumCols[ci] || dateCols[ci]) return false;
+      const sample = rawRows.slice(0,10).map(r=>r[ci]);
+      return sample.every(v => v==='' || !isNaN(Number(v)));
+    });
+
+    document.getElementById('drop-zone').style.display     = 'none';
+    document.getElementById('table-section').style.display = 'block';
+    document.getElementById('toolbar').style.display       = 'flex';
+    document.getElementById('app-footer').style.display    = 'flex';
+
+    sortCol = -1; sortAsc = true; currentPage = 0;
+    buildHeaders();
+    applyFilters();
+  }
+
+  function parseLine(line) {
+    const result=[]; let cur='', inQ=false;
+    for (let i=0; i<line.length; i++) {
+      const ch=line[i];
+      if (ch==='"') { if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ; }
+      else if (ch===','&&!inQ) { result.push(cur); cur=''; }
+      else cur+=ch;
+    }
+    result.push(cur);
+    return result;
+  }
+
+  // ── Headers ────────────────────────────────────────────────────────
+  function buildHeaders() {
+    const nameRow   = document.getElementById('header-names');
+    const filterRow = document.getElementById('header-filters');
+    nameRow.innerHTML = '';
+    filterRow.innerHTML = '';
+
+    columns.forEach((col, ci) => {
+      const th = document.createElement('th');
+      let badge = '';
+      if (capCols[ci])  badge = `<span class="col-badge cap-badge">${unit}</span>`;
+      if (durCols[ci])  badge = `<span class="col-badge dur-badge">${durUnit}</span>`;
+      if (dateCols[ci]) badge = `<span class="col-badge date-badge">${tzLabel}</span>`;
+      th.innerHTML = `<div class="col-label"><span>${escHtml(col)}</span>${badge}<span class="sort-icon">⇅</span></div>`;
+      th.onclick = () => sortBy(ci);
+      nameRow.appendChild(th);
+
+      const tf = document.createElement('th');
+      if (enumCols[ci]) {
+        const wrap = document.createElement('div');
+        wrap.className = 'ms-wrap';
+        const btn = document.createElement('button');
+        btn.className   = 'ms-trigger';
+        btn.dataset.ci  = ci;
+        btn.textContent = 'All';
+        btn.onclick     = e => { e.stopPropagation(); openMsPanel(ci, btn); };
+        wrap.appendChild(btn);
+        tf.appendChild(wrap);
+      } else {
+        const inp = document.createElement('input');
+        inp.type      = 'text';
+        inp.className = 'text-filter';
+        inp.placeholder = 'Filter…';
+        inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); applyFilters(); };
+        tf.appendChild(inp);
+      }
+      filterRow.appendChild(tf);
+    });
+  }
+
+  function updateColBadges() {
+    document.querySelectorAll('#header-names th').forEach((th, ci) => {
+      const badge = th.querySelector('.col-badge');
+      if (!badge) return;
+      if (capCols[ci])  badge.textContent = unit;
+      if (durCols[ci])  badge.textContent = durUnit;
+      if (dateCols[ci]) badge.textContent = tzLabel;
+    });
+  }
+
+  // ── Multi-select panel ─────────────────────────────────────────────
+  let activeMsCi = -1;
+
+  function openMsPanel(ci, triggerEl) {
+    if (activeMsCi === ci) { closeMsPanel(); return; }
+    activeMsCi = ci;
+    document.getElementById('ms-search').value = '';
+    const panel = document.getElementById('ms-panel');
+    panel.classList.add('open');
+    const rect = triggerEl.getBoundingClientRect();
+    panel.style.top  = (rect.bottom + 2) + 'px';
+    panel.style.left = rect.left + 'px';
+    renderMsItems();
+    setTimeout(() => document.getElementById('ms-search').focus(), 0);
+  }
+  function closeMsPanel() { document.getElementById('ms-panel').classList.remove('open'); activeMsCi=-1; }
+
+  function renderMsItems() {
+    if (activeMsCi < 0) return;
+    const ci    = activeMsCi;
+    const query = document.getElementById('ms-search').value.toLowerCase();
+    const vals  = enumValues[ci] || [];
+    const sel   = enumFilters[ci];
+    const shown = query ? vals.filter(v=>v.toLowerCase().includes(query)) : vals;
+    const list  = document.getElementById('ms-list');
+    if (!shown.length) { list.innerHTML='<div class="ms-no-match">No matches</div>'; return; }
+    list.innerHTML = shown.map(v => {
+      const id = `mscb-${ci}-${escHtml(v)}`;
+      return `<div class="ms-item">
+        <input type="checkbox" id="${id}" ${sel.has(v)?'checked':''} onchange="msTog('${escJs(v)}')">
+        <label for="${id}">${escHtml(v)}</label>
+      </div>`;
+    }).join('');
+  }
+
+  function msTog(val) {
+    if (activeMsCi<0) return;
+    const s=enumFilters[activeMsCi]; s.has(val)?s.delete(val):s.add(val);
+    updateMsTrigger(activeMsCi); applyFilters();
+  }
+  function msSelectAll() {
+    if (activeMsCi<0) return;
+    const q=document.getElementById('ms-search').value.toLowerCase();
+    const vals=enumValues[activeMsCi]||[];
+    (q?vals.filter(v=>v.toLowerCase().includes(q)):vals).forEach(v=>enumFilters[activeMsCi].add(v));
+    renderMsItems(); updateMsTrigger(activeMsCi); applyFilters();
+  }
+  function msClearAll() {
+    if (activeMsCi<0) return;
+    const q=document.getElementById('ms-search').value.toLowerCase();
+    const vals=enumValues[activeMsCi]||[];
+    (q?vals.filter(v=>v.toLowerCase().includes(q)):vals).forEach(v=>enumFilters[activeMsCi].delete(v));
+    renderMsItems(); updateMsTrigger(activeMsCi); applyFilters();
+  }
+  function updateMsTrigger(ci) {
+    const btn=document.querySelector(`.ms-trigger[data-ci="${ci}"]`);
+    if (!btn) return;
+    const s=enumFilters[ci], total=(enumValues[ci]||[]).length;
+    if (s.size===0) { btn.textContent='All'; btn.classList.remove('has-selection'); }
+    else { btn.textContent=s.size===total?`All (${total})`:`${s.size} of ${total} selected`; btn.classList.add('has-selection'); }
+  }
+
+  document.addEventListener('click', e => {
+    if (activeMsCi>=0 && !document.getElementById('ms-panel').contains(e.target) && !e.target.classList.contains('ms-trigger'))
+      closeMsPanel();
+  });
+  document.addEventListener('keydown', e => { if(e.key==='Escape') closeMsPanel(); });
+
+  // ── Sorting ────────────────────────────────────────────────────────
+  function sortBy(ci) {
+    if (sortCol===ci) sortAsc=!sortAsc; else { sortCol=ci; sortAsc=true; }
+    applyFilters();
+  }
+  function updateSortIcons() {
+    document.querySelectorAll('#header-names th').forEach((th,ci) => {
+      th.classList.remove('sorted-asc','sorted-desc');
+      const icon=th.querySelector('.sort-icon');
+      if (ci===sortCol) { th.classList.add(sortAsc?'sorted-asc':'sorted-desc'); icon.textContent=sortAsc?'↑':'↓'; }
+      else icon.textContent='⇅';
+    });
+  }
+
+  // ── Filter + sort ──────────────────────────────────────────────────
+  function applyFilters() {
+    const globalQ = document.getElementById('global-search').value.toLowerCase();
+
+    displayRows = rawRows.filter(row => {
+      if (globalQ && !row.some(v=>v.toLowerCase().includes(globalQ))) return false;
+      if (!colFilters.every((f,ci) => !f || row[ci].toLowerCase().includes(f))) return false;
+      for (const ci in enumFilters) {
+        const s=enumFilters[ci];
+        if (s.size>0 && !s.has(row[ci])) return false;
+      }
+      return true;
+    });
+
+    if (sortCol>=0) {
+      const isNum=capCols[sortCol]||durCols[sortCol]||numCols[sortCol];
+      displayRows.sort((a,b) => {
+        let va=a[sortCol], vb=b[sortCol];
+        if (isNum) { va=parseFloat(va)||0; vb=parseFloat(vb)||0; }
+        else       { va=va.toLowerCase();  vb=vb.toLowerCase(); }
+        return sortAsc ? (va>vb?1:va<vb?-1:0) : (va<vb?1:va>vb?-1:0);
+      });
+    }
+
+    currentPage = 0;
+    renderPage();
+    updateSortIcons();
+    updateFooter();
+  }
+
+  // ── Pagination ─────────────────────────────────────────────────────
+  function renderPage() {
+    const start = currentPage * PAGE_SIZE;
+    renderRows(displayRows.slice(start, start + PAGE_SIZE));
+    document.getElementById('main-scroll').scrollTop = 0;
+  }
+
+  function prevPage() {
+    if (currentPage > 0) { currentPage--; renderPage(); updateFooter(); }
+  }
+  function nextPage() {
+    const total = Math.ceil(displayRows.length / PAGE_SIZE);
+    if (currentPage < total-1) { currentPage++; renderPage(); updateFooter(); }
+  }
+
+  function updateFooter() {
+    const total     = rawRows.length;
+    const filtered  = displayRows.length;
+    const totalPages = Math.max(1, Math.ceil(filtered / PAGE_SIZE));
+    const start     = currentPage * PAGE_SIZE + 1;
+    const end       = Math.min((currentPage + 1) * PAGE_SIZE, filtered);
+
+    let info = filtered === total
+      ? `${total.toLocaleString()} rows`
+      : `${filtered.toLocaleString()} of ${total.toLocaleString()} rows (filtered)`;
+    if (filtered > PAGE_SIZE)
+      info += ` — showing ${start.toLocaleString()}–${end.toLocaleString()}`;
+
+    document.getElementById('footer-info').textContent  = info;
+    document.getElementById('page-label').textContent   = `Page ${currentPage+1} of ${totalPages}`;
+    document.getElementById('btn-prev').disabled        = currentPage === 0;
+    document.getElementById('btn-next').disabled        = currentPage >= totalPages-1;
+
+    // Also update toolbar info
+    document.getElementById('toolbar-info').textContent =
+      filtered === total ? `${total.toLocaleString()} rows`
+                         : `${filtered.toLocaleString()} of ${total.toLocaleString()} rows`;
+  }
+
+  // ── Render rows ────────────────────────────────────────────────────
+  function renderRows(rows) {
+    const div   = DIVISOR[unit];
+    const tbody = document.getElementById('table-body');
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="${columns.length}" class="no-results">No matching rows</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = rows.map(row =>
+      '<tr>' + row.map((val, ci) => {
+        if (capCols[ci]) {
+          const num = parseFloat(val);
+          return `<td class="cap-cell">${isNaN(num) ? escHtml(val) : (num/div).toFixed(2)}</td>`;
+        }
+        if (durCols[ci]) {
+          const num = parseFloat(val);
+          const dd  = DUR_DIVISOR[durUnit];
+          return `<td class="dur-cell">${isNaN(num) ? escHtml(val) : (num/dd).toFixed(2)}</td>`;
+        }
+        if (dateCols[ci]) {
+          return `<td class="date-cell">${escHtml(convertDate(val))}</td>`;
+        }
+        if (numCols[ci]) return `<td class="num-cell">${escHtml(val)}</td>`;
+        return `<td title="${escHtml(val)}">${escHtml(val)}</td>`;
+      }).join('') + '</tr>'
+    ).join('');
+  }
+
+  // ── Timezone ───────────────────────────────────────────────────────
+  function setTz(tzStr) {
+    tz = tzStr;
+    tzLabel = TZ_MAP[tzStr] || tzStr;
+    document.querySelectorAll('#tz-controls .btn-seg').forEach(b => {
+      b.classList.toggle('active', b.textContent === tzLabel);
+    });
+    updateColBadges();
+    renderPage(); // re-render with new tz (no re-filter needed)
+  }
+
+  function convertDate(val) {
+    if (!val || !DATE_VAL_RE.test(val)) return val;
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz === 'UTC' ? 'UTC' : tz,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false
+      }).formatToParts(d);
+      const p = {};
+      parts.forEach(({ type, value }) => p[type] = value);
+      return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+    } catch { return val; }
+  }
+
+  // ── Capacity unit ──────────────────────────────────────────────────
+  function setUnit(u) {
+    unit = u;
+    document.getElementById('btn-gb').classList.toggle('active', u==='GB');
+    document.getElementById('btn-tb').classList.toggle('active', u==='TB');
+    updateColBadges();
+    renderPage();
+  }
+
+  // ── Duration unit ──────────────────────────────────────────────────
+  function setDurUnit(u) {
+    durUnit = u;
+    document.getElementById('btn-sec').classList.toggle('active', u==='Seconds');
+    document.getElementById('btn-min').classList.toggle('active', u==='Minutes');
+    document.getElementById('btn-hr' ).classList.toggle('active', u==='Hours');
+    updateColBadges();
+    renderPage();
+  }
+
+  // ── Clear filters ──────────────────────────────────────────────────
+  function clearAllFilters() {
+    document.getElementById('global-search').value = '';
+    colFilters = columns.map(() => '');
+    document.querySelectorAll('.text-filter').forEach(i => i.value = '');
+    columns.forEach((_, ci) => {
+      if (!enumCols[ci]) return;
+      enumFilters[ci] = new Set();
+      updateMsTrigger(ci);
+    });
+    closeMsPanel();
+    applyFilters();
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function escJs(s) { return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+</script>
+</body>
+</html>

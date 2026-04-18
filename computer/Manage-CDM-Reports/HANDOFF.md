@@ -10,7 +10,7 @@
 Two standalone tools for working with Rubrik CDM custom reports:
 
 1. **`Manage-CDM-Reports.ps1`** — PowerShell CLI for interactively (or non-interactively) listing, viewing, creating, and deleting CDM reports via the internal REST API. Outputs CSVs and HTML chart files to disk.
-2. **`report-viewer.html`** — Static browser-based CSV viewer with filtering, sorting, column type detection, and Rubrik branding. No backend or server required. Reads the CSVs that the script produces.
+2. **`csv-report-viewer.html`** — Static browser-based CSV viewer with filtering, sorting, column type detection, and Rubrik branding. No backend or server required. Reads the CSVs that the script produces.
 
 The two tools are intentionally decoupled. The script writes files to disk; the web app reads them via drag-and-drop or file picker. This avoids CORS and credential exposure — the browser never touches the cluster directly.
 
@@ -20,7 +20,9 @@ The two tools are intentionally decoupled. The script writes files to disk; the 
 
 ```
 computer/
-├── report-viewer.html                  # Standalone web app — open directly in browser
+├── HTML-Apps/
+│   ├── csv-report-viewer.html          # Standalone web app — open directly in browser
+│   └── README.md
 ├── rsc-service-account-rr.json         # Service account credentials (gitignored)
 │
 └── Manage-CDM-Reports/
@@ -32,7 +34,7 @@ computer/
     └── reportExamples/                 # Sample output files (CSV + HTML)
 ```
 
-`report-viewer.html` lives one level up from the script folder because it is a general-purpose tool — it works with any CSV from any script, not just this one.
+`csv-report-viewer.html` lives in `HTML-Apps/` because it is a general-purpose tool — it works with any CSV from any script, not just this one.
 
 ---
 
@@ -187,9 +189,9 @@ Each template has two modes:
 
 ---
 
-## report-viewer.html
+## csv-report-viewer.html
 
-A fully self-contained single-file web app. Open directly in a browser — no server needed. Located at `computer/report-viewer.html`, one level above the script folder, because it is a general-purpose tool that works with any report CSV, not just output from `Manage-CDM-Reports.ps1`.
+A fully self-contained single-file web app. Open directly in a browser — no server needed. Located at `computer/HTML-Apps/csv-report-viewer.html`. Works with any report CSV, not just output from `Manage-CDM-Reports.ps1`.
 
 ### Loading Data
 

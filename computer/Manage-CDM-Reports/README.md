@@ -88,7 +88,7 @@ To write to a subdirectory, set the prefix to include the path (e.g. `"./reports
 
 ## Viewing CSV Output
 
-The CSV files produced by this script can be loaded into [`report-viewer.html`](../report-viewer.html) — a standalone browser-based viewer located one level up. Drag a CSV onto the drop zone or click to browse. The viewer handles column type detection (capacity, duration, date, enum), filtering, sorting, and timezone conversion with no server required.
+The CSV files produced by this script can be loaded into [`csv-report-viewer.html`](../HTML-Apps/csv-report-viewer.html) — a standalone browser-based viewer in the `HTML-Apps/` folder. Drag a CSV onto the drop zone or click to browse. The viewer handles column type detection (capacity, duration, date, enum), filtering, sorting, and timezone conversion with no server required.
 
 ## Report Templates
 
