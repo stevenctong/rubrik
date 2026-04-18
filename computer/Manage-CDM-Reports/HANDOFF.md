@@ -140,8 +140,9 @@ Report status is color-coded: **Ready** = green, **Updating** = yellow. Updating
 | Option | API Call | Output |
 |--------|----------|--------|
 | 1 — View charts | `GET /report/{id}/chart` | HTML file opened in browser |
-| 2 — Get table data | `GET /report/{id}/csv_link` → download | CSV file saved to disk |
-| 3 — Delete report | `DELETE /report/{id}` | Confirmation prompt required |
+| 2 — Export table as CSV | `GET /report/{id}/csv_link` → download | CSV file saved to disk |
+| 3 — View config JSON | `GET /report/{id}` | Full config printed; press Enter to continue |
+| 4 — Delete report | `DELETE /report/{id}` | Confirmation prompt required |
 
 ### Chart HTML Generation
 

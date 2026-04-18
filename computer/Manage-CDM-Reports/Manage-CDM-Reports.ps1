@@ -1,8 +1,8 @@
 # https://www.rubrik.com/api
 <#
 .SYNOPSIS
-Interactive report manager for Rubrik CDM clusters using the local REST API — 
-list, view, create, and delete custom reports.
+Interactive report manager for Rubrik CDM clusters using the local REST API —
+list, view, create, export, and delete custom reports.
 
 .DESCRIPTION
 Authenticates to a Rubrik CDM cluster using a RSC Service Account JSON file.
@@ -16,13 +16,15 @@ Then the script presents a persistent interactive loop that supports:
     - Enter 'r' or 'refresh' to re-fetch the list. Press Enter to exit.
 
   Actions on a selected report:
-    1. View charts    — fetches chart data via GET /report/{id}/chart, builds an HTML
-                        file with Chart.js visualizations, and opens it in the browser.
-                        Byte-based measures (storage, data transferred, etc.) are
-                        auto-scaled to the appropriate unit (MB/GB/TB/PB).
-    2. Export table data as CSV — requests a CSV export link via GET /report/{id}/csv_link and
-                        downloads the CSV to a timestamped local file.
-    3. Delete report  — prompts for confirmation, then calls DELETE /report/{id}.
+    1. View charts         — fetches chart data via GET /report/{id}/chart, builds an HTML
+                             file with Chart.js visualizations, and opens it in the browser.
+                             Byte-based measures (storage, data transferred, etc.) are
+                             auto-scaled to the appropriate unit (MB/GB/TB/PB).
+    2. Export table as CSV — requests a CSV export link via GET /report/{id}/csv_link and
+                             downloads the CSV to a timestamped local file.
+    3. View config JSON    — fetches and displays the full report configuration via
+                             GET /report/{id}. Press Enter to return to the report list.
+    4. Delete report       — prompts for confirmation, then calls DELETE /report/{id}.
 
   Creating a new report (enter 'new' at the list prompt):
     - Choose from 9 hardcoded report templates (sourced from CDM 9.2 User Guide).
@@ -37,8 +39,8 @@ Then the script presents a persistent interactive loop that supports:
     - After creation, loops back to the report list.
 
   Output files:
-    - HTML chart file : ./<htmlOutputPrefix>-<ReportName>-yyyy-MM-dd_HHmm.html
-    - CSV table file  : ./<csvOutputPrefix>-<ReportName>-yyyy-MM-dd_HHmm.csv
+    - HTML chart file : ./<htmlOutputPrefix><ReportName>-yyyy-MM-dd_HHmm.html
+    - CSV table file  : ./<csvOutputPrefix><ReportName>-yyyy-MM-dd_HHmm.csv
 
 .PARAMETER serviceAccountPath
 Path to the RSC Service Account JSON file. The file must contain the fields:
@@ -74,8 +76,8 @@ and is deleted on exit via DELETE /api/v1/session/{id}.
 ./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
 
 Launches the interactive report manager. Lists all reports; enter a row number or
-Report ID to select one, then choose to view charts, download CSV, or delete.
-Enter 'new' to create a report using the wizard. Press Enter to exit.
+Report ID to select one, then choose to view charts, download CSV, view config JSON,
+or delete. Enter 'new' to create a report using the wizard. Press Enter to exit.
 
 .EXAMPLE
 ./Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -getCSV
@@ -901,8 +903,9 @@ while ($true) {
   Write-Host "`nSelect an action:"
   Write-Host "  1. View charts"
   Write-Host "  2. Export table data as CSV"
-  Write-Host "  3. Delete report"
-  $action = Read-Host "Enter selection (1, 2, or 3)"
+  Write-Host "  3. View report config JSON"
+  Write-Host "  4. Delete report"
+  $action = Read-Host "Enter selection (1, 2, 3, or 4)"
 
   # ══════════════════════════════════════════════════════════════════════
   #  ACTION 1 — CHARTS
@@ -958,9 +961,28 @@ while ($true) {
     continue
 
   # ══════════════════════════════════════════════════════════════════════
-  #  ACTION 3 — DELETE REPORT
+  #  ACTION 3 — VIEW REPORT CONFIG JSON
   # ══════════════════════════════════════════════════════════════════════
   } elseif ($action -eq '3') {
+
+    Write-Host "`nFetching report config..."
+    try {
+      $reportConfig = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $headers `
+        -Uri "https://$clusterIP/api/internal/report/$([Uri]::EscapeDataString($reportId))"
+    } catch {
+      Write-Error "Failed to retrieve report config: $($_.Exception.Message)"
+      continue
+    }
+
+    Write-Host "`n--- Report Config: $reportName ---" -ForegroundColor Cyan
+    Write-Host ($reportConfig | ConvertTo-Json -Depth 10)
+    Read-Host "`nPress Enter to continue"
+    continue
+
+  # ══════════════════════════════════════════════════════════════════════
+  #  ACTION 4 — DELETE REPORT
+  # ══════════════════════════════════════════════════════════════════════
+  } elseif ($action -eq '4') {
 
     Write-Host "`nReport to delete: $reportName ($reportId)" -ForegroundColor Yellow
     $confirm = Read-Host "Type 'yes' to confirm deletion"
@@ -980,7 +1002,7 @@ while ($true) {
     continue
 
   } else {
-    Write-Error "Invalid selection: '$action'. Enter 1, 2, or 3."
+    Write-Error "Invalid selection: '$action'. Enter 1, 2, 3, or 4."
     continue
   }
 

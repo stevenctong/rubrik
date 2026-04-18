@@ -7,6 +7,7 @@ PowerShell script for managing custom reports on a Rubrik CDM cluster via the in
 - **List reports** — displays all reports with name, status (color-coded), ID, and template type
 - **View charts** — fetches chart data and generates a local HTML file with Chart.js visualizations, opened automatically in the browser
 - **Export CSV** — downloads the report's table data as a timestamped CSV
+- **View config JSON** — fetches and displays the full report configuration via `GET /report/{id}`
 - **Delete reports** — with confirmation prompt
 - **Create reports** — guided wizard supporting all 9 CDM report templates in Default or Customize mode
 - **Non-interactive mode** — pass `-getCSV` / `-getHTML` with a `-reportID` to skip the prompt and run from a script or scheduler
@@ -42,7 +43,8 @@ Lists all reports. Enter a row number or Report ID to select a report, then choo
 ```
 1 - View charts (generates HTML, opens in browser)
 2 - Export table data as CSV
-3 - Delete report
+3 - View report config JSON
+4 - Delete report
 ```
 
 Enter `new` to create a report using the wizard. Enter `r` to refresh the list. Press Enter to exit.
