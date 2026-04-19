@@ -28,6 +28,14 @@
     .btn-seg.active    { background: white; color: #00B2A9; border-color: white; }
     .btn-seg:hover:not(.active) { background: rgba(0,0,0,0.1); }
 
+    .topbar-select {
+      padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;
+      background: rgba(0,0,0,0.15); color: rgba(255,255,255,0.9);
+      border: 1px solid rgba(255,255,255,0.3); cursor: pointer; outline: none;
+    }
+    .topbar-select:hover { background: rgba(0,0,0,0.25); }
+    .topbar-select option { background: #007A73; color: white; }
+
     .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
     .mini-drop {
@@ -129,6 +137,17 @@
 
     .no-results { text-align: center; padding: 40px; color: #999; font-size: 14px; }
 
+    /* ── Loading & threshold messages ── */
+    #loading-msg, #threshold-msg {
+      display: none; margin: 40px auto; max-width: 520px; background: white;
+      border: 2px solid #b0d8d6; border-radius: 12px;
+      padding: 50px 40px; text-align: center; color: #555;
+    }
+    #loading-msg .dz-icon, #threshold-msg .dz-icon { font-size: 40px; margin-bottom: 12px; }
+    #loading-msg p, #threshold-msg p { font-size: 15px; margin-bottom: 8px; }
+    #threshold-msg .stat { font-size: 13px; color: #777; margin-bottom: 4px; }
+    #threshold-msg .action { font-size: 14px; color: #007A73; font-weight: 600; margin-top: 14px; }
+
     /* ── Fixed footer ── */
     .app-footer {
       flex-shrink: 0;
@@ -217,6 +236,31 @@
     <button class="btn btn-seg"        id="btn-hr"  onclick="setDurUnit('Hours')">Hr</button>
   </div>
 
+  <!-- Pre-filters -->
+  <div class="topbar-divider"></div>
+  <label style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
+    <input type="checkbox" id="log-filter-cb" checked onchange="toggleLogFilter()" style="accent-color:white; cursor:pointer;">
+    <span>Filter Log Events</span>
+  </label>
+  <label style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
+    <input type="checkbox" id="idx-filter-cb" checked onchange="toggleIndexFilter()" style="accent-color:white; cursor:pointer;">
+    <span>Filter Index Events</span>
+  </label>
+
+  <!-- Row limit -->
+  <div class="topbar-divider"></div>
+  <span class="group-label">Load:</span>
+  <select id="row-limit-sel" class="topbar-select" onchange="setRowLimit()"
+    title="Max rows to display. Apply filters to narrow results below this limit.">
+    <option value="50000">50k</option>
+    <option value="100000">100k</option>
+    <option value="200000">200k</option>
+    <option value="300000" selected>300k</option>
+    <option value="500000">500k</option>
+    <option value="1000000">1M</option>
+  </select>
+  <span class="group-label">events</span>
+
   <div class="topbar-right">
     <div class="mini-drop" id="mini-drop" onclick="document.getElementById('file-input').click()">
       <span>📂</span>
@@ -233,7 +277,7 @@
 <div class="toolbar" id="toolbar" style="display:none">
   <div class="search-wrap">
     <span class="search-icon">&#128269;</span>
-    <input type="text" id="global-search" placeholder="Search all columns…" oninput="applyFilters()">
+    <input type="text" id="global-search" placeholder="Search all columns…" oninput="debouncedApplyFilters()">
   </div>
   <button class="clear-btn" onclick="clearAllFilters()">Clear filters</button>
   <div class="toolbar-right" id="toolbar-info"></div>
@@ -241,6 +285,12 @@
 
 <!-- Drop zone -->
 <div id="main-scroll">
+  <!-- Loading indicator -->
+  <div id="loading-msg">
+    <div class="dz-icon">&#9203;</div>
+    <p id="loading-text">Loading CSV...</p>
+  </div>
+
   <div id="drop-zone" onclick="document.getElementById('file-input').click()">
     <div class="dz-icon">📂</div>
     <p>Click to import a CSV file</p>
@@ -257,6 +307,7 @@
       </thead>
       <tbody id="table-body"></tbody>
     </table>
+    <div id="threshold-msg"></div>
   </div>
 </div>
 
@@ -283,6 +334,10 @@
 </div>
 
 <script>
+  // ── Pre-filters ────────────────────────────────────────────────────
+  const LOG_FILTER_RE   = /^log/i;    // TaskType values starting with "Log"
+  const INDEX_FILTER_RE = /^index$/i; // TaskType value "Index" (exact match)
+
   // ── Column-type keywords ───────────────────────────────────────────
   // Exact normalized column names that are capacities
   const CAP_EXACT    = new Set(['logicalbytes','bytestransferred','localmetereddata']);
@@ -324,8 +379,13 @@
   let tzLabel     = 'UTC';
   let sortCol     = -1;
   let sortAsc     = true;
-  let displayRows = [];           // filtered+sorted full result
-  let currentPage = 0;
+  let filterLogEvents   = true;    // log event filter toggle (default on)
+  let filterIndexEvents = true;    // index event filter toggle (default on)
+  let taskTypeColIdx    = -1;      // index of TaskType column (-1 if absent)
+  let rowLimit          = 300000;  // display threshold, controlled by dropdown
+  let effectiveRows     = [];      // rawRows after pre-filtering
+  let displayRows     = [];        // filtered+sorted full result
+  let currentPage     = 0;
 
   const DIVISOR     = { GB: 1e9, TB: 1e12 };
   const DUR_DIVISOR = { Seconds: 1, Minutes: 60, Hours: 3600 };
@@ -356,13 +416,58 @@
     e.preventDefault(); md.classList.remove('drag-over');
     if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
   });
-  function loadFile(f) { const r=new FileReader(); r.onload=e=>parseCSV(e.target.result); r.readAsText(f); }
+  function loadFile(f) {
+    showLoading('Loading CSV...');
+    const r = new FileReader();
+    r.onload = e => setTimeout(() => parseCSV(e.target.result), 50);
+    r.readAsText(f);
+  }
+
+  function showLoading(msg) {
+    document.getElementById('loading-text').textContent = msg || 'Loading CSV...';
+    document.getElementById('loading-msg').style.display = 'block';
+    document.getElementById('drop-zone').style.display   = 'none';
+    document.getElementById('table-section').style.display = 'none';
+  }
+  function hideLoading() { document.getElementById('loading-msg').style.display = 'none'; }
 
   // ── CSV parser ─────────────────────────────────────────────────────
-  function parseCSV(text) {
-    const lines = text.trim().split(/\r?\n/);
-    if (lines.length < 2) return;
+  // Join continuation lines when a quoted field spans multiple lines
+  function joinQuotedLines(lines) {
+    const result = [];
+    let current = '';
+    let open = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (open) {
+        current += '\n' + lines[i];
+      } else {
+        current = lines[i];
+      }
+      // Count unescaped quotes to determine if a field is still open
+      let quotes = 0;
+      for (let j = 0; j < lines[i].length; j++) {
+        if (lines[i][j] === '"') quotes++;
+      }
+      // Odd number of quotes toggles the open state
+      if (quotes % 2 === 1) open = !open;
+      if (!open) {
+        result.push(current);
+        current = '';
+      }
+    }
+    // If still open at end, push whatever we have
+    if (current) result.push(current);
+    return result;
+  }
 
+  function parseCSV(text) {
+    const rawLines = text.trim().split(/\r?\n/);
+    if (rawLines.length < 2) { hideLoading(); return; }
+
+    document.getElementById('loading-text').textContent =
+      `Parsing ${(rawLines.length - 1).toLocaleString()} rows...`;
+
+    const lines = joinQuotedLines(rawLines);
     columns     = parseLine(lines[0]);
     rawRows     = lines.slice(1).map(parseLine);
     capCols     = columns.map(c => isCapCol(c));
@@ -373,26 +478,34 @@
     enumFilters = {};
     enumValues  = {};
 
+    // Detect TaskType column
+    taskTypeColIdx = columns.findIndex(c => normCol(c) === 'tasktype');
+    document.getElementById('log-filter-cb').checked = filterLogEvents;
+
+    // Apply log filter and build effectiveRows
+    applyPreFilters();
+
+    // Build enum values from effectiveRows
     columns.forEach((_, ci) => {
       if (!enumCols[ci]) return;
-      enumValues[ci]  = [...new Set(rawRows.map(r=>r[ci]).filter(v=>v!==''))].sort();
+      enumValues[ci]  = [...new Set(effectiveRows.map(r=>r[ci]).filter(v=>v!==''))].sort();
       enumFilters[ci] = new Set();
     });
 
     numCols = columns.map((_, ci) => {
       if (capCols[ci] || durCols[ci] || enumCols[ci] || dateCols[ci]) return false;
-      const sample = rawRows.slice(0,10).map(r=>r[ci]);
+      const sample = effectiveRows.slice(0,10).map(r=>r[ci]);
       return sample.every(v => v==='' || !isNaN(Number(v)));
     });
 
-    document.getElementById('drop-zone').style.display     = 'none';
-    document.getElementById('table-section').style.display = 'block';
-    document.getElementById('toolbar').style.display       = 'flex';
-    document.getElementById('app-footer').style.display    = 'flex';
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('toolbar').style.display   = 'flex';
+    document.getElementById('app-footer').style.display = 'flex';
 
     sortCol = -1; sortAsc = true; currentPage = 0;
     buildHeaders();
-    applyFilters();
+    hideLoading();
+    checkThreshold();
   }
 
   function parseLine(line) {
@@ -405,6 +518,81 @@
     }
     result.push(cur);
     return result;
+  }
+
+  // ── Pre-filters & threshold ─────────────────────────────────────────
+  function applyPreFilters() {
+    let rows = rawRows;
+    if (filterLogEvents && taskTypeColIdx >= 0)
+      rows = rows.filter(r => !LOG_FILTER_RE.test(r[taskTypeColIdx]));
+    if (filterIndexEvents && taskTypeColIdx >= 0)
+      rows = rows.filter(r => !INDEX_FILTER_RE.test(r[taskTypeColIdx]));
+    effectiveRows = rows;
+  }
+
+  function checkThreshold() {
+    document.getElementById('table-section').style.display = 'block';
+    if (effectiveRows.length > rowLimit) {
+      document.getElementById('table-body').innerHTML = '';
+      showThresholdMessage(effectiveRows.length);
+    } else {
+      document.getElementById('threshold-msg').style.display = 'none';
+      applyFilters();
+    }
+  }
+
+  function showThresholdMessage(filteredCount) {
+    const total = rawRows.length;
+    const logCount = (taskTypeColIdx >= 0 && filterLogEvents)
+      ? rawRows.filter(r => LOG_FILTER_RE.test(r[taskTypeColIdx])).length : 0;
+    const idxCount = (taskTypeColIdx >= 0 && filterIndexEvents)
+      ? rawRows.filter(r => INDEX_FILTER_RE.test(r[taskTypeColIdx])).length : 0;
+    const el = document.getElementById('threshold-msg');
+    let html = `<div class="dz-icon">&#128202;</div>`;
+    html += `<p style="font-size:17px;font-weight:600;color:#333;">Dataset Too Large to Display</p>`;
+    html += `<p class="stat">Total rows: ${total.toLocaleString()}</p>`;
+    if (logCount > 0)
+      html += `<p class="stat">Log events filtered: ${logCount.toLocaleString()}</p>`;
+    if (idxCount > 0)
+      html += `<p class="stat">Index events filtered: ${idxCount.toLocaleString()}</p>`;
+    html += `<p class="stat">Remaining rows: ${filteredCount.toLocaleString()}</p>`;
+    html += `<p class="action">Apply filters to narrow below ${rowLimit.toLocaleString()} rows</p>`;
+    el.innerHTML = html;
+    el.style.display = 'block';
+    updateFooter();
+  }
+
+  function toggleLogFilter() {
+    filterLogEvents = document.getElementById('log-filter-cb').checked;
+    applyPreFilters();
+    // Rebuild enum values from effectiveRows
+    columns.forEach((_, ci) => {
+      if (!enumCols[ci]) return;
+      enumValues[ci] = [...new Set(effectiveRows.map(r=>r[ci]).filter(v=>v!==''))].sort();
+      // Remove any enum filter selections that no longer exist
+      const valid = new Set(enumValues[ci]);
+      enumFilters[ci] = new Set([...enumFilters[ci]].filter(v => valid.has(v)));
+      updateMsTrigger(ci);
+    });
+    checkThreshold();
+  }
+
+  function toggleIndexFilter() {
+    filterIndexEvents = document.getElementById('idx-filter-cb').checked;
+    applyPreFilters();
+    columns.forEach((_, ci) => {
+      if (!enumCols[ci]) return;
+      enumValues[ci] = [...new Set(effectiveRows.map(r=>r[ci]).filter(v=>v!==''))].sort();
+      const valid = new Set(enumValues[ci]);
+      enumFilters[ci] = new Set([...enumFilters[ci]].filter(v => valid.has(v)));
+      updateMsTrigger(ci);
+    });
+    checkThreshold();
+  }
+
+  function setRowLimit() {
+    rowLimit = parseInt(document.getElementById('row-limit-sel').value);
+    if (rawRows.length > 0) checkThreshold();
   }
 
   // ── Headers ────────────────────────────────────────────────────────
@@ -440,7 +628,7 @@
         inp.type      = 'text';
         inp.className = 'text-filter';
         inp.placeholder = 'Filter…';
-        inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); applyFilters(); };
+        inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); debouncedApplyFilters(); };
         tf.appendChild(inp);
       }
       filterRow.appendChild(tf);
@@ -495,21 +683,21 @@
   function msTog(val) {
     if (activeMsCi<0) return;
     const s=enumFilters[activeMsCi]; s.has(val)?s.delete(val):s.add(val);
-    updateMsTrigger(activeMsCi); applyFilters();
+    updateMsTrigger(activeMsCi); debouncedApplyFilters();
   }
   function msSelectAll() {
     if (activeMsCi<0) return;
     const q=document.getElementById('ms-search').value.toLowerCase();
     const vals=enumValues[activeMsCi]||[];
     (q?vals.filter(v=>v.toLowerCase().includes(q)):vals).forEach(v=>enumFilters[activeMsCi].add(v));
-    renderMsItems(); updateMsTrigger(activeMsCi); applyFilters();
+    renderMsItems(); updateMsTrigger(activeMsCi); debouncedApplyFilters();
   }
   function msClearAll() {
     if (activeMsCi<0) return;
     const q=document.getElementById('ms-search').value.toLowerCase();
     const vals=enumValues[activeMsCi]||[];
     (q?vals.filter(v=>v.toLowerCase().includes(q)):vals).forEach(v=>enumFilters[activeMsCi].delete(v));
-    renderMsItems(); updateMsTrigger(activeMsCi); applyFilters();
+    renderMsItems(); updateMsTrigger(activeMsCi); debouncedApplyFilters();
   }
   function updateMsTrigger(ci) {
     const btn=document.querySelector(`.ms-trigger[data-ci="${ci}"]`);
@@ -543,7 +731,7 @@
   function applyFilters() {
     const globalQ = document.getElementById('global-search').value.toLowerCase();
 
-    displayRows = rawRows.filter(row => {
+    displayRows = effectiveRows.filter(row => {
       if (globalQ && !row.some(v=>v.toLowerCase().includes(globalQ))) return false;
       if (!colFilters.every((f,ci) => !f || row[ci].toLowerCase().includes(f))) return false;
       for (const ci in enumFilters) {
@@ -552,6 +740,18 @@
       }
       return true;
     });
+
+    // Re-check threshold when dataset is large
+    if (effectiveRows.length > rowLimit) {
+      if (displayRows.length > rowLimit) {
+        document.getElementById('table-body').innerHTML = '';
+        showThresholdMessage(displayRows.length);
+        updateSortIcons();
+        return;
+      } else {
+        document.getElementById('threshold-msg').style.display = 'none';
+      }
+    }
 
     if (sortCol>=0) {
       const isNum=capCols[sortCol]||durCols[sortCol]||numCols[sortCol];
@@ -585,7 +785,7 @@
   }
 
   function updateFooter() {
-    const total     = rawRows.length;
+    const total     = effectiveRows.length;
     const filtered  = displayRows.length;
     const totalPages = Math.max(1, Math.ceil(filtered / PAGE_SIZE));
     const start     = currentPage * PAGE_SIZE + 1;
@@ -698,6 +898,12 @@
   }
 
   // ── Helpers ────────────────────────────────────────────────────────
+  let _debounceTimer = null;
+  function debouncedApplyFilters() {
+    clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(applyFilters, 2000);
+  }
+
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
