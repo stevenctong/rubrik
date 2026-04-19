@@ -90,7 +90,7 @@ To write to a subdirectory, set the prefix to include the path (e.g. `"./reports
 
 ## Viewing CSV Output
 
-The CSV files produced by this script can be loaded into [`csv-report-viewer.html`](../HTML-Apps/csv-report-viewer.html) — a standalone browser-based viewer in the `HTML-Apps/` folder. Drag a CSV onto the drop zone or click to browse. The viewer handles column type detection (capacity, duration, date, enum), filtering, sorting, and timezone conversion with no server required.
+The CSV files produced by this script can be loaded into [`csv-report-viewer.html`](../../HTML-Apps/csv-report-viewer.html) — a standalone browser-based viewer in the `HTML-Apps/` folder. Drag a CSV onto the drop zone or click to browse. The viewer handles column type detection (capacity, duration, date, enum), filtering, sorting, and timezone conversion with no server required.
 
 ## Report Templates
 
@@ -113,8 +113,7 @@ Each template supports **Default** mode (uses the template's standard config) an
 ## Files in This Folder
 
 ```
-Get-Manage-CDM-Reports/
-├── Get-Manage-CDM-Reports.ps1   # Main script
+Artifacts/Get-Manage-CDM-Reports/
 ├── README.md                # This file
 ├── HANDOFF.md               # Developer/maintainer notes
 ├── docs/                    # Reference PDFs
@@ -122,5 +121,7 @@ Get-Manage-CDM-Reports/
 │   └── Rubrik CDM 9.3 User Guide Excerpt - Chapter 27 Reports.pdf
 └── reportExamples/          # Sample CSV and HTML output
 ```
+
+The script itself is at `computer/Powershell/Get-Manage-CDM-Reports.ps1`.
 
 For developer notes — API schema location, enum quirks, architecture decisions, and future work — see [HANDOFF.md](HANDOFF.md).

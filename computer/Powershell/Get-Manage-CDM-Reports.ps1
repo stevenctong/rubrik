@@ -72,6 +72,8 @@ Requires PowerShell 7+.
 The CDM Bearer token is obtained via POST /api/v1/service_account/session
 and is deleted on exit via DELETE /api/v1/session/{id}.
 
+Artifacts (docs, examples): computer/Artifacts/Get-Manage-CDM-Reports/
+
 .EXAMPLE
 ./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104'
 

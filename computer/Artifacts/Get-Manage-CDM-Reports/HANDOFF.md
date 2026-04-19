@@ -20,18 +20,21 @@ The two tools are intentionally decoupled. The script writes files to disk; the 
 
 ```
 computer/
+├── Powershell/
+│   ├── Get-Manage-CDM-Reports.ps1      # Main PowerShell script
+│   └── Get-RSC-Reports.ps1
+├── Artifacts/
+│   └── Get-Manage-CDM-Reports/
+│       ├── HANDOFF.md                  # This file
+│       ├── README.md
+│       ├── docs/
+│       │   ├── Rubrik CDM 9.2 User Guide Excerpt- Chapter 27 Reports.pdf
+│       │   └── Rubrik CDM 9.3 User Guide Excerpt - Chapter 27 Reports.pdf
+│       └── reportExamples/             # Sample output files (CSV + HTML)
 ├── HTML-Apps/
 │   ├── csv-report-viewer.html          # Standalone web app — open directly in browser
 │   └── README.md
-├── rsc-service-account-rr.json         # Service account credentials (gitignored)
-│
-└── Get-Manage-CDM-Reports/
-    ├── Get-Manage-CDM-Reports.ps1          # Main PowerShell script
-    ├── HANDOFF.md                      # This file
-    ├── docs/
-    │   ├── Rubrik CDM 9.2 User Guide Excerpt- Chapter 27 Reports.pdf
-    │   └── Rubrik CDM 9.3 User Guide Excerpt - Chapter 27 Reports.pdf
-    └── reportExamples/                 # Sample output files (CSV + HTML)
+└── rsc-service-account-rr.json         # Service account credentials (gitignored)
 ```
 
 `csv-report-viewer.html` lives in `HTML-Apps/` because it is a general-purpose tool — it works with any CSV from any script, not just this one.
