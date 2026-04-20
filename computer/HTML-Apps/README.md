@@ -23,3 +23,7 @@ Load a CSV by dragging it onto the drop zone or clicking to browse.
 Located at [`computer/Powershell/Get-Manage-CDM-Reports.ps1`](../Powershell/Get-Manage-CDM-Reports.ps1) — not part of this app, but pairs well with it. Supporting docs and examples are in [`Artifacts/Get-Manage-CDM-Reports/`](../Artifacts/Get-Manage-CDM-Reports/).
 
 It is a PowerShell script that connects to a Rubrik CDM cluster via the REST API to list, create, and export custom reports. Use it to download report CSVs, then drag them into `csv-report-viewer.html`.
+
+### Get-Capacity-Change-Report
+
+Located at [`computer/Powershell/Get-Capacity-Change-Report.ps1`](../Powershell/Get-Capacity-Change-Report.ps1) — calculates capacity changes per object from an RSC "Object Capacity Over Time" report. Outputs a detailed CSV (among other formats) that can be viewed in `csv-report-viewer.html`. Supporting docs in [`Artifacts/Get-Capacity-Change-Report/`](../Artifacts/Get-Capacity-Change-Report/).

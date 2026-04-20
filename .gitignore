@@ -10,3 +10,4 @@ CLAUDE.md
 *service-account*.json
 *service_account*.json
 computer/Artifacts/csv-report-viewer/example_reports/
+computer/Artifacts/*/Internal*/
