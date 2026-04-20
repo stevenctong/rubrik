@@ -2,7 +2,7 @@
 
 ## What Was Done
 
-Built a new PowerShell script (`computer/working/Get-Capacity-Change-Report.ps1`) that processes RSC "Object Capacity Over Time" CSV reports and generates capacity change analysis with HTML + CSV output.
+Built a new PowerShell script (`computer/Powershell/Get-Capacity-Change-Report.ps1`) that processes RSC "Object Capacity Over Time" CSV reports and generates capacity change analysis with HTML + CSV output. Supports both local CSV input and direct RSC report pulling via GraphQL API.
 
 ## Files
 
@@ -37,7 +37,7 @@ Both use the standard RSC "Object Capacity Over Time" report format (31 columns)
 
 These were discussed and agreed upon one-by-one:
 
-1. **Offline/CSV-only** — no API calls. User downloads CSV from RSC, feeds it to script. API is a future phase.
+1. **Dual input mode** — local CSV via `-csvPath`, or pull directly from RSC via `-RscServiceAccountJson` + `-reportID`. RSC functions copied inline (standalone script).
 2. **4-part unique key** — `Cluster+Name+Location+ObjectType`. Originally planned as 3-part, changed to 4-part after discovering M365 objects share names across types (Teams vs Site).
 3. **Auto-detect daily vs monthly** — from Time field format. Defaults: daily = `-7, -14, -30`, monthly = `-1, -3, -6, -12`. User can override via `-compDates`.
 4. **Date clamping** — if CSV doesn't go back far enough, substitute oldest date and drop further lookbacks. If only 3 days of data, result is just `-3 Days`.
