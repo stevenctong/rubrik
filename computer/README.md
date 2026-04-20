@@ -6,7 +6,7 @@ A collection of apps and scripts for Rubrik.
 |--------|-------------|
 | [`Powershell/`](Powershell/) | All PowerShell scripts — download and run directly. |
 | [`Artifacts/`](Artifacts/) | Supporting docs, examples, and reference materials organized by tool name. |
-| [`HTML-Apps/`](HTML-Apps/) | Standalone browser-based tools — open directly in a browser, no server required. Includes `csv-report-viewer.html` for viewing and filtering report CSVs with column type detection and Rubrik branding. Artifacts: [`Artifacts/csv-report-viewer/`](Artifacts/csv-report-viewer/) |
+| [`HTML-Apps/`](HTML-Apps/) | Standalone browser-based tools — open directly in a browser, no server required. Includes `csv-report-viewer.html` for viewing and filtering report CSVs with column type detection, resizable/frozen columns, and Rubrik branding. Auto-detects output from `Get-Capacity-Change-Report.ps1` for a specialized capacity change view with multi-period comparison and aggregate summaries. Artifacts: [`Artifacts/csv-report-viewer/`](Artifacts/csv-report-viewer/) |
 | [`Core/`](Core/) | Reusable authentication blocks (RSC and CDM) — reference implementations copied inline into scripts. |
 
 ## Scripts

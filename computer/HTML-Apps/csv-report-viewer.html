@@ -96,9 +96,17 @@
       position: sticky; top: 0; z-index: 10;
       user-select: none; cursor: pointer;
       border-right: 1px solid rgba(255,255,255,0.15);
+      overflow: hidden;
     }
     thead tr.header-names th:hover { background: #006960; }
-    thead tr.header-names th .col-label { display: flex; align-items: center; gap: 5px; }
+    .col-resize-handle {
+      position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
+      cursor: col-resize; z-index: 20;
+    }
+    .col-resize-handle:hover { background: rgba(255,255,255,0.3); }
+    body.col-resizing { cursor: col-resize !important; user-select: none; }
+    body.col-resizing * { cursor: col-resize !important; }
+    thead tr.header-names th .col-label { display: flex; align-items: center; gap: 5px; overflow: hidden; }
     thead tr.header-names th .sort-icon { font-size: 10px; opacity: 0.45; margin-left: auto; padding-left: 6px; }
     thead tr.header-names th.sorted-asc  .sort-icon,
     thead tr.header-names th.sorted-desc .sort-icon { opacity: 1; color: #b2f0ec; }
@@ -200,6 +208,106 @@
     .ms-item input[type="checkbox"] { cursor: pointer; accent-color: #00B2A9; flex-shrink: 0; }
     .ms-item label { cursor: pointer; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ms-no-match { padding: 10px; text-align: center; color: #999; font-size: 12px; }
+
+    /* ── Summary bar (capacity change mode) ── */
+    #summary-bar {
+      display: none;
+      flex-shrink: 0;
+      background: #f7f9fc;
+      border-bottom: 2px solid #b0d8d6;
+      font-size: 12px;
+      color: #333;
+      z-index: 98;
+    }
+    .summary-toggle {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 20px; cursor: pointer; user-select: none;
+      font-size: 12px; font-weight: 600; color: #007A73;
+    }
+    .summary-toggle:hover { background: #eef7f6; }
+    .summary-toggle .toggle-icon { font-size: 10px; transition: transform 0.15s; }
+    .summary-toggle .toggle-icon.collapsed { transform: rotate(-90deg); }
+    #summary-body { padding: 0 20px 8px; }
+    .summary-row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .summary-stat {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .summary-stat .stat-label { color: #666; }
+    .summary-stat .stat-value { font-weight: 600; color: #1a1a1a; }
+    .summary-divider { width: 1px; height: 18px; background: #dde2ea; flex-shrink: 0; }
+    .summary-metric { display: flex; align-items: center; gap: 4px; }
+    .summary-metric .metric-name { color: #666; font-size: 11px; }
+    .summary-metric .metric-val { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    /* ── Change value colors ── */
+    .chg-pos { color: #c0392b; }
+    .chg-neg { color: #27ae60; }
+    .chg-zero { color: #999; }
+
+    /* ── Period checkboxes ── */
+    .period-check {
+      display: flex; align-items: center; gap: 4px; cursor: pointer;
+      font-size: 12px; color: rgba(255,255,255,0.9); user-select: none;
+    }
+    .period-check input { accent-color: white; cursor: pointer; }
+
+    /* ── Cross-period summary table ── */
+    #summary-bar table { border-collapse: collapse; width: auto; font-size: 12px; }
+    #summary-bar th {
+      padding: 5px 12px; text-align: right; white-space: nowrap;
+      color: #00B2A9; font-weight: 600; border-bottom: 2px solid #b0d8d6;
+    }
+    #summary-bar th:first-child { text-align: left; }
+    #summary-bar td {
+      padding: 4px 12px; text-align: right; white-space: nowrap;
+      border-bottom: 1px solid #edf0f5; font-variant-numeric: tabular-nums;
+    }
+    #summary-bar td:first-child { text-align: left; font-weight: 600; color: #333; }
+    #summary-bar tr:nth-child(even) td { background: #f9f9f9; }
+    #summary-bar tr.baseline-row td { font-weight: 600; }
+
+    /* ── Frozen columns (capacity change mode) ── */
+    .frozen-col {
+      position: sticky;
+      z-index: 5;
+      background: inherit;
+    }
+    thead tr.header-names th.frozen-col {
+      z-index: 15;
+      background: #007A73;
+    }
+    thead tr.header-names th.frozen-col.chg-col-header {
+      background: #005f58;
+    }
+    thead tr.header-filters th.frozen-col {
+      z-index: 14;
+      background: #f7f9fc;
+    }
+    tbody td.frozen-col {
+      background: white;
+    }
+    tbody tr:nth-child(even) td.frozen-col {
+      background: #fafbfd;
+    }
+    tbody tr:hover td.frozen-col {
+      background: #f0fffe;
+    }
+    /* Shadow on last frozen column */
+    .frozen-col-last {
+      border-right: 2px solid #b0d8d6 !important;
+    }
+
+    /* ── Change column header styling ── */
+    thead tr.header-names th.chg-col-header { background: #005f58; }
+    thead tr.header-names th.chg-col-header:hover { background: #004d47; }
   </style>
 </head>
 <body>
@@ -209,8 +317,8 @@
   <h1>Rubrik Report Viewer</h1>
 
   <!-- Timezone -->
-  <div class="topbar-divider"></div>
-  <span class="group-label">Timezone:</span>
+  <div class="topbar-divider" id="tz-divider"></div>
+  <span class="group-label" id="tz-label">Timezone:</span>
   <div class="btn-group" id="tz-controls">
     <button class="btn btn-seg active" onclick="setTz('UTC')">UTC</button>
     <button class="btn btn-seg" onclick="setTz('America/Los_Angeles')">PT</button>
@@ -228,28 +336,28 @@
   </div>
 
   <!-- Duration unit -->
-  <div class="topbar-divider"></div>
-  <span class="group-label">Duration:</span>
+  <div class="topbar-divider" id="dur-divider"></div>
+  <span class="group-label" id="dur-label">Duration:</span>
   <div class="btn-group" id="dur-controls">
     <button class="btn btn-seg active" id="btn-sec" onclick="setDurUnit('Seconds')">Sec</button>
     <button class="btn btn-seg"        id="btn-min" onclick="setDurUnit('Minutes')">Min</button>
     <button class="btn btn-seg"        id="btn-hr"  onclick="setDurUnit('Hours')">Hr</button>
   </div>
 
-  <!-- Pre-filters -->
-  <div class="topbar-divider"></div>
-  <label style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
+  <!-- Pre-filters (standard mode) -->
+  <div class="topbar-divider" id="prefilter-divider"></div>
+  <label id="log-filter-wrap" style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
     <input type="checkbox" id="log-filter-cb" checked onchange="toggleLogFilter()" style="accent-color:white; cursor:pointer;">
     <span>Filter Log Events</span>
   </label>
-  <label style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
+  <label id="idx-filter-wrap" style="display:flex; cursor:pointer; font-size:12px; color:rgba(255,255,255,0.9); align-items:center; gap:5px; user-select:none;">
     <input type="checkbox" id="idx-filter-cb" checked onchange="toggleIndexFilter()" style="accent-color:white; cursor:pointer;">
     <span>Filter Index Events</span>
   </label>
 
-  <!-- Row limit -->
-  <div class="topbar-divider"></div>
-  <span class="group-label">Load:</span>
+  <!-- Row limit (standard mode) -->
+  <div class="topbar-divider" id="rowlimit-divider"></div>
+  <span class="group-label" id="rowlimit-label">Load:</span>
   <select id="row-limit-sel" class="topbar-select" onchange="setRowLimit()"
     title="Max rows to display. Apply filters to narrow results below this limit.">
     <option value="50000">50k</option>
@@ -259,7 +367,12 @@
     <option value="500000">500k</option>
     <option value="1000000">1M</option>
   </select>
-  <span class="group-label">events</span>
+  <span class="group-label" id="rowlimit-events-label">events</span>
+
+  <!-- Comparison period selector (capacity change mode) -->
+  <div class="topbar-divider" id="period-divider" style="display:none"></div>
+  <span class="group-label" id="period-label" style="display:none">Compare:</span>
+  <div id="period-checks" style="display:none; align-items:center; gap:10px;"></div>
 
   <div class="topbar-right">
     <div class="mini-drop" id="mini-drop" onclick="document.getElementById('file-input').click()">
@@ -283,6 +396,17 @@
   <div class="toolbar-right" id="toolbar-info"></div>
 </div>
 
+<!-- Summary bar (capacity change mode) -->
+<div id="summary-bar">
+  <div class="summary-toggle" onclick="toggleSummary()">
+    <span class="toggle-icon" id="summary-toggle-icon">&#9660;</span>
+    <span>Cross-Period Summary</span>
+  </div>
+  <div id="summary-body">
+    <div class="summary-row" id="summary-content"></div>
+  </div>
+</div>
+
 <!-- Drop zone -->
 <div id="main-scroll">
   <!-- Loading indicator -->
@@ -295,7 +419,7 @@
     <div class="dz-icon">📂</div>
     <p>Click to import a CSV file</p>
     <p>or drag and drop here</p>
-    <small>Exports from Get-Reports.ps1</small>
+    <small>Rubrik report CSV exports</small>
   </div>
 
   <!-- Table -->
@@ -386,6 +510,39 @@
   let effectiveRows     = [];      // rawRows after pre-filtering
   let displayRows     = [];        // filtered+sorted full result
   let currentPage     = 0;
+
+  // ── Column reordering (standard mode) ───────────────────────────────
+  const PRIORITY_COLS = ['Cluster Name', 'Object Name', 'Location'];
+  const STD_FROZEN_COUNT = 3; // freeze the priority columns
+  let stdColOrder     = [];   // array of raw column indices in display order
+  let stdFrozenMeta   = [];   // { displayIdx, rawIdx, frozen, frozenLast } for frozen cols
+  let stdHasPriority  = false;
+
+  function buildStdColOrder() {
+    const priorityIndices = [];
+    PRIORITY_COLS.forEach(name => {
+      const idx = columns.findIndex(c => c === name);
+      if (idx >= 0) priorityIndices.push(idx);
+    });
+    stdHasPriority = priorityIndices.length === PRIORITY_COLS.length;
+    if (stdHasPriority) {
+      const prioritySet = new Set(priorityIndices);
+      const rest = columns.map((_, i) => i).filter(i => !prioritySet.has(i));
+      stdColOrder = [...priorityIndices, ...rest];
+    } else {
+      stdColOrder = columns.map((_, i) => i);
+    }
+  }
+
+  // ── Capacity Change Mode ──────────────────────────────────────────
+  const CAP_CHANGE_PERIOD_RE = /-\d+\s+(Days|Months)/;
+  const CAP_METRICS = ['Logical Bytes', 'Used Size', 'Data Stored', 'Archive Storage', 'Replica Storage'];
+  let isCapChangeMode   = false;
+  let capChangePeriods  = [];       // e.g. ["-1 Months", "-3 Months", ...]
+  let selectedPeriods   = new Set();// currently selected periods for detail table
+  let capChangeColMap   = {};       // period -> { metricName: { value: colIdx, change: colIdx } }
+  let visibleColIndices = [];       // raw CSV column indices in display order
+  let visibleColMeta    = [];       // { rawIdx, isChange, label } for each visible column
 
   const DIVISOR     = { GB: 1e9, TB: 1e12 };
   const DUR_DIVISOR = { Seconds: 1, Minutes: 60, Hours: 3600 };
@@ -502,10 +659,22 @@
     document.getElementById('toolbar').style.display   = 'flex';
     document.getElementById('app-footer').style.display = 'flex';
 
+    // Build standard column order (priority columns first)
+    buildStdColOrder();
+
+    // Detect capacity change mode
+    detectCapChangeMode();
+    configureTopbar();
+
     sortCol = -1; sortAsc = true; currentPage = 0;
+    document.getElementById('table-section').style.display = 'block';
     buildHeaders();
     hideLoading();
-    checkThreshold();
+    if (isCapChangeMode) {
+      applyFilters();
+    } else {
+      checkThreshold();
+    }
   }
 
   function parseLine(line) {
@@ -597,48 +766,143 @@
 
   // ── Headers ────────────────────────────────────────────────────────
   function buildHeaders() {
+    const table = document.getElementById('data-table');
+    table.style.tableLayout = '';
+    table.style.width = '';
+    table.style.minWidth = '';
     const nameRow   = document.getElementById('header-names');
     const filterRow = document.getElementById('header-filters');
     nameRow.innerHTML = '';
     filterRow.innerHTML = '';
 
-    columns.forEach((col, ci) => {
-      const th = document.createElement('th');
-      let badge = '';
-      if (capCols[ci])  badge = `<span class="col-badge cap-badge">${unit}</span>`;
-      if (durCols[ci])  badge = `<span class="col-badge dur-badge">${durUnit}</span>`;
-      if (dateCols[ci]) badge = `<span class="col-badge date-badge">${tzLabel}</span>`;
-      th.innerHTML = `<div class="col-label"><span>${escHtml(col)}</span>${badge}<span class="sort-icon">⇅</span></div>`;
-      th.onclick = () => sortBy(ci);
-      nameRow.appendChild(th);
+    if (isCapChangeMode) {
+      buildVisibleCols();
+      // Compute left offsets for frozen columns after first render pass
+      const frozenWidths = [];
+      visibleColMeta.forEach((meta, vi) => {
+        const ci = meta.rawIdx;
+        const col = meta.label;
+        const th = document.createElement('th');
+        if (meta.isChange) th.classList.add('chg-col-header');
+        if (meta.frozen) {
+          th.classList.add('frozen-col');
+          if (meta.frozenLast) th.classList.add('frozen-col-last');
+        }
+        let badge = '';
+        if (capCols[ci]) badge = `<span class="col-badge cap-badge">${unit}</span>`;
+        th.innerHTML = `<div class="col-label"><span>${escHtml(col)}</span>${badge}<span class="sort-icon">⇅</span></div>`;
+        th.onclick = () => sortBy(ci);
+        nameRow.appendChild(th);
 
-      const tf = document.createElement('th');
-      if (enumCols[ci]) {
-        const wrap = document.createElement('div');
-        wrap.className = 'ms-wrap';
-        const btn = document.createElement('button');
-        btn.className   = 'ms-trigger';
-        btn.dataset.ci  = ci;
-        btn.textContent = 'All';
-        btn.onclick     = e => { e.stopPropagation(); openMsPanel(ci, btn); };
-        wrap.appendChild(btn);
-        tf.appendChild(wrap);
-      } else {
-        const inp = document.createElement('input');
-        inp.type      = 'text';
-        inp.className = 'text-filter';
-        inp.placeholder = 'Filter…';
-        inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); debouncedApplyFilters(); };
-        tf.appendChild(inp);
+        const tf = document.createElement('th');
+        if (meta.frozen) {
+          tf.classList.add('frozen-col');
+          if (meta.frozenLast) tf.classList.add('frozen-col-last');
+        }
+        if (enumCols[ci]) {
+          const wrap = document.createElement('div');
+          wrap.className = 'ms-wrap';
+          const btn = document.createElement('button');
+          btn.className   = 'ms-trigger';
+          btn.dataset.ci  = ci;
+          btn.textContent = 'All';
+          btn.onclick     = e => { e.stopPropagation(); openMsPanel(ci, btn); };
+          wrap.appendChild(btn);
+          tf.appendChild(wrap);
+        } else {
+          const inp = document.createElement('input');
+          inp.type      = 'text';
+          inp.className = 'text-filter';
+          inp.placeholder = 'Filter…';
+          inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); debouncedApplyFilters(); };
+          tf.appendChild(inp);
+        }
+        filterRow.appendChild(tf);
+      });
+      // Compute frozen left offsets synchronously (table section already visible)
+      {
+        const ths = nameRow.querySelectorAll('th');
+        const tfs = filterRow.querySelectorAll('th');
+        let leftOffset = 0;
+        visibleColMeta._frozenOffsets = [];
+        visibleColMeta.forEach((meta, vi) => {
+          if (meta.frozen) {
+            ths[vi].style.left = leftOffset + 'px';
+            tfs[vi].style.left = leftOffset + 'px';
+            visibleColMeta._frozenOffsets.push(leftOffset);
+            leftOffset += ths[vi].offsetWidth;
+          }
+        });
       }
-      filterRow.appendChild(tf);
-    });
+    } else {
+      const colOrder = stdColOrder.length ? stdColOrder : columns.map((_, i) => i);
+      colOrder.forEach((ci, displayIdx) => {
+        const col = columns[ci];
+        const th = document.createElement('th');
+        const isFrozen = stdHasPriority && displayIdx < STD_FROZEN_COUNT;
+        const isFrozenLast = stdHasPriority && displayIdx === STD_FROZEN_COUNT - 1;
+        if (isFrozen) {
+          th.classList.add('frozen-col');
+          if (isFrozenLast) th.classList.add('frozen-col-last');
+        }
+        let badge = '';
+        if (capCols[ci])  badge = `<span class="col-badge cap-badge">${unit}</span>`;
+        if (durCols[ci])  badge = `<span class="col-badge dur-badge">${durUnit}</span>`;
+        if (dateCols[ci]) badge = `<span class="col-badge date-badge">${tzLabel}</span>`;
+        th.innerHTML = `<div class="col-label"><span>${escHtml(col)}</span>${badge}<span class="sort-icon">⇅</span></div>`;
+        th.onclick = () => sortBy(ci);
+        nameRow.appendChild(th);
+
+        const tf = document.createElement('th');
+        if (isFrozen) {
+          tf.classList.add('frozen-col');
+          if (isFrozenLast) tf.classList.add('frozen-col-last');
+        }
+        if (enumCols[ci]) {
+          const wrap = document.createElement('div');
+          wrap.className = 'ms-wrap';
+          const btn = document.createElement('button');
+          btn.className   = 'ms-trigger';
+          btn.dataset.ci  = ci;
+          btn.textContent = 'All';
+          btn.onclick     = e => { e.stopPropagation(); openMsPanel(ci, btn); };
+          wrap.appendChild(btn);
+          tf.appendChild(wrap);
+        } else {
+          const inp = document.createElement('input');
+          inp.type      = 'text';
+          inp.className = 'text-filter';
+          inp.placeholder = 'Filter…';
+          inp.oninput   = function() { colFilters[ci]=this.value.toLowerCase(); debouncedApplyFilters(); };
+          tf.appendChild(inp);
+        }
+        filterRow.appendChild(tf);
+      });
+      // Compute frozen offsets synchronously (table section already visible)
+      if (stdHasPriority) {
+        const ths = nameRow.querySelectorAll('th');
+        const tfs = filterRow.querySelectorAll('th');
+        let leftOffset = 0;
+        stdFrozenMeta = [];
+        for (let i = 0; i < STD_FROZEN_COUNT && i < ths.length; i++) {
+          ths[i].style.left = leftOffset + 'px';
+          tfs[i].style.left = leftOffset + 'px';
+          stdFrozenMeta.push({ displayIdx: i, rawIdx: colOrder[i], left: leftOffset });
+          leftOffset += ths[i].offsetWidth;
+        }
+      }
+    }
+    attachResizeHandles();
   }
 
   function updateColBadges() {
-    document.querySelectorAll('#header-names th').forEach((th, ci) => {
+    document.querySelectorAll('#header-names th').forEach((th, displayIdx) => {
       const badge = th.querySelector('.col-badge');
       if (!badge) return;
+      let ci;
+      if (isCapChangeMode && visibleColMeta[displayIdx]) ci = visibleColMeta[displayIdx].rawIdx;
+      else if (!isCapChangeMode && stdColOrder.length) ci = stdColOrder[displayIdx];
+      else ci = displayIdx;
       if (capCols[ci])  badge.textContent = unit;
       if (durCols[ci])  badge.textContent = durUnit;
       if (dateCols[ci]) badge.textContent = tzLabel;
@@ -719,10 +983,15 @@
     applyFilters();
   }
   function updateSortIcons() {
-    document.querySelectorAll('#header-names th').forEach((th,ci) => {
+    document.querySelectorAll('#header-names th').forEach((th, displayIdx) => {
       th.classList.remove('sorted-asc','sorted-desc');
       const icon=th.querySelector('.sort-icon');
-      if (ci===sortCol) { th.classList.add(sortAsc?'sorted-asc':'sorted-desc'); icon.textContent=sortAsc?'↑':'↓'; }
+      // Map display index to raw column index
+      let rawIdx;
+      if (isCapChangeMode && visibleColMeta[displayIdx]) rawIdx = visibleColMeta[displayIdx].rawIdx;
+      else if (!isCapChangeMode && stdColOrder.length) rawIdx = stdColOrder[displayIdx];
+      else rawIdx = displayIdx;
+      if (rawIdx===sortCol) { th.classList.add(sortAsc?'sorted-asc':'sorted-desc'); icon.textContent=sortAsc?'↑':'↓'; }
       else icon.textContent='⇅';
     });
   }
@@ -767,6 +1036,7 @@
     renderPage();
     updateSortIcons();
     updateFooter();
+    if (isCapChangeMode) updateSummary();
   }
 
   // ── Pagination ─────────────────────────────────────────────────────
@@ -812,26 +1082,82 @@
   function renderRows(rows) {
     const div   = DIVISOR[unit];
     const tbody = document.getElementById('table-body');
+
+    if (isCapChangeMode) {
+      const colCount = visibleColMeta.length;
+      if (!rows.length) {
+        tbody.innerHTML = `<tr><td colspan="${colCount}" class="no-results">No matching rows</td></tr>`;
+        return;
+      }
+      // Build a set of change column raw indices for quick lookup
+      const changeRawIdxSet = new Set(visibleColMeta.filter(m => m.isChange).map(m => m.rawIdx));
+
+      // Pre-compute frozen left offsets from header widths
+      const frozenOffsets = [];
+      if (visibleColMeta._frozenOffsets) {
+        frozenOffsets.push(...visibleColMeta._frozenOffsets);
+      }
+
+      tbody.innerHTML = rows.map(row =>
+        '<tr>' + visibleColMeta.map((meta, vi) => {
+          const ci = meta.rawIdx;
+          const val = row[ci];
+          let frozenStyle = '';
+          let frozenClass = '';
+          if (meta.frozen) {
+            let fi = 0;
+            for (let k = 0; k < vi; k++) { if (visibleColMeta[k].frozen) fi++; }
+            frozenClass = ' frozen-col' + (meta.frozenLast ? ' frozen-col-last' : '');
+            frozenStyle = ` style="left:${frozenOffsets[fi] || 0}px"`;
+          }
+          if (meta.isChange) {
+            const num = parseFloat(val) || 0;
+            const displayVal = unit === 'TB' ? (num / 1000).toFixed(2) : parseFloat(num).toFixed(2);
+            const sign = num > 0 ? '+' : '';
+            const cls = num > 0 ? 'chg-pos' : num < 0 ? 'chg-neg' : 'chg-zero';
+            return `<td class="cap-cell ${cls}${frozenClass}"${frozenStyle}>${sign}${displayVal}</td>`;
+          }
+          if (capCols[ci]) {
+            const num = parseFloat(val);
+            const displayVal = unit === 'TB' ? (num / 1000).toFixed(2) : parseFloat(num).toFixed(2);
+            return `<td class="cap-cell${frozenClass}"${frozenStyle}>${isNaN(num) ? escHtml(val) : displayVal}</td>`;
+          }
+          if (numCols[ci]) return `<td class="num-cell${frozenClass}"${frozenStyle}>${escHtml(val)}</td>`;
+          return `<td class="${frozenClass.trim()}"${frozenStyle} title="${escHtml(val)}">${escHtml(val)}</td>`;
+        }).join('') + '</tr>'
+      ).join('');
+      return;
+    }
+
+    const colOrder = stdColOrder.length ? stdColOrder : columns.map((_, i) => i);
     if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="${columns.length}" class="no-results">No matching rows</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${colOrder.length}" class="no-results">No matching rows</td></tr>`;
       return;
     }
     tbody.innerHTML = rows.map(row =>
-      '<tr>' + row.map((val, ci) => {
+      '<tr>' + colOrder.map((ci, displayIdx) => {
+        const val = row[ci];
+        let frozenClass = '';
+        let frozenStyle = '';
+        if (stdHasPriority && displayIdx < STD_FROZEN_COUNT) {
+          frozenClass = ' frozen-col' + (displayIdx === STD_FROZEN_COUNT - 1 ? ' frozen-col-last' : '');
+          const meta = stdFrozenMeta[displayIdx];
+          frozenStyle = ` style="left:${meta ? meta.left : 0}px"`;
+        }
         if (capCols[ci]) {
           const num = parseFloat(val);
-          return `<td class="cap-cell">${isNaN(num) ? escHtml(val) : (num/div).toFixed(2)}</td>`;
+          return `<td class="cap-cell${frozenClass}"${frozenStyle}>${isNaN(num) ? escHtml(val) : (num/div).toFixed(2)}</td>`;
         }
         if (durCols[ci]) {
           const num = parseFloat(val);
           const dd  = DUR_DIVISOR[durUnit];
-          return `<td class="dur-cell">${isNaN(num) ? escHtml(val) : (num/dd).toFixed(2)}</td>`;
+          return `<td class="dur-cell${frozenClass}"${frozenStyle}>${isNaN(num) ? escHtml(val) : (num/dd).toFixed(2)}</td>`;
         }
         if (dateCols[ci]) {
-          return `<td class="date-cell">${escHtml(convertDate(val))}</td>`;
+          return `<td class="date-cell${frozenClass}"${frozenStyle}>${escHtml(convertDate(val))}</td>`;
         }
-        if (numCols[ci]) return `<td class="num-cell">${escHtml(val)}</td>`;
-        return `<td title="${escHtml(val)}">${escHtml(val)}</td>`;
+        if (numCols[ci]) return `<td class="num-cell${frozenClass}"${frozenStyle}>${escHtml(val)}</td>`;
+        return `<td class="${frozenClass.trim()}"${frozenStyle} title="${escHtml(val)}">${escHtml(val)}</td>`;
       }).join('') + '</tr>'
     ).join('');
   }
@@ -871,6 +1197,7 @@
     document.getElementById('btn-tb').classList.toggle('active', u==='TB');
     updateColBadges();
     renderPage();
+    if (isCapChangeMode) updateSummary();
   }
 
   // ── Duration unit ──────────────────────────────────────────────────
@@ -895,6 +1222,330 @@
     });
     closeMsPanel();
     applyFilters();
+  }
+
+  // ── Capacity Change Mode ────────────────────────────────────────────
+  function detectCapChangeMode() {
+    isCapChangeMode = false;
+    capChangePeriods = [];
+    capChangeColMap = {};
+    selectedPeriods = new Set();
+    visibleColIndices = [];
+    visibleColMeta = [];
+
+    // Scan headers for period pattern like "-1 Months" or "-7 Days"
+    const periodSet = new Set();
+    columns.forEach(col => {
+      const m = col.match(/-\d+\s+(Days|Months)/);
+      if (m) periodSet.add(m[0]);
+    });
+    if (periodSet.size === 0) return;
+
+    isCapChangeMode = true;
+
+    // Sort periods by absolute numeric value (shortest first)
+    capChangePeriods = [...periodSet].sort((a, b) => {
+      const na = parseInt(a.match(/-(\d+)/)[1]);
+      const nb = parseInt(b.match(/-(\d+)/)[1]);
+      return na - nb;
+    });
+
+    // Build column map: for each period, find the value and change columns per metric
+    capChangePeriods.forEach(period => {
+      capChangeColMap[period] = {};
+      CAP_METRICS.forEach(metric => {
+        const valName = `${metric} (GB) ${period}`;
+        const chgName = `${metric} Change (GB) ${period}`;
+        const valIdx = columns.indexOf(valName);
+        const chgIdx = columns.indexOf(chgName);
+        capChangeColMap[period][metric] = { value: valIdx, change: chgIdx };
+      });
+    });
+
+    selectedPeriods = new Set([capChangePeriods[0]]);
+  }
+
+  function buildVisibleCols() {
+    visibleColMeta = [];
+    // Sorted periods in display order (by magnitude)
+    const sortedSelected = capChangePeriods.filter(p => selectedPeriods.has(p));
+
+    // Identity columns in desired order — first 3 are frozen
+    const identityCols = ['Cluster Name', 'Object Name', 'Location', 'Object Type'];
+    const FROZEN_COUNT = 3; // freeze Cluster, Object Name, Location
+    identityCols.forEach((name, i) => {
+      const idx = columns.indexOf(name);
+      if (idx >= 0) visibleColMeta.push({
+        rawIdx: idx, isChange: false, label: name,
+        frozen: i < FROZEN_COUNT, frozenLast: i === FROZEN_COUNT - 1
+      });
+    });
+
+    // Capacity metrics: current value + change columns for each selected period
+    CAP_METRICS.forEach(metric => {
+      const currentName = `${metric} (GB)`;
+      const currentIdx = columns.indexOf(currentName);
+      if (currentIdx >= 0) visibleColMeta.push({ rawIdx: currentIdx, isChange: false, label: currentName });
+
+      sortedSelected.forEach(period => {
+        const periodMap = capChangeColMap[period];
+        if (periodMap && periodMap[metric]) {
+          const chgIdx = periodMap[metric].change;
+          if (chgIdx >= 0) {
+            // Abbreviate period for column label: "-1 Months" → "-1M", "-7 Days" → "-7D"
+            const shortPeriod = period.replace(/\s*Months?/, 'M').replace(/\s*Days?/, 'D');
+            const chgLabel = `${metric} Chg ${shortPeriod}`;
+            visibleColMeta.push({ rawIdx: chgIdx, isChange: true, label: chgLabel });
+          }
+        }
+      });
+    });
+
+    // Trailing columns
+    const trailingCols = ['Status', 'SLA Domain', 'Protected On',
+                          'Local Data Reduction (%)', 'Local Dedup Ratio (x)', 'UniqueKey'];
+    trailingCols.forEach(name => {
+      const idx = columns.indexOf(name);
+      if (idx >= 0) visibleColMeta.push({ rawIdx: idx, isChange: false, label: name });
+    });
+
+    visibleColIndices = visibleColMeta.map(m => m.rawIdx);
+  }
+
+  function configureTopbar() {
+    // Elements only shown in standard mode
+    const stdEls = ['tz-divider', 'tz-label', 'tz-controls',
+                    'dur-divider', 'dur-label', 'dur-controls',
+                    'prefilter-divider', 'log-filter-wrap', 'idx-filter-wrap',
+                    'rowlimit-divider', 'rowlimit-label', 'row-limit-sel', 'rowlimit-events-label'];
+    // Elements only shown in capacity change mode
+    const capChgEls = ['period-divider', 'period-label', 'period-checks'];
+
+    if (isCapChangeMode) {
+      stdEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+      capChgEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+
+      // Populate period checkboxes
+      const checks = document.getElementById('period-checks');
+      checks.style.display = 'flex';
+      checks.innerHTML = capChangePeriods.map(p =>
+        `<label class="period-check">
+          <input type="checkbox" ${selectedPeriods.has(p) ? 'checked' : ''} value="${escHtml(p)}" onchange="changePeriod()">
+          <span>${escHtml(p)}</span>
+        </label>`
+      ).join('');
+
+      buildVisibleCols();
+    } else {
+      stdEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+      capChgEls.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+      document.getElementById('summary-bar').style.display = 'none';
+    }
+  }
+
+  function changePeriod() {
+    const checks = document.querySelectorAll('#period-checks input[type="checkbox"]');
+    const checked = [...checks].filter(cb => cb.checked).map(cb => cb.value);
+    // Enforce at least one selected
+    if (checked.length === 0) {
+      checks[0].checked = true;
+      checked.push(checks[0].value);
+    }
+    selectedPeriods = new Set(checked);
+    buildVisibleCols();
+    buildHeaders();
+    applyFilters();
+  }
+
+  function updateSummary() {
+    const bar = document.getElementById('summary-bar');
+    if (!isCapChangeMode) { bar.style.display = 'none'; return; }
+    bar.style.display = 'block';
+
+    const rows = displayRows;
+    const totalObjects = rows.length;
+    const unitLabel = unit;
+    const shortNames = {
+      'Logical Bytes': 'Logical',
+      'Used Size': 'Used',
+      'Data Stored': 'Data Stored',
+      'Archive Storage': 'Archive',
+      'Replica Storage': 'Replica'
+    };
+
+    // Count baseline objects = rows where Status is "Active"
+    const statusIdx = columns.indexOf('Status');
+    const baselineObjects = statusIdx >= 0
+      ? rows.filter(r => r[statusIdx] === 'Active').length
+      : totalObjects;
+
+    // Compute baseline sums (current values) — Active objects only
+    const baselineSums = {};
+    CAP_METRICS.forEach(m => { baselineSums[m] = 0; });
+    rows.forEach(row => {
+      if (statusIdx >= 0 && row[statusIdx] !== 'Active') return;
+      CAP_METRICS.forEach(metric => {
+        const idx = columns.indexOf(`${metric} (GB)`);
+        if (idx >= 0) baselineSums[metric] += (parseFloat(row[idx]) || 0);
+      });
+    });
+
+    // Compute per-period: historical sums and object count
+    // An object existed in a period if any of its 5 value columns are non-zero
+    const periodData = {};
+    capChangePeriods.forEach(period => {
+      const pm = capChangeColMap[period];
+      const sums = {};
+      CAP_METRICS.forEach(m => { sums[m] = 0; });
+      let periodObjects = 0;
+      rows.forEach(row => {
+        let hasData = false;
+        CAP_METRICS.forEach(metric => {
+          const valIdx = pm[metric]?.value;
+          if (valIdx >= 0) {
+            const v = parseFloat(row[valIdx]) || 0;
+            sums[metric] += v;
+            if (v !== 0) hasData = true;
+          }
+        });
+        if (hasData) periodObjects++;
+      });
+      periodData[period] = { sums, periodObjects };
+    });
+
+    // Summary always uses TB since values are aggregated across all objects
+    const summaryUnit = 'TB';
+    function fmtSummary(gb) {
+      const v = gb / 1000;
+      return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    // Build table HTML
+    let html = '<table>';
+    // Header
+    html += '<tr><th>Period</th>';
+    CAP_METRICS.forEach(m => { html += `<th>${shortNames[m]} (${summaryUnit})</th>`; });
+    html += '<th>Objects</th></tr>';
+
+    // Baseline row — Active objects only
+    html += '<tr class="baseline-row"><td>Baseline (current)</td>';
+    CAP_METRICS.forEach(m => { html += `<td>${fmtSummary(baselineSums[m])}</td>`; });
+    html += `<td>${baselineObjects.toLocaleString()}</td></tr>`;
+
+    // Period rows — objects that existed in each period
+    capChangePeriods.forEach(period => {
+      const pd = periodData[period];
+      html += `<tr><td>${escHtml(period)}</td>`;
+      CAP_METRICS.forEach(m => { html += `<td>${fmtSummary(pd.sums[m])}</td>`; });
+      html += `<td>${pd.periodObjects.toLocaleString()}</td></tr>`;
+    });
+
+    html += '</table>';
+    document.getElementById('summary-content').innerHTML = html;
+  }
+
+  // ── Column resize ──────────────────────────────────────────────────
+  function switchToFixedLayout() {
+    const table = document.getElementById('data-table');
+    if (table.style.tableLayout === 'fixed') return;
+    const headerThs = document.getElementById('header-names').querySelectorAll('th');
+    const filterThs = document.getElementById('header-filters').querySelectorAll('th');
+    // Capture current widths before switching layout
+    const widths = Array.from(headerThs).map(th => th.offsetWidth);
+    const totalW = widths.reduce((a, b) => a + b, 0);
+    table.style.tableLayout = 'fixed';
+    table.style.width = totalW + 'px';
+    table.style.minWidth = '0';
+    // Lock all columns at their current widths
+    widths.forEach((w, i) => {
+      const px = w + 'px';
+      headerThs[i].style.width = px;
+      headerThs[i].style.minWidth = px;
+      headerThs[i].style.maxWidth = px;
+      if (filterThs[i]) {
+        filterThs[i].style.width = px;
+        filterThs[i].style.minWidth = px;
+        filterThs[i].style.maxWidth = px;
+      }
+    });
+  }
+
+  function attachResizeHandles() {
+    document.querySelectorAll('#header-names th').forEach(th => {
+      const handle = document.createElement('div');
+      handle.className = 'col-resize-handle';
+      handle.addEventListener('mousedown', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        switchToFixedLayout();
+        const colIdx = Array.from(th.parentNode.children).indexOf(th);
+        const filterTh = document.getElementById('header-filters').children[colIdx];
+        const startX = e.pageX;
+        const startW = th.offsetWidth;
+        document.body.classList.add('col-resizing');
+        function onMove(e2) {
+          const newW = Math.max(30, startW + (e2.pageX - startX));
+          const px = newW + 'px';
+          th.style.width = px;
+          th.style.minWidth = px;
+          th.style.maxWidth = px;
+          if (filterTh) {
+            filterTh.style.width = px;
+            filterTh.style.minWidth = px;
+            filterTh.style.maxWidth = px;
+          }
+        }
+        function onUp() {
+          document.body.classList.remove('col-resizing');
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          // Re-compute frozen offsets after column resize
+          if (isCapChangeMode || stdHasPriority) recomputeFrozenOffsets();
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      th.appendChild(handle);
+    });
+  }
+
+  function recomputeFrozenOffsets() {
+    const nameRow = document.getElementById('header-names');
+    const filterRow = document.getElementById('header-filters');
+    const ths = nameRow.querySelectorAll('th');
+    const tfs = filterRow.querySelectorAll('th');
+    if (isCapChangeMode) {
+      let leftOffset = 0;
+      const offsets = [];
+      visibleColMeta.forEach((meta, vi) => {
+        if (meta.frozen) {
+          ths[vi].style.left = leftOffset + 'px';
+          tfs[vi].style.left = leftOffset + 'px';
+          offsets.push(leftOffset);
+          leftOffset += ths[vi].offsetWidth;
+        }
+      });
+      visibleColMeta._frozenOffsets = offsets;
+    } else if (stdHasPriority) {
+      let leftOffset = 0;
+      stdFrozenMeta = [];
+      const colOrder = stdColOrder.length ? stdColOrder : columns.map((_, i) => i);
+      for (let i = 0; i < STD_FROZEN_COUNT && i < ths.length; i++) {
+        ths[i].style.left = leftOffset + 'px';
+        tfs[i].style.left = leftOffset + 'px';
+        stdFrozenMeta.push({ displayIdx: i, rawIdx: colOrder[i], left: leftOffset });
+        leftOffset += ths[i].offsetWidth;
+      }
+    }
+  }
+
+  // ── Summary collapse ────────────────────────────────────────────────
+  function toggleSummary() {
+    const body = document.getElementById('summary-body');
+    const icon = document.getElementById('summary-toggle-icon');
+    const collapsed = body.style.display === 'none';
+    body.style.display = collapsed ? '' : 'none';
+    icon.classList.toggle('collapsed', !collapsed);
   }
 
   // ── Helpers ────────────────────────────────────────────────────────

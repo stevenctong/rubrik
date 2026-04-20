@@ -11,6 +11,17 @@ A CSV viewer with filtering, sorting, column type detection, timezone conversion
 - **Date columns** — auto-detected, convert across UTC / PT / MT / CT / ET
 - **Enum columns** — multi-select dropdown filter
 - **Global search** and per-column filters with sortable headers
+- **Resizable columns** — drag header edges to adjust width
+- **Frozen columns** — Cluster Name, Object Name, Location stay visible on horizontal scroll (when detected)
+
+### Capacity Change Mode
+
+Auto-detects CSVs from [`Get-Capacity-Change-Report.ps1`](../Powershell/Get-Capacity-Change-Report.ps1) and switches to a specialized view:
+
+- **Cross-period summary table** — collapsible aggregate capacity across all comparison periods (TB)
+- **Multi-select period comparison** — choose which lookback periods to display side by side
+- **Curated column layout** — identity fields, current capacity + change deltas, trailing metadata
+- **Color-coded changes** — red for growth, green for reduction, gray for zero
 
 Load a CSV by dragging it onto the drop zone or clicking to browse.
 
@@ -26,4 +37,4 @@ It is a PowerShell script that connects to a Rubrik CDM cluster via the REST API
 
 ### Get-Capacity-Change-Report
 
-Located at [`computer/Powershell/Get-Capacity-Change-Report.ps1`](../Powershell/Get-Capacity-Change-Report.ps1) — calculates capacity changes per object from an RSC "Object Capacity Over Time" report. Outputs a detailed CSV (among other formats) that can be viewed in `csv-report-viewer.html`. Supporting docs in [`Artifacts/Get-Capacity-Change-Report/`](../Artifacts/Get-Capacity-Change-Report/).
+Located at [`computer/Powershell/Get-Capacity-Change-Report.ps1`](../Powershell/Get-Capacity-Change-Report.ps1) — calculates capacity changes per object from an RSC "Object Capacity Over Time" report. Outputs a detailed CSV (among other formats) that can be viewed in `csv-report-viewer.html`, which auto-detects the format and switches to Capacity Change Mode. Supporting docs in [`Artifacts/Get-Capacity-Change-Report/`](../Artifacts/Get-Capacity-Change-Report/).
