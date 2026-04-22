@@ -14,6 +14,9 @@ This script performs the following steps:
 4. Polls until the index is ready
 5. Retrieves file delta metrics: current snapshot, base snapshot, and counts
    for created, deleted, modified, suspicious files, and byte changes
+6. Checks each snapshot for anomaly status (isAnomaly)
+7. Calculates per-VM NODES_MODIFIED median and flags snapshots that deviate
+   beyond a configurable threshold (MEDIAN_DEVIATION)
 
 Supports parallel processing of multiple VMs and multiple snapshots per VM.
 
@@ -21,7 +24,7 @@ Supports parallel processing of multiple VMs and multiple snapshots per VM.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 4/21/26
-Updated: 4/21/26
+Updated: 4/22/26
 
 The script requires communication to RSC via outbound HTTPS (TCP 443).
 
@@ -42,7 +45,12 @@ Optional substring filter for GCP VM names. Only VMs whose name contains
 this string will be processed.
 
 .PARAMETER SnapshotsBefore
-Number of snapshots to look back before the target time. Default: 2.
+Number of snapshots to look back before the target time. Default: 8.
+
+.PARAMETER DeviationThreshold
+Percentage threshold for NODES_MODIFIED median deviation. If a snapshot's
+NODES_MODIFIED deviates from the per-VM median by more than this percentage,
+MEDIAN_DEVIATION is set to True. Default: 50.
 
 .PARAMETER MaxConcurrentVMs
 Maximum number of VMs to process in parallel. Default: 5.
@@ -66,8 +74,8 @@ Gets threat analytics for all GCP VMs, using snapshots near April 20, 2026 9pm P
 Processes only VMs matching 'gcp-l1', up to 3 in parallel.
 
 .EXAMPLE
-./Get-GCPThreatAnalytics.ps1 -PointInTime '2026-04-20 21:00' -SnapshotsBefore 5
-Looks back 5 snapshots before the target time instead of the default 2.
+./Get-GCPThreatAnalytics.ps1 -PointInTime '2026-04-20 21:00' -SnapshotsBefore 5 -DeviationThreshold 20
+Looks back 5 snapshots, flags MEDIAN_DEVIATION when NODES_MODIFIED deviates >20% from median.
 
 #>
 
@@ -84,7 +92,10 @@ param (
   [string]$VMNameFilter = '',
   # Number of snapshots to look back before the target time
   [Parameter(Mandatory=$false)]
-  [int]$SnapshotsBefore = 2,
+  [int]$SnapshotsBefore = 8,
+  # Percentage threshold for NODES_MODIFIED median deviation
+  [Parameter(Mandatory=$false)]
+  [int]$DeviationThreshold = 50,
   # Max VMs to process in parallel
   [Parameter(Mandatory=$false)]
   [int]$MaxConcurrentVMs = 5,
@@ -116,7 +127,8 @@ if ([string]::IsNullOrEmpty($PointInTime)) {
   Write-Host "Parameters:" -ForegroundColor Yellow
   Write-Host "  -PointInTime          Target datetime (Pacific Time) to find snapshots near. Format: '2026-04-20 21:00'"
   Write-Host "  -VMNameFilter         (Optional) Substring filter for VM names"
-  Write-Host "  -SnapshotsBefore      (Optional) Number of snapshots to look back (default: 2)"
+  Write-Host "  -SnapshotsBefore      (Optional) Number of snapshots to look back (default: 8)"
+  Write-Host "  -DeviationThreshold   (Optional) % threshold for NODES_MODIFIED median deviation (default: 50)"
   Write-Host "  -MaxConcurrentVMs     (Optional) Max VMs to process in parallel (default: 5)"
   Write-Host "  -MaxRetries           (Optional) Max retries for index readiness (default: 30)"
   Write-Host "  -RetryIntervalSec     (Optional) Seconds between index checks (default: 10)"
@@ -672,6 +684,7 @@ $workItems | ForEach-Object -ThrottleLimit $throttleLimit -Parallel {
     BYTES_DELETED    = 0
     BYTES_MODIFIED   = 0
     IsAnomaly        = ''
+    MEDIAN_DEVIATION = $false
     SLA              = $item.SLA
     SnapshotId       = $snapId
     Error            = ''
@@ -786,6 +799,35 @@ if ($results.Count -eq 0) {
   exit
 }
 
+# Calculate MEDIAN_DEVIATION per VM
+$vmGroups = $results | Where-Object { -not $_.Error } | Group-Object VMName
+foreach ($group in $vmGroups) {
+  $modifiedValues = @($group.Group | ForEach-Object { $_.NODES_MODIFIED })
+  if ($modifiedValues.Count -lt 2) { continue }
+
+  # Calculate median
+  $sorted = $modifiedValues | Sort-Object
+  $mid = [Math]::Floor($sorted.Count / 2)
+  $median = if ($sorted.Count % 2 -eq 0) {
+    ($sorted[$mid - 1] + $sorted[$mid]) / 2.0
+  } else {
+    $sorted[$mid]
+  }
+
+  # Flag snapshots that deviate from the median by more than the threshold
+  foreach ($r in $group.Group) {
+    if ($median -eq 0) {
+      $r.MEDIAN_DEVIATION = $r.NODES_MODIFIED -gt 0
+    } else {
+      $pctDeviation = [Math]::Abs(($r.NODES_MODIFIED - $median) / $median * 100)
+      $r.MEDIAN_DEVIATION = $pctDeviation -gt $DeviationThreshold
+    }
+  }
+
+  Write-Host ""
+  Write-Host "[$($group.Name)] NODES_MODIFIED median: $median (threshold: +/- ${DeviationThreshold}%)" -ForegroundColor Gray
+}
+
 # Display summary table
 Write-Host ""
 Write-Host "===== THREAT ANALYTICS RESULTS =====" -ForegroundColor Cyan
@@ -805,6 +847,9 @@ foreach ($r in $results) {
   } else {
     Write-Host "  " -NoNewline; Write-Host "Files: " -NoNewline -ForegroundColor White; Write-Host "Suspicious: $($r.NODES_SUSPICIOUS) | Deleted: $($r.NODES_DELETED) | Modified: $($r.NODES_MODIFIED) | Created: $($r.NODES_CREATED)"
     Write-Host "  " -NoNewline; Write-Host "Bytes: " -NoNewline -ForegroundColor White; Write-Host "Created: $($r.BYTES_CREATED) | Deleted: $($r.BYTES_DELETED) | Modified: $($r.BYTES_MODIFIED)"
+    if ($r.MEDIAN_DEVIATION -eq $true) {
+      Write-Host "  ** MEDIAN DEVIATION - NODES_MODIFIED outside +/- ${DeviationThreshold}% of median **" -ForegroundColor Red
+    }
     if ($r.IsAnomaly -eq $true) {
       Write-Host "  ** ANOMALY DETECTED **" -ForegroundColor Red
     }
@@ -813,7 +858,7 @@ foreach ($r in $results) {
 
 # Export to CSV - select columns in specified order, exclude Error column on success
 $csvResults = $results | Select-Object VMName, Project, Region, SnapComparison, SnapshotDatePT, IsAnomaly,
-  NODES_SUSPICIOUS, NODES_DELETED, NODES_MODIFIED, NODES_CREATED,
+  NODES_SUSPICIOUS, NODES_DELETED, NODES_MODIFIED, MEDIAN_DEVIATION, NODES_CREATED,
   BYTES_CREATED, BYTES_DELETED, BYTES_MODIFIED, SLA, SnapshotId
 $csvResults | Export-Csv -Path $csvOutput -NoTypeInformation
 Write-Host "Results exported to: $csvOutput" -ForegroundColor Green
