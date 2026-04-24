@@ -11,6 +11,7 @@ A CSV viewer with filtering, sorting, column type detection, timezone conversion
 - **Date columns** — auto-detected, convert across UTC / PT / MT / CT / ET
 - **Enum columns** — multi-select dropdown filter
 - **Global search** and per-column filters with sortable headers
+- **Negative filters** — prefix a term with `-` to exclude matches (e.g. `-Backup`). Comma-separate multiple terms, mix positive and negative (e.g. `Backup,-Log`)
 - **Resizable columns** — drag header edges to adjust width
 - **Frozen columns** — Cluster Name, Object Name, Location stay visible on horizontal scroll (when detected)
 

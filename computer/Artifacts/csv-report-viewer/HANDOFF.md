@@ -106,6 +106,7 @@ Both modes reorder and freeze columns when "Cluster Name", "Object Name", and "L
 - **Threshold message:** Positioned inside the table section below column headers/filters. Shows total rows, log/index events filtered (if applicable), remaining rows, and prompts the user to add filters
 - **Loading indicator:** Shown during file read and CSV parsing. Displays row count once the line split is complete
 - **Debounced filter inputs:** Global search, per-column text filters, and enum multi-select changes are debounced (2 seconds) to give users time to set up multiple filters before the scan runs
+- **Negative / multi-term filters:** `parseFilterTerms()` splits comma-separated filter strings into positive and negative term arrays. Terms prefixed with `-` are exclusions. Positive terms OR (row matches if any term matches); negative terms exclude (row excluded if any term matches). Works in both global search and per-column filters
 
 Note: Large dataset handling (threshold, log/index filters) is bypassed in capacity change mode as those CSVs have ~1,700 rows.
 
@@ -207,7 +208,9 @@ Shown: Capacity GB/TB toggle, Period checkboxes, Import CSV
 
 ### Toolbar
 
-- **Global search** — filters across all columns simultaneously (substring, case-insensitive)
+- **Global search** — filters across all columns simultaneously (substring, case-insensitive). Supports comma-separated terms and negative filters
+- **Negative filters** — prefix a term with `-` to exclude matches. Works in both global search and per-column text filters. Comma-separate multiple terms; positive terms are OR'd for inclusion, negative terms exclude any match. Example: `Backup,-Log` shows rows matching "Backup" that don't match "Log". Filter inputs with negative terms show a red border
+- **Filter syntax hint** — displayed in the toolbar to the right of the Clear button
 - **Clear filters** button — resets global search, all per-column text filters, and all enum selections
 
 ### Summary Bar (capacity change mode only)
