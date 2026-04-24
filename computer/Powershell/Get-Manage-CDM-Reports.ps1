@@ -2,8 +2,8 @@
 <#
 .SYNOPSIS
 Interactive report manager for Rubrik CDM clusters using the local REST API —
-list, view, create, export, delete custom reports, manage email subscriptions,
-and configure SMTP instances.
+list, view, create, export, delete custom reports, send reports immediately,
+manage email subscriptions, and configure SMTP instances.
 
 .DESCRIPTION
 Authenticates to a Rubrik CDM cluster using a RSC Service Account JSON file.
@@ -31,6 +31,9 @@ Then the script presents a persistent interactive loop that supports:
                              subscriptions (daily/weekly/monthly schedule, recipients,
                              optional CSV attachment) or select an existing one to
                              update or delete. Uses the /report/email_subscription API.
+    6. Send report now     — immediately sends the report via email to specified
+                             recipients (with optional CSV attachment) using
+                             POST /report/{id}/send_email.
 
   Creating a new report (enter 'new' at the list prompt):
     - Choose from 9 hardcoded report templates (sourced from CDM 9.2 User Guide).
@@ -67,11 +70,20 @@ Non-interactive flag. When passed, fetches chart data for the report specified b
 -reportID, generates an HTML chart file, opens it in the browser, and exits.
 Requires -reportID.
 
+.PARAMETER sendEmail
+Non-interactive flag. When passed, sends the report specified by -reportID via email
+immediately using POST /report/{id}/send_email. Requires -reportID and -emailTo.
+
+.PARAMETER emailTo
+Comma-separated list of email addresses to send the report to. Required when
+-sendEmail is passed. Optional CSV attachment is included by default (suppress
+with -noCsvAttachment).
+
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 4/17/26
-Updated: 4/23/26
+Updated: 4/24/26
 
 Requires PowerShell 7+.
 
@@ -105,6 +117,12 @@ Output file: ./rubrik_<ReportName>-yyyy-MM-dd_HHmm.html
 
 Non-interactive: downloads both the CSV export and the HTML chart file for the
 specified report and exits.
+
+.EXAMPLE
+./Get-Manage-CDM-Reports.ps1 -serviceAccountPath './rubrik-sa.json' -clusterIP '10.8.49.104' -reportID 'ReportId:::abc123' -sendEmail -emailTo 'alice@company.com,bob@company.com'
+
+Non-interactive: immediately sends the specified report via email (with CSV
+attachment) to the listed recipients and exits.
 #>
 
 param (
@@ -121,7 +139,13 @@ param (
   [switch] $getCSV,
 
   [Parameter(Mandatory = $false)]
-  [switch] $getHTML
+  [switch] $getHTML,
+
+  [Parameter(Mandatory = $false)]
+  [switch] $sendEmail,
+
+  [Parameter(Mandatory = $false)]
+  [string] $emailTo = ''
 )
 
 ### VARIABLES - BEGIN ###
@@ -141,9 +165,14 @@ if ($psversiontable.PSVersion.Major -lt 7) {
   exit 1
 }
 
-if (($getCSV -or $getHTML) -and $reportID -eq '') {
-  Write-Error "-reportID is required when using -getCSV or -getHTML."
+if (($getCSV -or $getHTML -or $sendEmail) -and $reportID -eq '') {
+  Write-Error "-reportID is required when using -getCSV, -getHTML, or -sendEmail."
   exit 2
+}
+
+if ($sendEmail -and $emailTo -eq '') {
+  Write-Error "-emailTo is required when using -sendEmail."
+  exit 3
 }
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
@@ -1320,7 +1349,7 @@ $($chartBlocks -join "`n")
 ###### HELPER FUNCTIONS - END ######
 
 ###### NON-INTERACTIVE MODE - BEGIN ######
-if ($getCSV -or $getHTML) {
+if ($getCSV -or $getHTML -or $sendEmail) {
   Write-Host "Non-interactive mode — Report ID: $reportID"
 
   try {
@@ -1379,6 +1408,29 @@ if ($getCSV -or $getHTML) {
     }
     $rowCount = (Get-Content $csvOutput | Measure-Object -Line).Lines - 1
     Write-Host "CSV saved to: $csvOutput ($rowCount rows)" -ForegroundColor Green
+  }
+
+  if ($sendEmail) {
+    if (-not $script:smtpConfigured) {
+      Write-Warning "No SMTP server is configured — email will fail unless one is added."
+    }
+    [string[]] $emailArray = @($emailTo -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+    $sendBody = @{
+      emailAddresses = $emailArray
+      attachments    = @('Csv')
+    } | ConvertTo-Json -Depth 4
+    Write-Host "Sending report to: $($emailArray -join ', ')..."
+    try {
+      $null = Invoke-RestMethod -Method POST -SkipCertificateCheck -Headers $headers `
+        -Uri "https://$clusterIP/api/internal/report/$([Uri]::EscapeDataString($reportId))/send_email" `
+        -Body $sendBody
+      Write-Host "Report email sent successfully." -ForegroundColor Green
+    } catch {
+      $errDetail = $_.ErrorDetails.Message
+      Write-Error "Failed to send report email: $($_.Exception.Message)"
+      if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+      Remove-RubrikSession; exit 206
+    }
   }
 
   Remove-RubrikSession
@@ -1479,7 +1531,8 @@ while ($true) {
   Write-Host "  3. View report config JSON"
   Write-Host "  4. Delete report"
   Write-Host "  5. Manage email subscriptions"
-  $action = Read-Host "Enter selection (1-5)"
+  Write-Host "  6. Send report now"
+  $action = Read-Host "Enter selection (1-6)"
 
   # ══════════════════════════════════════════════════════════════════════
   #  ACTION 1 — CHARTS
@@ -1583,8 +1636,41 @@ while ($true) {
     Manage-EmailSubscriptions -ReportId $reportId -ReportName $reportName
     continue
 
+  # ══════════════════════════════════════════════════════════════════════
+  #  ACTION 6 — SEND REPORT NOW
+  # ══════════════════════════════════════════════════════════════════════
+  } elseif ($action -eq '6') {
+
+    if (-not $script:smtpConfigured) {
+      Write-Host "`nNote: No SMTP server is configured. Sending will fail unless one is added." -ForegroundColor Yellow
+      Write-Host "Configure one by typing 'smtp' at the main report list screen." -ForegroundColor Yellow
+    }
+
+    $emailRaw = ''
+    while ($emailRaw -eq '') { $emailRaw = Read-Host "`nEmail addresses (comma-separated, required)" }
+    [string[]] $emails = @($emailRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+
+    $csvChoice = Read-Host "Include CSV attachment? (Y/n, default Y)"
+    $sendMap = @{ emailAddresses = $emails }
+    if ($csvChoice -inotmatch '^n') { [string[]] $csvArray = @('Csv'); $sendMap.attachments = $csvArray }
+
+    $sendBody = $sendMap | ConvertTo-Json -Depth 4
+
+    Write-Host "`nSending report '$reportName' to: $($emails -join ', ')..."
+    try {
+      $null = Invoke-RestMethod -Method POST -SkipCertificateCheck -Headers $headers `
+        -Uri "https://$clusterIP/api/internal/report/$([Uri]::EscapeDataString($reportId))/send_email" `
+        -Body $sendBody
+      Write-Host "Report email sent successfully." -ForegroundColor Green
+    } catch {
+      $errDetail = $_.ErrorDetails.Message
+      Write-Error "Failed to send report email: $($_.Exception.Message)"
+      if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+    }
+    continue
+
   } else {
-    Write-Error "Invalid selection: '$action'. Enter 1-5."
+    Write-Error "Invalid selection: '$action'. Enter 1-6."
     continue
   }
 
