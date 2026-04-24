@@ -10,6 +10,8 @@ PowerShell script for managing custom reports on a Rubrik CDM cluster via the in
 - **View config JSON** — fetches and displays the full report configuration via `GET /report/{id}`
 - **Delete reports** — with confirmation prompt
 - **Create reports** — guided wizard supporting all 9 CDM report templates in Default or Customize mode
+- **Manage email subscriptions** — list, create, update, and delete scheduled email subscriptions on any report (daily/weekly/monthly, with optional CSV attachment)
+- **Manage SMTP instances** — list, create, update, and delete SMTP server configurations on the cluster (required for email subscriptions to send)
 - **Non-interactive mode** — pass `-getCSV` / `-getHTML` with a `-reportID` to skip the prompt and run from a script or scheduler
 
 ## Requirements
@@ -45,9 +47,10 @@ Lists all reports. Enter a row number or Report ID to select a report, then choo
 2 - Export table data as CSV
 3 - View report config JSON
 4 - Delete report
+5 - Manage email subscriptions
 ```
 
-Enter `new` to create a report using the wizard. Enter `r` to refresh the list. Press Enter to exit.
+Enter `new` to create a report using the wizard. Enter `r` to refresh the list. Enter `smtp` to manage SMTP server instances. Press Enter to exit.
 
 ### Non-Interactive
 

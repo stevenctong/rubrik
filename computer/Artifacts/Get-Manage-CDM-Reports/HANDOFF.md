@@ -1,6 +1,6 @@
 # Handoff — Rubrik CDM Report Tools
 
-**Date:** 2026-04-18
+**Date:** 2026-04-24
 **Author:** Steven Tong
 
 ---
@@ -9,7 +9,7 @@
 
 Two standalone tools for working with Rubrik CDM custom reports:
 
-1. **`Get-Manage-CDM-Reports.ps1`** — PowerShell CLI for interactively (or non-interactively) listing, viewing, creating, and deleting CDM reports via the internal REST API. Outputs CSVs and HTML chart files to disk.
+1. **`Get-Manage-CDM-Reports.ps1`** — PowerShell CLI for interactively (or non-interactively) listing, viewing, creating, and deleting CDM reports, managing email subscriptions, and configuring SMTP instances via the internal REST API. Outputs CSVs and HTML chart files to disk.
 2. **`csv-report-viewer.html`** — Static browser-based CSV viewer with filtering, sorting, column type detection, and Rubrik branding. No backend or server required. Reads the CSVs that the script produces.
 
 The two tools are intentionally decoupled. The script writes files to disk; the web app reads them via drag-and-drop or file picker. This avoids CORS and credential exposure — the browser never touches the cluster directly.
@@ -134,9 +134,12 @@ When the API returns a `422 Unprocessable Content` error on a PATCH, the first t
 | Row number or Report ID | Select that report |
 | `new` | Launch the report creation wizard |
 | `r` / `refresh` | Re-fetch and redisplay the report list |
+| `smtp` | Enter SMTP instance management |
 | *(Enter)* | Delete session and exit |
 
 Report status is color-coded: **Ready** = green, **Updating** = yellow. Updating reports cannot be accessed — the list redisplays automatically. After any action (create, delete, view charts, download CSV), the loop returns to the report list.
+
+On startup, the script checks whether any SMTP instances are configured. If not, warnings are shown when entering the email subscription screen or after creating a subscription, reminding the user to configure SMTP via the `smtp` command.
 
 ### Feature Menu (after selecting a report)
 
@@ -146,6 +149,7 @@ Report status is color-coded: **Ready** = green, **Updating** = yellow. Updating
 | 2 — Export table as CSV | `GET /report/{id}/csv_link` → download | CSV file saved to disk |
 | 3 — View config JSON | `GET /report/{id}` | Full config printed; press Enter to continue |
 | 4 — Delete report | `DELETE /report/{id}` | Confirmation prompt required |
+| 5 — Manage email subs | `GET/POST/PATCH/DELETE /report/email_subscription` | Interactive sub-menu (see below) |
 
 ### Chart HTML Generation
 
@@ -243,6 +247,59 @@ Page size is 10,000 rows. Prev/Next buttons and page indicator in the footer. Ro
 
 Uses Rubrik primary color `#00B2A9` (teal) for the topbar and footer. Table header uses `#007A73` (darker teal). Active toggle buttons are white with teal text.
 
+### Email Subscription Management (option 5)
+
+Manages scheduled email subscriptions on individual reports. The CDM cluster sends an HTML email containing report charts and the first 100 table rows, with an optional CSV attachment.
+
+**Navigation:** Two-level menu structure.
+- **Level 1 (list):** Lists all subscriptions for the selected report in a table (schedule type, hour, recipients, CSV toggle, status, owner). Enter a row number to manage, `new` to create, or Enter to go back.
+- **Level 2 (detail):** GETs the subscription by ID, displays full details. Options: `1` to update (PATCH), `2` to delete, Enter to go back. After update, re-GETs and redisplays (stays in Level 2). After delete, returns to Level 1.
+
+When Level 1 re-fetches and finds zero subscriptions after an action, it auto-returns to the report menu.
+
+**API endpoints (all under `/api/internal/`):**
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| List subs for report | GET | `/report/{id}/email_subscription` |
+| Create sub | POST | `/report/{id}/email_subscription` |
+| Get sub by ID | GET | `/report/email_subscription/{subscription_id}` |
+| Update sub | PATCH | `/report/email_subscription/{subscription_id}` |
+| Delete sub | DELETE | `/report/email_subscription/{subscription_id}` |
+
+**`timeAttributes` object:** Only include fields relevant to the chosen schedule type — the API rejects payloads with all fields populated.
+- Daily: `{ dailyScheduleHour }` only
+- Weekly: `{ weeklyScheduleHour, daysOfWeek }` only (daysOfWeek: 0=Sun … 6=Sat)
+- Monthly: `{ monthlyScheduleHour, dayOfMonth }` only
+
+**PowerShell array serialization gotcha:** `ConvertTo-Json` collapses single-element arrays to scalars. Fields like `emailAddresses` and `attachments` must be cast to `[string[]]` before being assigned to the hashtable to ensure they serialize as JSON arrays.
+
+### SMTP Instance Management (`smtp` command)
+
+Manages cluster-wide SMTP server configuration. At least one SMTP instance must be configured for email subscriptions to deliver.
+
+**Navigation:** Same two-level pattern as email subscriptions.
+- **Level 1 (list):** Lists all SMTP instances (hostname, port, security, username, from email). Enter a row number to manage, `new` to create, Enter to go back.
+- **Level 2 (detail):** GETs instance by ID, displays details. Options: update (PATCH), delete, or back. Update re-GETs to verify. Delete returns to Level 1.
+
+**API endpoints (all under `/api/internal/`):**
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| List all | GET | `/smtp_instance` |
+| Create | POST | `/smtp_instance` |
+| Get by ID | GET | `/smtp_instance/{id}` |
+| Update | PATCH | `/smtp_instance/{id}` |
+| Delete | DELETE | `/smtp_instance/{id}` |
+
+**POST/PATCH body fields:** `smtpHostname`, `smtpPort`, `smtpSecurity` (NONE/SSL/STARTTLS), `smtpUsername`, `smtpPassword`, `fromEmailId`, `certificateId`. Password is write-only (not returned in GET). Only populated fields are sent.
+
+**Startup SMTP check:** On auth, the script queries `/smtp_instance` and sets `$script:smtpConfigured`. This flag triggers warnings in two places:
+1. Entering the email subscription screen
+2. After successfully creating an email subscription
+
+The flag is kept in sync by the `Manage-SmtpInstances` function (updated on every list fetch, create, and delete).
+
 ---
 
 ## Known Limitations
@@ -258,5 +315,5 @@ Uses Rubrik primary color `#00B2A9` (teal) for the topbar and footer. Table head
 
 - **Local HTTP proxy** (`report-server.ps1`) — PowerShell `HttpListener` that serves the web app and proxies Rubrik API calls, enabling the "Connect to Cluster" workflow directly from the browser.
 - **Chart type fidelity** — Map CDM chart types (`Vertical`, `Donut`, etc.) to Chart.js chart types (`bar`, `doughnut`, etc.) in the HTML output.
-- **Report scheduling** — Trigger on-demand report refresh via the CDM API from the script.
 - **Multi-cluster support** — Accept an array of cluster IPs and aggregate report data.
+- ~~**Report scheduling** — Trigger on-demand report refresh via the CDM API from the script.~~ Done — email subscription management (daily/weekly/monthly schedules) implemented in 4/24/26 update.

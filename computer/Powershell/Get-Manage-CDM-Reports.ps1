@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
 Interactive report manager for Rubrik CDM clusters using the local REST API —
-list, view, create, export, and delete custom reports.
+list, view, create, export, delete custom reports, manage email subscriptions,
+and configure SMTP instances.
 
 .DESCRIPTION
 Authenticates to a Rubrik CDM cluster using a RSC Service Account JSON file.
@@ -14,6 +15,7 @@ Then the script presents a persistent interactive loop that supports:
     - Reports that are currently Updating cannot be accessed; the list is redisplayed.
     - Enter a row number or Report ID to select a report.
     - Enter 'r' or 'refresh' to re-fetch the list. Press Enter to exit.
+    - Enter 'smtp' to manage SMTP instances (add, view, update, delete).
 
   Actions on a selected report:
     1. View charts         — fetches chart data via GET /report/{id}/chart, builds an HTML
@@ -25,6 +27,10 @@ Then the script presents a persistent interactive loop that supports:
     3. View config JSON    — fetches and displays the full report configuration via
                              GET /report/{id}. Press Enter to return to the report list.
     4. Delete report       — prompts for confirmation, then calls DELETE /report/{id}.
+    5. Manage email subs   — lists email subscriptions for the report. Create new
+                             subscriptions (daily/weekly/monthly schedule, recipients,
+                             optional CSV attachment) or select an existing one to
+                             update or delete. Uses the /report/email_subscription API.
 
   Creating a new report (enter 'new' at the list prompt):
     - Choose from 9 hardcoded report templates (sourced from CDM 9.2 User Guide).
@@ -65,7 +71,7 @@ Requires -reportID.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 4/17/26
-Updated: 4/18/26
+Updated: 4/23/26
 
 Requires PowerShell 7+.
 
@@ -181,6 +187,15 @@ $headers = @{
 }
 ###### RUBRIK AUTHENTICATION - END ######
 
+# Quick SMTP check — used to warn when no SMTP server is configured
+$script:smtpConfigured = $false
+try {
+  $smtpCheck = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $headers `
+    -Uri "https://$clusterIP/api/internal/smtp_instance"
+  if ($smtpCheck.data -and $smtpCheck.data.Count -gt 0) { $script:smtpConfigured = $true }
+} catch {
+  Write-Warning "Could not check SMTP configuration: $($_.Exception.Message)"
+}
 
 # Session cleanup — call before every exit after auth succeeds
 function Remove-RubrikSession {
@@ -611,6 +626,560 @@ function New-CustomReport {
   Invoke-ReportPatch -NewId $newId -ReportName $reportName -PatchBody $patchBody
 }
 
+# Day-of-week name mapping (0=Sun … 6=Sat)
+$dayNames = @('Sun','Mon','Tue','Wed','Thu','Fri','Sat')
+
+# Infer schedule type from a timeAttributes object
+function Get-ScheduleDescription {
+  param([object] $ta)
+  if ($null -ne $ta.daysOfWeek -and $ta.daysOfWeek.Count -gt 0) {
+    $days = ($ta.daysOfWeek | ForEach-Object {
+      if ($_ -ge 0 -and $_ -lt $script:dayNames.Count) { $script:dayNames[$_] } else { $_ }
+    }) -join ','
+    return @{ Type = 'Weekly'; Hour = $ta.weeklyScheduleHour; Detail = $days }
+  }
+  if ($null -ne $ta.dayOfMonth -and $ta.dayOfMonth -gt 0) {
+    return @{ Type = 'Monthly'; Hour = $ta.monthlyScheduleHour; Detail = "Day $($ta.dayOfMonth)" }
+  }
+  return @{ Type = 'Daily'; Hour = $ta.dailyScheduleHour; Detail = '' }
+}
+
+# Interactive email-subscription management for a selected report
+function Manage-EmailSubscriptions {
+  param(
+    [string] $ReportId,
+    [string] $ReportName
+  )
+
+  if (-not $script:smtpConfigured) {
+    Write-Host "`nNote: No SMTP server is configured. Email subscriptions require an SMTP server." -ForegroundColor Yellow
+    Write-Host "Configure one by typing 'smtp' at the main report list screen." -ForegroundColor Yellow
+  }
+
+  $actionTaken = $false
+  while ($true) {
+    Write-Host "`n=== Email Subscriptions: $ReportName ===" -ForegroundColor Yellow
+
+    # ── Fetch subscriptions ──────────────────────────────────────────────────
+    try {
+      $subs = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $script:headers `
+        -Uri "https://$script:clusterIP/api/internal/report/$([Uri]::EscapeDataString($ReportId))/email_subscription"
+    } catch {
+      Write-Error "Failed to retrieve email subscriptions: $($_.Exception.Message)"
+      return
+    }
+
+    if ($null -eq $subs -or $subs.Count -eq 0) {
+      if ($actionTaken) {
+        Write-Host "No email subscriptions remaining." -ForegroundColor DarkGray
+        return
+      }
+      Write-Host "No email subscriptions configured." -ForegroundColor DarkGray
+    } else {
+      # ── Build display table ──────────────────────────────────────────────
+      $subRows = @()
+      $i = 1
+      foreach ($s in $subs) {
+        $sched = Get-ScheduleDescription $s.timeAttributes
+        $subRows += [PSCustomObject]@{
+          Row        = $i
+          Schedule   = if ($sched.Detail -ne '') { "$($sched.Type) ($($sched.Detail))" } else { $sched.Type }
+          Hour       = "$($sched.Hour):00"
+          Recipients = ($s.emailAddresses -join ', ')
+          CSV        = if ('Csv' -in $s.attachments) { 'Yes' } else { 'No' }
+          Status     = $s.status
+          Owner      = if ($s.owner) { $s.owner.username } else { '-' }
+          ID         = $s.id
+        }
+        $i++
+      }
+
+      $wRow   = [Math]::Max(3, ($subRows | ForEach-Object { "$($_.Row)".Length      } | Measure-Object -Maximum).Maximum)
+      $wSched = [Math]::Max(8, ($subRows | ForEach-Object { $_.Schedule.Length       } | Measure-Object -Maximum).Maximum)
+      $wHour  = [Math]::Max(4, ($subRows | ForEach-Object { $_.Hour.Length           } | Measure-Object -Maximum).Maximum)
+      $wRecip = [Math]::Max(10,($subRows | ForEach-Object { $_.Recipients.Length     } | Measure-Object -Maximum).Maximum)
+      $wCSV   = 3
+      $wStat  = [Math]::Max(6, ($subRows | ForEach-Object { $_.Status.Length         } | Measure-Object -Maximum).Maximum)
+      $wOwner = [Math]::Max(5, ($subRows | ForEach-Object { $_.Owner.Length          } | Measure-Object -Maximum).Maximum)
+
+      $hdr = "{0,-$wRow}  {1,-$wSched}  {2,-$wHour}  {3,-$wRecip}  {4,-$wCSV}  {5,-$wStat}  {6,-$wOwner}" -f 'Row','Schedule','Hour','Recipients','CSV','Status','Owner'
+      Write-Host $hdr
+      Write-Host ('-' * $hdr.Length)
+      foreach ($row in $subRows) {
+        Write-Host ("{0,-$wRow}  {1,-$wSched}  {2,-$wHour}  {3,-$wRecip}  {4,-$wCSV}  {5,-$wStat}  {6,-$wOwner}" -f `
+          $row.Row, $row.Schedule, $row.Hour, $row.Recipients, $row.CSV, $row.Status, $row.Owner)
+      }
+    }
+
+    Write-Host ""
+    $subChoice = Read-Host "Enter a row number to manage, 'new' to create, or press Enter to go back"
+    if ($subChoice -eq '') { return }
+
+    # ── CREATE ───────────────────────────────────────────────────────────────
+    if ($subChoice -ieq 'new') {
+      Write-Host "`n--- Create Email Subscription ---" -ForegroundColor Cyan
+
+      # Schedule type
+      $schedType = Select-FromList -Prompt "Schedule type:" -Items @('Daily','Weekly','Monthly')
+      if ($null -eq $schedType) { Write-Warning "Cancelled."; continue }
+
+      # Hour
+      $hourRaw = Read-Host "Hour to send (0-23)"
+      if ($hourRaw -notmatch '^\d+$' -or [int]$hourRaw -lt 0 -or [int]$hourRaw -gt 23) {
+        Write-Warning "Invalid hour — cancelled."
+        continue
+      }
+      $hour = [int]$hourRaw
+
+      # Build timeAttributes — only include fields relevant to the chosen schedule type
+      $timeAttrs = @{}
+      switch ($schedType) {
+        'Daily' {
+          $timeAttrs.dailyScheduleHour = $hour
+        }
+        'Weekly' {
+          $timeAttrs.weeklyScheduleHour = $hour
+          $dayLabels = @('Sun (0)','Mon (1)','Tue (2)','Wed (3)','Thu (4)','Fri (5)','Sat (6)')
+          $selDays = Select-MultipleFromList -Prompt "Days of week:" -Items $dayLabels
+          if ($selDays.Count -eq 0) { Write-Warning "No days selected — cancelled."; continue }
+          $timeAttrs.daysOfWeek = @($selDays | ForEach-Object { [int]($_ -replace '.*\((\d)\).*','$1') })
+        }
+        'Monthly' {
+          $timeAttrs.monthlyScheduleHour = $hour
+          $domRaw = Read-Host "Day of month (1-31)"
+          if ($domRaw -notmatch '^\d+$' -or [int]$domRaw -lt 1 -or [int]$domRaw -gt 31) {
+            Write-Warning "Invalid day — cancelled."
+            continue
+          }
+          $timeAttrs.dayOfMonth = [int]$domRaw
+        }
+      }
+
+      # Email addresses
+      $emailRaw = ''
+      while ($emailRaw -eq '') { $emailRaw = Read-Host "Email addresses (comma-separated, required)" }
+      $emails = @($emailRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+
+      # CSV attachment
+      $csvChoice = Read-Host "Include CSV attachment? (Y/n, default Y)"
+
+      [string[]] $emailArray = @($emails)
+      $postMap = @{
+        timeAttributes = $timeAttrs
+        emailAddresses = $emailArray
+      }
+      if ($csvChoice -inotmatch '^n') { [string[]] $csvArray = @('Csv'); $postMap.attachments = $csvArray }
+
+      $postBody = $postMap | ConvertTo-Json -Depth 4
+
+      Write-Host "`nPOST body:" -ForegroundColor DarkGray
+      Write-Host $postBody -ForegroundColor DarkGray
+      Write-Host "Creating subscription..."
+      try {
+        $newSub = Invoke-RestMethod -Method POST -SkipCertificateCheck -Headers $script:headers `
+          -Uri "https://$script:clusterIP/api/internal/report/$([Uri]::EscapeDataString($ReportId))/email_subscription" `
+          -Body $postBody
+        Write-Host "Subscription created — ID: $($newSub.id)" -ForegroundColor Green
+        if (-not $script:smtpConfigured) {
+          Write-Host "`nWarning: No SMTP server is configured — this subscription won't send emails until one is added." -ForegroundColor Yellow
+          Write-Host "Configure one by typing 'smtp' at the main report list screen." -ForegroundColor Yellow
+        }
+        $actionTaken = $true
+      } catch {
+        $errDetail = $_.ErrorDetails.Message
+        Write-Error "Failed to create subscription: $($_.Exception.Message)"
+        if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+      }
+      continue
+    }
+
+    # ── SELECT EXISTING SUBSCRIPTION ─────────────────────────────────────────
+    if ($subChoice -notmatch '^\d+$') { Write-Warning "Invalid selection."; continue }
+    $subIdx = [int]$subChoice - 1
+    if ($subIdx -lt 0 -or $subIdx -ge $subs.Count) { Write-Warning "Row out of range."; continue }
+    $selectedSub = $subs[$subIdx]
+    $subId = $selectedSub.id
+
+    # ── Level 2: subscription detail loop (stays here until back/delete) ──
+    while ($true) {
+      # Fetch full details
+      try {
+        $subDetail = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $script:headers `
+          -Uri "https://$script:clusterIP/api/internal/report/email_subscription/$([Uri]::EscapeDataString($subId))"
+      } catch {
+        Write-Error "Failed to retrieve subscription: $($_.Exception.Message)"
+        break
+      }
+
+      $sched = Get-ScheduleDescription $subDetail.timeAttributes
+      Write-Host "`n--- Subscription Details ---" -ForegroundColor Cyan
+      Write-Host "  ID:         $($subDetail.id)"
+      Write-Host "  Schedule:   $($sched.Type)$(if ($sched.Detail -ne '') { " ($($sched.Detail))" })"
+      Write-Host "  Hour:       $($sched.Hour):00"
+      Write-Host "  Recipients: $($subDetail.emailAddresses -join ', ')"
+      Write-Host "  CSV:        $(if ('Csv' -in $subDetail.attachments) { 'Yes' } else { 'No' })"
+      Write-Host "  Status:     $($subDetail.status)"
+      Write-Host "  Owner:      $(if ($subDetail.owner) { "$($subDetail.owner.username) ($($subDetail.owner.userId))" } else { '-' })"
+
+      Write-Host "`n  1. Update subscription"
+      Write-Host "  2. Delete subscription"
+      $subAction = Read-Host "Enter selection (1 or 2), or press Enter to go back"
+      if ($subAction -eq '') { break }
+
+      # ── UPDATE ───────────────────────────────────────────────────────────
+      if ($subAction -eq '1') {
+        Write-Host "`n--- Update Subscription (press Enter to keep current value) ---" -ForegroundColor Cyan
+
+        # Schedule type
+        $curType = $sched.Type
+        $newType = Select-FromList -Prompt "Schedule type [current: $curType]:" -Items @('Daily','Weekly','Monthly') -AllowSkip
+        if ($null -eq $newType) { $newType = $curType }
+
+        # Hour
+        $curHour = $sched.Hour
+        $newHourRaw = Read-Host "Hour to send (0-23) [current: $curHour]"
+        $newHour = if ($newHourRaw -match '^\d+$' -and [int]$newHourRaw -ge 0 -and [int]$newHourRaw -le 23) { [int]$newHourRaw } else { $curHour }
+
+        # Build timeAttributes — only include fields relevant to the chosen schedule type
+        $newTimeAttrs = @{}
+        switch ($newType) {
+          'Daily' {
+            $newTimeAttrs.dailyScheduleHour = $newHour
+          }
+          'Weekly' {
+            $newTimeAttrs.weeklyScheduleHour = $newHour
+            $curDays = if ($subDetail.timeAttributes.daysOfWeek) {
+              ($subDetail.timeAttributes.daysOfWeek | ForEach-Object {
+                if ($_ -ge 0 -and $_ -lt $script:dayNames.Count) { $script:dayNames[$_] } else { $_ }
+              }) -join ','
+            } else { 'none' }
+            $dayLabels = @('Sun (0)','Mon (1)','Tue (2)','Wed (3)','Thu (4)','Fri (5)','Sat (6)')
+            Write-Host "  Current days: $curDays" -ForegroundColor DarkGray
+            $selDays = Select-MultipleFromList -Prompt "Days of week (Enter to keep current):" -Items $dayLabels
+            if ($selDays.Count -gt 0) {
+              $newTimeAttrs.daysOfWeek = @($selDays | ForEach-Object { [int]($_ -replace '.*\((\d)\).*','$1') })
+            } else {
+              $newTimeAttrs.daysOfWeek = $subDetail.timeAttributes.daysOfWeek
+            }
+          }
+          'Monthly' {
+            $newTimeAttrs.monthlyScheduleHour = $newHour
+            $curDom = $subDetail.timeAttributes.dayOfMonth
+            $newDomRaw = Read-Host "Day of month (1-31) [current: $curDom]"
+            $newTimeAttrs.dayOfMonth = if ($newDomRaw -match '^\d+$' -and [int]$newDomRaw -ge 1 -and [int]$newDomRaw -le 31) { [int]$newDomRaw } else { $curDom }
+          }
+        }
+
+        # Email addresses
+        $curEmails = $subDetail.emailAddresses -join ', '
+        $newEmailRaw = Read-Host "Email addresses [current: $curEmails]"
+        $newEmails = if ($newEmailRaw -ne '') {
+          @($newEmailRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' })
+        } else { $subDetail.emailAddresses }
+
+        # CSV attachment
+        $curCsv = if ('Csv' -in $subDetail.attachments) { 'Y' } else { 'N' }
+        $csvChoice = Read-Host "Include CSV attachment? (Y/n) [current: $curCsv]"
+        $includeCsv = if ($csvChoice -imatch '^n')  { $false }
+                      elseif ($csvChoice -eq '')     { 'Csv' -in $subDetail.attachments }
+                      else                           { $true }
+
+        [string[]] $emailArray = @($newEmails)
+        $patchMap = @{
+          id             = $subId
+          timeAttributes = $newTimeAttrs
+          emailAddresses = $emailArray
+        }
+        if ($includeCsv) { [string[]] $csvArray = @('Csv'); $patchMap.attachments = $csvArray }
+
+        $patchBody = $patchMap | ConvertTo-Json -Depth 4
+
+        Write-Host "`nPATCH body:" -ForegroundColor DarkGray
+        Write-Host $patchBody -ForegroundColor DarkGray
+        Write-Host "Updating subscription..."
+        try {
+          $null = Invoke-RestMethod -Method PATCH -SkipCertificateCheck -Headers $script:headers `
+            -Uri "https://$script:clusterIP/api/internal/report/email_subscription/$([Uri]::EscapeDataString($subId))" `
+            -Body $patchBody
+          Write-Host "Subscription updated." -ForegroundColor Green
+        } catch {
+          $errDetail = $_.ErrorDetails.Message
+          Write-Error "Failed to update subscription: $($_.Exception.Message)"
+          if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+        }
+        # Loop back to re-GET and redisplay this subscription's details
+        continue
+
+      # ── DELETE ───────────────────────────────────────────────────────────
+      } elseif ($subAction -eq '2') {
+        Write-Host "`nSubscription to delete: $subId" -ForegroundColor Yellow
+        $confirm = Read-Host "Type 'yes' to confirm deletion"
+        if ($confirm -ine 'yes') {
+          Write-Host "Deletion cancelled." -ForegroundColor DarkGray
+          continue
+        }
+        try {
+          $null = Invoke-RestMethod -Method DELETE -SkipCertificateCheck -Headers $script:headers `
+            -Uri "https://$script:clusterIP/api/internal/report/email_subscription/$([Uri]::EscapeDataString($subId))"
+          Write-Host "Subscription deleted." -ForegroundColor Green
+        } catch {
+          Write-Error "Failed to delete subscription: $($_.Exception.Message)"
+        }
+        # Break out of Level 2 → back to subscription list (Level 1)
+        break
+      }
+    } # end Level 2 (subscription detail loop)
+
+    # After returning from Level 2, the outer while loop relists subscriptions.
+    # $actionTaken flag ensures auto-return if the list is now empty.
+    $actionTaken = $true
+    continue
+  }
+}
+
+# Interactive SMTP instance management
+function Manage-SmtpInstances {
+  $actionTaken = $false
+  while ($true) {
+    Write-Host "`n=== SMTP Instances ===" -ForegroundColor Yellow
+
+    # ── Fetch SMTP instances ─────────────────────────────────────────────────
+    try {
+      $response = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $script:headers `
+        -Uri "https://$script:clusterIP/api/internal/smtp_instance"
+    } catch {
+      Write-Error "Failed to retrieve SMTP instances: $($_.Exception.Message)"
+      return
+    }
+
+    $instances = $response.data
+    $script:smtpConfigured = ($null -ne $instances -and $instances.Count -gt 0)
+    if (-not $script:smtpConfigured) {
+      if ($actionTaken) {
+        Write-Host "No SMTP instances remaining." -ForegroundColor DarkGray
+        return
+      }
+      Write-Host "No SMTP instances configured." -ForegroundColor DarkGray
+    } else {
+      # ── Build display table ──────────────────────────────────────────────
+      $smtpRows = @()
+      $i = 1
+      foreach ($s in $instances) {
+        $smtpRows += [PSCustomObject]@{
+          Row       = $i
+          Hostname  = $s.smtpHostname
+          Port      = $s.smtpPort
+          Security  = $s.smtpSecurity
+          Username  = if ($s.smtpUsername) { $s.smtpUsername } else { '-' }
+          FromEmail = $s.fromEmailId
+          ID        = $s.id
+        }
+        $i++
+      }
+
+      $wRow   = [Math]::Max(3, ($smtpRows | ForEach-Object { "$($_.Row)".Length      } | Measure-Object -Maximum).Maximum)
+      $wHost  = [Math]::Max(8, ($smtpRows | ForEach-Object { $_.Hostname.Length       } | Measure-Object -Maximum).Maximum)
+      $wPort  = [Math]::Max(4, ($smtpRows | ForEach-Object { "$($_.Port)".Length      } | Measure-Object -Maximum).Maximum)
+      $wSec   = [Math]::Max(8, ($smtpRows | ForEach-Object { $_.Security.Length       } | Measure-Object -Maximum).Maximum)
+      $wUser  = [Math]::Max(8, ($smtpRows | ForEach-Object { $_.Username.Length       } | Measure-Object -Maximum).Maximum)
+      $wFrom  = [Math]::Max(10,($smtpRows | ForEach-Object { $_.FromEmail.Length      } | Measure-Object -Maximum).Maximum)
+
+      $hdr = "{0,-$wRow}  {1,-$wHost}  {2,-$wPort}  {3,-$wSec}  {4,-$wUser}  {5,-$wFrom}" -f 'Row','Hostname','Port','Security','Username','From Email'
+      Write-Host $hdr
+      Write-Host ('-' * $hdr.Length)
+      foreach ($row in $smtpRows) {
+        Write-Host ("{0,-$wRow}  {1,-$wHost}  {2,-$wPort}  {3,-$wSec}  {4,-$wUser}  {5,-$wFrom}" -f `
+          $row.Row, $row.Hostname, $row.Port, $row.Security, $row.Username, $row.FromEmail)
+      }
+    }
+
+    Write-Host ""
+    $smtpChoice = Read-Host "Enter a row number to manage, 'new' to create, or press Enter to go back"
+    if ($smtpChoice -eq '') { return }
+
+    # ── CREATE ───────────────────────────────────────────────────────────────
+    if ($smtpChoice -ieq 'new') {
+      Write-Host "`n--- Create SMTP Instance ---" -ForegroundColor Cyan
+
+      # Hostname (required)
+      $hostname = ''
+      while ($hostname -eq '') { $hostname = Read-Host "SMTP hostname (required)" }
+
+      # Port (default 25)
+      $portRaw = Read-Host "SMTP port (default 25)"
+      $port = if ($portRaw -match '^\d+$') { [int]$portRaw } else { 25 }
+
+      # Security
+      $security = Select-FromList -Prompt "SMTP security:" -Items @('NONE','SSL','STARTTLS') -AllowSkip
+      if ($null -eq $security) { $security = 'NONE'; Write-Host "  Defaulting to NONE" -ForegroundColor DarkGray }
+
+      # Username (optional)
+      $username = Read-Host "SMTP username (press Enter to skip)"
+
+      # Password (optional)
+      $password = ''
+      if ($username -ne '') {
+        $securePass = Read-Host "SMTP password" -AsSecureString
+        $password = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+          [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
+      }
+
+      # From email (required)
+      $fromEmail = ''
+      while ($fromEmail -eq '') { $fromEmail = Read-Host "From email address (required)" }
+
+      # Certificate ID (optional)
+      $certId = Read-Host "Certificate ID (press Enter to skip)"
+
+      $postMap = @{
+        smtpHostname = $hostname
+        smtpPort     = $port
+        smtpSecurity = $security
+        fromEmailId  = $fromEmail
+      }
+      if ($username -ne '') { $postMap.smtpUsername = $username }
+      if ($password -ne '') { $postMap.smtpPassword = $password }
+      if ($certId -ne '')   { $postMap.certificateId = $certId }
+
+      $postBody = $postMap | ConvertTo-Json -Depth 4
+
+      Write-Host "`nPOST body:" -ForegroundColor DarkGray
+      # Mask password in debug output
+      $debugBody = $postBody -replace '"smtpPassword":\s*"[^"]*"', '"smtpPassword": "****"'
+      Write-Host $debugBody -ForegroundColor DarkGray
+      Write-Host "Creating SMTP instance..."
+      try {
+        $newInstance = Invoke-RestMethod -Method POST -SkipCertificateCheck -Headers $script:headers `
+          -Uri "https://$script:clusterIP/api/internal/smtp_instance" -Body $postBody
+        Write-Host "SMTP instance created — ID: $($newInstance.id)" -ForegroundColor Green
+        $script:smtpConfigured = $true
+        $actionTaken = $true
+      } catch {
+        $errDetail = $_.ErrorDetails.Message
+        Write-Error "Failed to create SMTP instance: $($_.Exception.Message)"
+        if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+      }
+      continue
+    }
+
+    # ── SELECT EXISTING INSTANCE ─────────────────────────────────────────────
+    if ($smtpChoice -notmatch '^\d+$') { Write-Warning "Invalid selection."; continue }
+    $smtpIdx = [int]$smtpChoice - 1
+    if ($smtpIdx -lt 0 -or $smtpIdx -ge $instances.Count) { Write-Warning "Row out of range."; continue }
+    $selectedInstance = $instances[$smtpIdx]
+    $instanceId = $selectedInstance.id
+
+    # ── Level 2: instance detail loop ────────────────────────────────────────
+    while ($true) {
+      try {
+        $detail = Invoke-RestMethod -Method GET -SkipCertificateCheck -Headers $script:headers `
+          -Uri "https://$script:clusterIP/api/internal/smtp_instance/$([Uri]::EscapeDataString($instanceId))"
+      } catch {
+        Write-Error "Failed to retrieve SMTP instance: $($_.Exception.Message)"
+        break
+      }
+
+      Write-Host "`n--- SMTP Instance Details ---" -ForegroundColor Cyan
+      Write-Host "  ID:             $($detail.id)"
+      Write-Host "  Hostname:       $($detail.smtpHostname)"
+      Write-Host "  Port:           $($detail.smtpPort)"
+      Write-Host "  Security:       $($detail.smtpSecurity)"
+      Write-Host "  Username:       $(if ($detail.smtpUsername) { $detail.smtpUsername } else { '-' })"
+      Write-Host "  From Email:     $($detail.fromEmailId)"
+      Write-Host "  Certificate ID: $(if ($detail.certificateId) { $detail.certificateId } else { '-' })"
+
+      Write-Host "`n  1. Update instance"
+      Write-Host "  2. Delete instance"
+      $instanceAction = Read-Host "Enter selection (1 or 2), or press Enter to go back"
+      if ($instanceAction -eq '') { break }
+
+      # ── UPDATE ───────────────────────────────────────────────────────────
+      if ($instanceAction -eq '1') {
+        Write-Host "`n--- Update SMTP Instance (press Enter to keep current value) ---" -ForegroundColor Cyan
+
+        $newHostRaw = Read-Host "Hostname [current: $($detail.smtpHostname)]"
+        $newHost = if ($newHostRaw -ne '') { $newHostRaw } else { $detail.smtpHostname }
+
+        $newPortRaw = Read-Host "Port [current: $($detail.smtpPort)]"
+        $newPort = if ($newPortRaw -match '^\d+$') { [int]$newPortRaw } else { $detail.smtpPort }
+
+        $curSec = $detail.smtpSecurity
+        $newSec = Select-FromList -Prompt "Security [current: $curSec]:" -Items @('NONE','SSL','STARTTLS') -AllowSkip
+        if ($null -eq $newSec) { $newSec = $curSec }
+
+        $curUser = if ($detail.smtpUsername) { $detail.smtpUsername } else { '' }
+        $newUserRaw = Read-Host "Username [current: $(if ($curUser -ne '') { $curUser } else { '-' })]"
+        $newUser = if ($newUserRaw -ne '') { $newUserRaw } else { $curUser }
+
+        $newPass = ''
+        $passPrompt = Read-Host "New password (Enter to keep current, 'clear' to remove)"
+        if ($passPrompt -ine 'clear' -and $passPrompt -ne '') {
+          $securePass = Read-Host "Confirm new password" -AsSecureString
+          $newPass = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass))
+        }
+
+        $newFromRaw = Read-Host "From email [current: $($detail.fromEmailId)]"
+        $newFrom = if ($newFromRaw -ne '') { $newFromRaw } else { $detail.fromEmailId }
+
+        $curCert = if ($detail.certificateId) { $detail.certificateId } else { '' }
+        $newCertRaw = Read-Host "Certificate ID [current: $(if ($curCert -ne '') { $curCert } else { '-' })]"
+        $newCert = if ($newCertRaw -ne '') { $newCertRaw } else { $curCert }
+
+        $patchMap = @{
+          smtpHostname = $newHost
+          smtpPort     = $newPort
+          smtpSecurity = $newSec
+          fromEmailId  = $newFrom
+        }
+        if ($newUser -ne '')  { $patchMap.smtpUsername = $newUser }
+        if ($newPass -ne '')  { $patchMap.smtpPassword = $newPass }
+        if ($newCert -ne '')  { $patchMap.certificateId = $newCert }
+
+        $patchBody = $patchMap | ConvertTo-Json -Depth 4
+
+        Write-Host "`nPATCH body:" -ForegroundColor DarkGray
+        $debugBody = $patchBody -replace '"smtpPassword":\s*"[^"]*"', '"smtpPassword": "****"'
+        Write-Host $debugBody -ForegroundColor DarkGray
+        Write-Host "Updating SMTP instance..."
+        try {
+          $null = Invoke-RestMethod -Method PATCH -SkipCertificateCheck -Headers $script:headers `
+            -Uri "https://$script:clusterIP/api/internal/smtp_instance/$([Uri]::EscapeDataString($instanceId))" `
+            -Body $patchBody
+          Write-Host "SMTP instance updated." -ForegroundColor Green
+        } catch {
+          $errDetail = $_.ErrorDetails.Message
+          Write-Error "Failed to update SMTP instance: $($_.Exception.Message)"
+          if ($errDetail) { Write-Host "API error detail: $errDetail" -ForegroundColor Red }
+        }
+        # Loop back to re-GET and redisplay
+        continue
+
+      # ── DELETE ───────────────────────────────────────────────────────────
+      } elseif ($instanceAction -eq '2') {
+        Write-Host "`nSMTP instance to delete: $($detail.smtpHostname) ($instanceId)" -ForegroundColor Yellow
+        $confirm = Read-Host "Type 'yes' to confirm deletion"
+        if ($confirm -ine 'yes') {
+          Write-Host "Deletion cancelled." -ForegroundColor DarkGray
+          continue
+        }
+        try {
+          $null = Invoke-RestMethod -Method DELETE -SkipCertificateCheck -Headers $script:headers `
+            -Uri "https://$script:clusterIP/api/internal/smtp_instance/$([Uri]::EscapeDataString($instanceId))"
+          Write-Host "SMTP instance deleted." -ForegroundColor Green
+          $script:smtpConfigured = $false  # will be re-evaluated on next list fetch
+        } catch {
+          Write-Error "Failed to delete SMTP instance: $($_.Exception.Message)"
+        }
+        break
+      }
+    } # end Level 2
+
+    $actionTaken = $true
+    continue
+  }
+}
+
 # Byte measure detection and auto-scaling (used by Invoke-ChartHtml)
 $byteMeasureKeywords = @('Bytes','Storage','Data','Size','Growth','Ingested','Transferred','Protected','Stored')
 
@@ -868,12 +1437,14 @@ while ($true) {
   }
   Write-Host ""
 
-  $selection = Read-Host "Enter a row number, Report ID, 'new' to create, 'r' to refresh, or press Enter to exit"
+  $selection = Read-Host "Enter a row number, Report ID, 'new' to create, 'r' to refresh, 'smtp' for SMTP settings, or press Enter to exit"
   if ($selection -eq '') { Remove-RubrikSession; exit 0 }
 
   if ($selection -ieq 'r' -or $selection -ieq 'refresh') { continue }
 
   if ($selection -ieq 'new') { New-CustomReport; continue }
+
+  if ($selection -ieq 'smtp') { Manage-SmtpInstances; continue }
 
   if ($selection -match '^\d+$') {
     $rowNum = [int]$selection
@@ -907,7 +1478,8 @@ while ($true) {
   Write-Host "  2. Export table data as CSV"
   Write-Host "  3. View report config JSON"
   Write-Host "  4. Delete report"
-  $action = Read-Host "Enter selection (1, 2, 3, or 4)"
+  Write-Host "  5. Manage email subscriptions"
+  $action = Read-Host "Enter selection (1-5)"
 
   # ══════════════════════════════════════════════════════════════════════
   #  ACTION 1 — CHARTS
@@ -1003,8 +1575,16 @@ while ($true) {
     }
     continue
 
+  # ══════════════════════════════════════════════════════════════════════
+  #  ACTION 5 — EMAIL SUBSCRIPTIONS
+  # ══════════════════════════════════════════════════════════════════════
+  } elseif ($action -eq '5') {
+
+    Manage-EmailSubscriptions -ReportId $reportId -ReportName $reportName
+    continue
+
   } else {
-    Write-Error "Invalid selection: '$action'. Enter 1, 2, 3, or 4."
+    Write-Error "Invalid selection: '$action'. Enter 1-5."
     continue
   }
 
