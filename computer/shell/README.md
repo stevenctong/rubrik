@@ -15,7 +15,7 @@ Automates the Pure Storage protection group snapshot and volume copy workflow fo
 1. Unmount backup filesystems on the proxy host
 2. Deactivate and export the volume group (optional, via `EXECUTE_LVM`)
 3. Destroy existing Pure PG snapshots matching the configured suffix
-4. Freeze Epic IRIS cache (optional, via `EXECUTE_EPIC`); AIX can also freeze JFS2 filesystems (`EXECUTE_JFS2`)
+4. Freeze Epic IRIS cache (enabled by default; set `EXECUTE_EPIC=false` to skip); AIX can also freeze JFS2 filesystems (`EXECUTE_JFS2`)
 5. Create a new PG snapshot with a date-stamped suffix
 6. Thaw Epic IRIS cache
 7. Copy snapshot volumes to target (backup proxy) volumes
@@ -41,7 +41,7 @@ All variables are in the `### VARIABLES ###` block at the top of the script. Key
 | Variable | Default | Description |
 |---|---|---|
 | `PLATFORM` | `""` (auto-detect) | `"linux"` or `"aix"` |
-| `EXECUTE_EPIC` | `"false"` | Enable Epic IRIS freeze/thaw |
+| `EXECUTE_EPIC` | `"true"` | Enable Epic IRIS freeze/thaw |
 | `EXECUTE_LVM` | `"false"` | Enable VG teardown/reimport and device rescan |
 | `EXECUTE_JFS2` | `"false"` | Enable JFS2 freeze/thaw (AIX only) |
 

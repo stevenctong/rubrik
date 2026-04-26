@@ -33,11 +33,11 @@
 #        - Linux: vgchange -a n / vgexport
 #        - AIX:   varyoffvg / exportvg
 #   4. Destroy existing Pure PG snapshots matching the Rubrik suffix
-#   5. Freeze Epic IRIS (if EXECUTE_EPIC=true)
+#   5. Freeze Epic IRIS cache (set EXECUTE_EPIC=false to skip)
 #        - AIX: also freezes JFS2 filesystems (if EXECUTE_JFS2=true)
 #   6. Start auto-thaw timer as safety net (8 min timeout)
 #   7. Create new PG snapshot with date-stamped suffix
-#   8. Thaw Epic IRIS (if EXECUTE_EPIC=true)
+#   8. Thaw Epic IRIS cache (set EXECUTE_EPIC=false to skip)
 #        - AIX: also thaws JFS2 filesystems (if EXECUTE_JFS2=true)
 #   9. Copy snapshot volumes to target (backup proxy) volumes
 #  10. SCSI/device rescan and reimport volume group (if EXECUTE_LVM=true)
@@ -105,7 +105,7 @@
 PLATFORM=""
 
 # Toggle to control whether Epic freeze/thaw commands are executed
-EXECUTE_EPIC="false"
+EXECUTE_EPIC="true"
 
 # Toggle to control whether LVM/VG teardown/reimport and device rescan are performed
 # Enable this if the backup proxy requires vgexport/vgimport (Linux) or
@@ -128,8 +128,8 @@ touch "$LOGFILE"
 REFRESH_LOCK_FILE="${SNAPDIR}/puresnaplockfile"
 
 # Pure array hostname and username
-PURE_ARRAY="sjc-rcf-pure04.stor.rubrik.com"
-PURE_USER="perf-admin"
+PURE_ARRAY="<ip_or_hostname_of_pure_array>"
+PURE_USER="<pure_ssh_user>"
 
 # Pure - Name of the Protection Group that the IRIS volumes belong to
 SOURCE_PG_GROUP="Epic-PGPROD"
