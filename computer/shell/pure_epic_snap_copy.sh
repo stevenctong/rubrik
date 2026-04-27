@@ -142,10 +142,8 @@ SOURCE_VOL_PREFIX="epic_iris_odb_source_vol_"
 TARGET_VOL_PREFIX="epic_iris_odb_proxy_vol_"
 
 # The mount point details for the backup proxy
-# The base of the mount points on the file system
-MOUNT_BASE='/epic'
-# Sub-directories under the base mount point, comma separated
-MOUNT_POINTS="/prd01"
+# Full mount point paths, comma separated (e.g. /epic/prd01,/epic/prd02)
+MOUNT_POINTS="/epic/prd01"
 # The /dev/<lv_name> that will be mounted to each mount point, comma separated
 # Linux example: /dev/mapper/prdvg-prd01
 # AIX example:   /dev/prd01lv
@@ -160,8 +158,8 @@ LVM_VG="prdvg"
 AIX_VG_HDISK="hdisk1"
 
 # Variables for Epic application
-EPIC_FREEZE_CMD="/epic/sup/bin/instfreeze"
-EPIC_THAW_CMD="/epic/sup/bin/instthaw"
+EPIC_FREEZE_CMD="/epic/prd/bin/instfreeze"
+EPIC_THAW_CMD="/epic/prd/bin/instthaw"
 EPIC_AUTOTHAW_CMD="nohup sh -c '(sleep 8m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
 EPIC_SERVER="mbepicrel"
 EPIC_ID="root"
@@ -250,7 +248,7 @@ IFS=$' \t\n'  # Restore IFS to its default value
 ARRAY_LENGTH=${#MOUNT_POINTS_ARRAY[@]}
 i=0
 while [ $i -lt $ARRAY_LENGTH ]; do
-    MOUNT_POINT="${MOUNT_BASE}${MOUNT_POINTS_ARRAY[i]}"
+    MOUNT_POINT="${MOUNT_POINTS_ARRAY[i]}"
     echo "Unmounting: ${MOUNT_POINT}" | tee -a "${LOGFILE}"
     umount "${MOUNT_POINT}"
     if [ $? -ne 0 ]; then
@@ -555,14 +553,13 @@ fi
 # AIX:   mount with -o cio (Concurrent I/O for Epic)
 ########################################################################################################
 
-echo "Mount Base: $MOUNT_BASE" | tee -a "${LOGFILE}"
-echo "Mount Points Array: ${MOUNT_POINTS}" | tee -a "${LOGFILE}"
+echo "Mount Points: ${MOUNT_POINTS}" | tee -a "${LOGFILE}"
 echo "Device Logical Volumes Array: ${DEV_LV}" | tee -a "${LOGFILE}"
 
 ARRAY_LENGTH=${#MOUNT_POINTS_ARRAY[@]}
 i=0
 while [ $i -lt $ARRAY_LENGTH ]; do
-    MOUNT_POINT="${MOUNT_BASE}${MOUNT_POINTS_ARRAY[i]}"
+    MOUNT_POINT="${MOUNT_POINTS_ARRAY[i]}"
     DEV="${DEV_LV_ARRAY[i]}"
     echo "Mounting: ${DEV} to: ${MOUNT_POINT}" | tee -a "${LOGFILE}"
     if [ "$PLATFORM" = "aix" ]; then
