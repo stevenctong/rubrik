@@ -52,7 +52,7 @@ Useful for troubleshooting — the log captures all console output including err
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 1/7/23
-Updated: 4/20/26
+Updated: 5/10/26
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a role
@@ -61,7 +61,8 @@ For authentication, use a RSC Service Account:
 ** Download the service account JSON
 ** Define the service account JSON path: -RscServiceAccountJson
 
-Requires PowerShell 7+.
+Requires PowerShell 5.1 or later (tested on PS5.1 and PS7+).
+On Windows, runs with powershell.exe (PS5) or pwsh.exe (PS7+).
 
 .EXAMPLE
 ./Invoke-MV-Open-Close.ps1 -RscServiceAccountJson './rsc-sa.json' -mvName 'my-mv' -clusterName 'my-cluster' -op 'open'
@@ -112,8 +113,39 @@ param (
 )
 
 $date = Get-Date
-$pstZone = [TimeZoneInfo]::FindSystemTimeZoneById('America/Los_Angeles')
-$startTimePST = [TimeZoneInfo]::ConvertTimeFromUtc($date.ToUniversalTime(), $pstZone)
+# PS7+ supports $IsWindows and IANA timezone IDs; use local PST display.
+# PS5 is Windows-only but FindSystemTimeZoneById can be unreliable in some
+# environments, so just use UTC for simplicity.
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+  $pstZone = if ($IsWindows) {
+    [TimeZoneInfo]::FindSystemTimeZoneById('Pacific Standard Time')
+  } else {
+    [TimeZoneInfo]::FindSystemTimeZoneById('America/Los_Angeles')
+  }
+  $startTimeDisplay = [TimeZoneInfo]::ConvertTimeFromUtc($date.ToUniversalTime(), $pstZone)
+  $timeLabel = 'PST'
+} else {
+  $startTimeDisplay = $date.ToUniversalTime()
+  $timeLabel = 'UTC'
+}
+
+# PS5 does not support -SkipCertificateCheck on Invoke-RestMethod.
+# This bypass policy allows self-signed/untrusted certificates in PS5.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+  if (-not ([System.Management.Automation.PSTypeName]'TrustAllCerts').Type) {
+    Add-Type @"
+using System.Net;
+using System.Security.Cryptography.X509Certificates;
+public class TrustAllCerts : ICertificatePolicy {
+  public bool CheckValidationResult(
+    ServicePoint svcPoint, X509Certificate cert,
+    WebRequest request, int certProblem) { return true; }
+}
+"@
+  }
+  [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCerts
+  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+}
 
 # Determine mode based on whether clusterIP is provided
 $cdmMode = -not [string]::IsNullOrEmpty($clusterIP)
@@ -168,17 +200,17 @@ if ([string]::IsNullOrEmpty($RscServiceAccountJson)) {
   exit 1
 }
 
-# Require PowerShell 7+
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-  Write-Error "PowerShell 7+ is required. Current version: $($PSVersionTable.PSVersion)"
-  if ($logging) { Stop-Transcript }
-  exit 1
+Write-Host "Script start time ($timeLabel): $($startTimeDisplay.ToString('yyyy-MM-dd HH:mm:ss'))"
+
+# Build an initial display label from whatever was provided at invocation time.
+# This gets rebuilt after MV lookup if only -mvName was given.
+if (-not [string]::IsNullOrEmpty($mvName) -and -not [string]::IsNullOrEmpty($mvID)) {
+  $mvLabel = "$mvName ($mvID)"
+} elseif (-not [string]::IsNullOrEmpty($mvName)) {
+  $mvLabel = $mvName
+} else {
+  $mvLabel = $mvID
 }
-
-Write-Host "Script start time (PST): $($startTimePST.ToString('yyyy-MM-dd HH:mm:ss'))"
-
-# Build display label for messages (avoids blank name when using -mvID directly)
-$mvLabel = if (-not [string]::IsNullOrEmpty($mvName)) { "$mvName ($mvID)" } else { $mvID }
 
 if ($cdmMode) {
   ###### CDM REST API AUTHENTICATION - BEGIN ######
@@ -188,7 +220,9 @@ if ($cdmMode) {
   try {
     $serviceAccountFile = Get-Content -Path "$RscServiceAccountJson" -ErrorAction Stop | ConvertFrom-Json
   } catch {
-    throw "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
+    Write-Error "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Validate required fields
@@ -197,21 +231,27 @@ if ($cdmMode) {
   if ($null -eq $serviceAccountFile.client_secret) { $missingFields += 'client_secret' }
 
   if ($missingFields.Count -gt 0) {
-    throw "Service Account JSON is missing required fields: $($missingFields -join ', ')"
+    Write-Error "Service Account JSON is missing required fields: $($missingFields -join ', ')"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Exchange credentials for bearer token via CDM session API
   try {
-    $response = Invoke-RestMethod -Method POST -ContentType 'application/json' -SkipCertificateCheck `
+    $response = Invoke-RestMethod -Method POST -ContentType 'application/json' `
       -Uri "https://$clusterIP/api/v1/service_account/session" `
       -Body (@{ serviceAccountId = $serviceAccountFile.client_id; secret = $serviceAccountFile.client_secret } | ConvertTo-Json) `
       -ErrorAction Stop
   } catch {
-    throw "CDM authentication failed: $($_.Exception.Message)"
+    Write-Error "CDM authentication failed: $($_.Exception.Message)"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   if ([string]::IsNullOrEmpty($response.token)) {
-    throw "CDM returned a response but no bearer token was included."
+    Write-Error "CDM returned a response but no bearer token was included."
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Set connection variables
@@ -244,7 +284,9 @@ if ($cdmMode) {
   try {
     $serviceAccountFile = Get-Content -Path "$RscServiceAccountJson" -ErrorAction Stop | ConvertFrom-Json
   } catch {
-    throw "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
+    Write-Error "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Validate required fields
@@ -254,7 +296,9 @@ if ($cdmMode) {
   if ($null -eq $serviceAccountFile.access_token_uri) { $missingFields += 'access_token_uri' }
 
   if ($missingFields.Count -gt 0) {
-    throw "Service Account JSON is missing required fields: $($missingFields -join ', ')"
+    Write-Error "Service Account JSON is missing required fields: $($missingFields -join ', ')"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Exchange credentials for bearer token
@@ -268,11 +312,15 @@ if ($cdmMode) {
     $response = Invoke-RestMethod -Method POST -Uri $serviceAccountFile.access_token_uri `
       -Body ($payload | ConvertTo-Json) -ContentType 'application/json' -ErrorAction Stop
   } catch {
-    throw "RSC authentication failed: $($_.Exception.Message)"
+    Write-Error "RSC authentication failed: $($_.Exception.Message)"
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   if ($null -eq $response.access_token) {
-    throw "RSC returned a response but no access token was included."
+    Write-Error "RSC returned a response but no access token was included."
+    if ($logging) { Stop-Transcript }
+    exit 1
   }
 
   # Set connection variables
@@ -311,7 +359,7 @@ Function Remove-RubrikSession {
     'Authorization' = $conn.bearer
   }
   try {
-    Invoke-RestMethod -Method DELETE -SkipCertificateCheck -Headers $deleteHeaders `
+    Invoke-RestMethod -Method DELETE -Headers $deleteHeaders `
       -Uri "$($conn.rubrikURL)/api/v1/session/$([Uri]::EscapeDataString($conn.sessionId))" | Out-Null
     Write-Host "CDM session deleted." -ForegroundColor DarkGray
   } catch {
@@ -355,7 +403,7 @@ Function Find-Cluster {
     "query" = $query
     "variables" = $variables
   }
-  $clusterResult = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.clusterConnection.edges.node
+  $clusterResult = $(Invoke-RestMethod -Method POST -Uri $script:endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $script:headers).data.clusterConnection.edges.node
   # Filter for an exact name match
   $clusterMatch = $null
   foreach ($i in $clusterResult) {
@@ -438,8 +486,16 @@ Function Find-ManagedVolume {
     "query" = $query
     "variables" = $variables
   }
-  $mvResult = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers).data.managedVolumes.edges.node
-  return $mvResult
+  $mvResult = $(Invoke-RestMethod -Method POST -Uri $script:endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $script:headers).data.managedVolumes.edges.node
+  # Filter for an exact name match (defensive, NAME_EXACT_MATCH should already narrow it)
+  $mvMatch = $null
+  foreach ($i in $mvResult) {
+    if ($i.name -eq $mvName) {
+      $mvMatch = $i
+      break
+    }
+  }
+  return $mvMatch
 }  ### Function Find-ManagedVolume
 
 # Open a Managed Volume to a writable state (RSC mode)
@@ -471,7 +527,7 @@ Function Open-MV {
     "query" = $query
     "variables" = $variables
   }
-  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+  $response = Invoke-RestMethod -Method POST -Uri $script:endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $script:headers
   return $response
 }  ### Function Open-MV
 
@@ -504,7 +560,7 @@ Function Close-MV {
     "query" = $query
     "variables" = $variables
   }
-  $response = Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers
+  $response = Invoke-RestMethod -Method POST -Uri $script:endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $script:headers
   return $response
 }  ### Function Close-MV
 
@@ -519,7 +575,7 @@ Function Find-ManagedVolumeCDM {
     [string]$mvName
   )
   $getURL = "$($global:rubrikConnection.rubrikURL)/api/internal/managed_volume?name=$mvName"
-  $mvResult = $(Invoke-RestMethod -Uri $getURL -Headers $headers -Method GET -SkipCertificateCheck).data
+  $mvResult = $(Invoke-RestMethod -Uri $getURL -Headers $script:headers -Method GET).data
   if ($null -eq $mvResult -or $mvResult.Count -eq 0) {
     return $null
   }
@@ -534,8 +590,8 @@ Function Open-MV-CDM {
     [Parameter(Mandatory=$true)]
     [string]$mvID
   )
-  $mvURL = "$endpoint/managed_volume/$mvID/begin_snapshot"
-  $response = Invoke-RestMethod -Uri $mvURL -Headers $headers -Method POST -ContentType 'application/json' -SkipCertificateCheck
+  $mvURL = "$script:endpoint/managed_volume/$mvID/begin_snapshot"
+  $response = Invoke-RestMethod -Uri $mvURL -Headers $script:headers -Method POST -ContentType 'application/json'
   return $response
 }  ### Function Open-MV-CDM
 
@@ -547,8 +603,8 @@ Function Close-MV-CDM {
     [Parameter(Mandatory=$true)]
     [string]$mvID
   )
-  $mvURL = "$endpoint/managed_volume/$mvID/end_snapshot"
-  $response = Invoke-RestMethod -Uri $mvURL -Headers $headers -Method POST -ContentType 'application/json' -SkipCertificateCheck
+  $mvURL = "$script:endpoint/managed_volume/$mvID/end_snapshot"
+  $response = Invoke-RestMethod -Uri $mvURL -Headers $script:headers -Method POST -ContentType 'application/json'
   return $response
 }  ### Function Close-MV-CDM
 
@@ -577,7 +633,11 @@ if ($cdmMode) {
   }
 
   # Update display label now that mvID is resolved
-  $mvLabel = if (-not [string]::IsNullOrEmpty($mvName)) { "$mvName ($mvID)" } else { $mvID }
+  if (-not [string]::IsNullOrEmpty($mvName)) {
+    $mvLabel = "$mvName ($mvID)"
+  } else {
+    $mvLabel = $mvID
+  }
 
   # Execute the open or close operation
   if ($op -eq 'open') {
@@ -655,7 +715,11 @@ if ($cdmMode) {
   }
 
   # Update display label now that mvID is resolved
-  $mvLabel = if (-not [string]::IsNullOrEmpty($mvName)) { "$mvName ($mvID)" } else { $mvID }
+  if (-not [string]::IsNullOrEmpty($mvName)) {
+    $mvLabel = "$mvName ($mvID)"
+  } else {
+    $mvLabel = $mvID
+  }
 
   # Execute the open or close operation
   if ($op -eq 'open') {
@@ -697,9 +761,13 @@ if ($cdmMode) {
   }
 }
 
-$endTimePST = [TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $pstZone)
-$duration = $endTimePST - $startTimePST
-Write-Host "Script end time (PST): $($endTimePST.ToString('yyyy-MM-dd HH:mm:ss')) (duration: $($duration.TotalSeconds.ToString('F1'))s)"
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+  $endTimeDisplay = [TimeZoneInfo]::ConvertTimeFromUtc((Get-Date).ToUniversalTime(), $pstZone)
+} else {
+  $endTimeDisplay = (Get-Date).ToUniversalTime()
+}
+$duration = $endTimeDisplay - $startTimeDisplay
+Write-Host "Script end time ($timeLabel): $($endTimeDisplay.ToString('yyyy-MM-dd HH:mm:ss')) (duration: $($duration.TotalSeconds.ToString('F1'))s)"
 
 # Stop logging
 if ($logging) {
