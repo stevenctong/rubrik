@@ -1,6 +1,6 @@
 # RSC GCP Mass Recovery
 
-A single-page tool that wraps the RSC web UI's GCP recovery flow to support **mass / multi-VM recovery** — something the official RSC UI doesn't currently allow.
+A single-page tool that wraps the RSC web UI's GCP recovery flow to support **mass / multi-VM recovery**.
 
 ---
 
