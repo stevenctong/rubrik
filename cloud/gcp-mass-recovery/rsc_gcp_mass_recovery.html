@@ -1,0 +1,3525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RSC GCP Mass Recovery</title>
+<style>
+  :root {
+    /* RSC-matched palette */
+    --bg-primary: #0a2858;
+    --bg-secondary: #0d2e64;
+    --bg-card: #0c2c60;
+    --bg-row: transparent;
+    --bg-row-hover: rgba(255,255,255,0.04);
+    --bg-row-selected: rgba(38, 212, 196, 0.1);
+    --bg-row-selected-hover: rgba(38, 212, 196, 0.14);
+    --border: rgba(255,255,255,0.08);
+    --border-light: rgba(255,255,255,0.13);
+    --border-stronger: rgba(255,255,255,0.2);
+    --text-primary: #f0f4fa;
+    --text-secondary: #a3b5d4;
+    --text-muted: #6f83a8;
+    --text-dim: #54688f;
+    --accent: #26d4c4;
+    --accent-bright: #4ae3d4;
+    --accent-dark: #0fa599;
+    --accent-dim: rgba(38, 212, 196, 0.12);
+    --accent-dim2: rgba(38, 212, 196, 0.05);
+    --accent-glow: rgba(38, 212, 196, 0.18);
+    --blue: #5b9eff;
+    --blue-dim: rgba(91, 158, 255, 0.12);
+    --danger: #ff6b6b;
+    --danger-dim: rgba(255, 107, 107, 0.12);
+    --warning: #f5b942;
+    --warning-dim: rgba(245, 185, 66, 0.12);
+    --success: #2dd4a3;
+    --success-dim: rgba(45, 212, 163, 0.12);
+    --overlay: rgba(5, 20, 50, 0.78);
+    --modal-bg: #0c2c60;
+    --input-bg: #0a2452;
+    --input-bg-hover: #0d2c5e;
+    --dropdown-bg: #0e3070;
+    --shadow: 0 12px 40px rgba(0,0,0,0.45);
+    --shadow-sm: 0 4px 12px rgba(0,0,0,0.25);
+    --gradient-bg: linear-gradient(135deg, #093165 0%, #0f336d 45%, #143b78 100%);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif; background: var(--gradient-bg); background-attachment: fixed; color: var(--text-primary); min-height: 100vh; font-size: 13px; -webkit-font-smoothing: antialiased; }
+
+  /* APP HEADER (compact) */
+  .app-header { background: transparent; border-bottom: 1px solid var(--border); padding: 14px 24px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; }
+  .app-header-center { justify-self: center; font-size: 12px; color: var(--text-muted); padding: 5px 12px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 6px; font-family: 'SF Mono', 'Monaco', monospace; }
+  .app-header-right { display: flex; align-items: center; gap: 12px; justify-self: end; }
+  .app-header-left { display: flex; align-items: center; gap: 14px; }
+  .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, var(--accent), var(--accent-dark)); border-radius: 8px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 16px var(--accent-glow); }
+  .logo-icon svg { width: 22px; height: 22px; fill: white; }
+  .app-title { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
+  .app-title-accent { color: var(--accent); font-weight: 600; }
+  .app-subtitle { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  
+
+  /* CONTENT TOOLBAR */
+  .content-toolbar { padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); }
+  .toolbar-left { display: flex; align-items: center; gap: 12px; flex: 1; }
+  .toolbar-right { display: flex; align-items: center; gap: 12px; }
+  .search-box { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 7px; padding: 8px 14px; display: flex; align-items: center; gap: 10px; min-width: 360px; transition: all 0.15s; }
+  .search-box:focus-within { border-color: var(--accent); background: var(--input-bg-hover); box-shadow: 0 0 0 3px var(--accent-dim2); }
+  .search-box input { background: none; border: none; outline: none; color: var(--text-primary); font-size: 12px; width: 100%; }
+  .search-box input::placeholder { color: var(--text-muted); }
+  .search-box svg { color: var(--text-muted); flex-shrink: 0; width: 14px; height: 14px; }
+  .result-count { font-size: 11px; color: var(--text-muted); margin-left: auto; padding-right: 12px; }
+
+  /* TABLE SCROLL CONTAINER */
+  .table-scroll { overflow-x: auto; }
+
+  /* COLUMN FILTER ROW */
+  .filter-row th { padding: 6px 12px 10px !important; background: rgba(255,255,255,0.015) !important; border-bottom: 1px solid var(--border) !important; }
+  .col-filter-input { background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; color: var(--text-primary); font-size: 11px; width: 100%; outline: none; min-width: 90px; transition: border 0.15s; }
+  .col-filter-input:focus { border-color: var(--accent); background: var(--input-bg-hover); }
+  .col-filter-input::placeholder { color: var(--text-muted); }
+
+  /* COLUMN HEADER - SORT / RESIZE / DRAG */
+  .table th.col-h { position: relative; }
+  .table th.col-h .col-h-inner { display: flex; align-items: center; gap: 6px; cursor: grab; padding-right: 4px; user-select: none; }
+  .table th.col-h .col-h-inner:active { cursor: grabbing; }
+  .table th.col-h.sortable .col-h-text { cursor: pointer; }
+  .table th.col-h.sortable .col-h-text:hover { color: var(--text-secondary); }
+  .table th.col-h.dragging { opacity: 0.4; }
+  .table th.col-h.drop-target-left::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); z-index: 5; }
+  .table th.col-h.drop-target-right::after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); box-shadow: 0 0 8px var(--accent); z-index: 5; }
+  .col-resize-handle { position: absolute; top: 0; right: -2px; bottom: 0; width: 6px; cursor: col-resize; z-index: 4; }
+  .col-resize-handle:hover { background: var(--accent-dim); }
+  .col-resize-handle.resizing { background: var(--accent); }
+
+  /* SORT INDICATORS */
+  .sort-icon { display: inline-flex; flex-direction: column; gap: 1px; color: var(--text-dim); font-size: 8px; line-height: 1; }
+  .sort-icon-up, .sort-icon-down { opacity: 0.35; transition: opacity 0.15s; }
+  .sortable.sort-asc .sort-icon-up { opacity: 1; color: var(--accent); }
+  .sortable.sort-desc .sort-icon-down { opacity: 1; color: var(--accent); }
+  .sortable:hover .sort-icon-up, .sortable:hover .sort-icon-down { opacity: 0.6; }
+
+  /* COLUMN GEAR MENU */
+  .col-gear { position: relative; }
+  .col-gear-btn { width: 28px; height: 28px; border-radius: 6px; background: transparent; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+  .col-gear-btn:hover { color: var(--text-primary); border-color: var(--border-light); }
+  .col-gear-menu { position: absolute; top: calc(100% + 4px); right: 0; background: var(--dropdown-bg); border: 1px solid var(--border-light); border-radius: 6px; box-shadow: var(--shadow); min-width: 180px; z-index: 60; padding: 4px 0; display: none; }
+  .col-gear-menu.open { display: block; }
+  .col-gear-item { padding: 8px 14px; font-size: 12px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  .col-gear-item:hover { background: var(--bg-row-hover); }
+  .col-gear-divider { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* MULTI-SELECT FILTER */
+  .multi-filter { position: relative; }
+  .multi-filter-trigger { background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; padding: 4px 22px 4px 8px; color: var(--text-primary); font-size: 11px; cursor: pointer; min-width: 90px; max-width: 180px; display: flex; align-items: center; justify-content: space-between; gap: 4px; user-select: none; position: relative; }
+  .multi-filter-trigger:hover { border-color: var(--border-light); }
+  .multi-filter-trigger.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+  .multi-filter-trigger::after { content: '▾'; position: absolute; right: 7px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--text-muted); }
+  .multi-filter-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .multi-filter-dropdown { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; max-width: 320px; background: var(--dropdown-bg); border: 1px solid var(--border-light); border-radius: 6px; z-index: 50; box-shadow: var(--shadow); display: none; flex-direction: column; max-height: 320px; }
+  .multi-filter-dropdown.open { display: flex; }
+  .multi-filter-search { padding: 8px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; align-items: center; }
+  .multi-filter-search input { flex: 1; background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; color: var(--text-primary); font-size: 11px; outline: none; }
+  .multi-filter-search input:focus { border-color: var(--accent); }
+  .multi-filter-actions { display: flex; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .multi-filter-action { font-size: 10px; color: var(--accent); cursor: pointer; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.3px; font-weight: 600; }
+  .multi-filter-action:hover { background: var(--accent-dim); }
+  .multi-filter-list { overflow-y: auto; padding: 4px 0; flex: 1; max-height: 220px; }
+  .multi-filter-item { padding: 5px 12px; font-size: 12px; cursor: pointer; color: var(--text-primary); display: flex; align-items: center; gap: 8px; user-select: none; }
+  .multi-filter-item:hover { background: var(--bg-row-hover); }
+  .multi-filter-item input[type=checkbox] { width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; }
+  .multi-filter-empty { padding: 16px; text-align: center; font-size: 11px; color: var(--text-muted); }
+
+  .col-checkbox { width: 40px; }
+
+  /* BUTTONS */
+  .btn { padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; display: flex; align-items: center; gap: 6px; letter-spacing: 0.3px; }
+  .btn-primary { background: var(--accent); color: #03101e; box-shadow: 0 2px 8px var(--accent-glow); }
+  .btn-primary:hover { background: var(--accent-bright); box-shadow: 0 4px 16px var(--accent-glow); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary { background: var(--bg-card); border: 1px solid var(--border-light); color: var(--text-primary); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-ghost { background: none; border: 1px solid var(--border); color: var(--text-secondary); }
+  .btn-ghost:hover { border-color: var(--border-light); color: var(--text-primary); }
+  .btn-danger { background: var(--danger); color: white; }
+  .btn-dots { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary); width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 16px; }
+  .recover-selected-btn { background: var(--accent); color: #03101e; padding: 7px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: all 0.15s; box-shadow: 0 2px 8px var(--accent-glow); }
+  .recover-selected-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* TABLE */
+  .table-wrap { padding: 0; }
+  .table { width: 100%; border-collapse: collapse; }
+  .table th { padding: 10px 12px; text-align: left; font-size: 10px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border); background: transparent; text-transform: uppercase; letter-spacing: 0.8px; white-space: nowrap; position: relative; user-select: none; }
+  .table th:first-child, .table td:first-child { padding-left: 24px; }
+  .table th.sortable { cursor: pointer; user-select: none; }
+  .table th.sortable:hover { color: var(--text-primary); }
+  .table td { padding: 11px 12px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--text-primary); vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+  .table td .vm-name { min-width: 0; }
+  .table td .vm-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+  .table td .col-tag { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 100%; vertical-align: middle; }
+  .table td .badge { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .table tbody tr:hover td { background: var(--bg-row-hover); }
+  .table tbody tr.selected td { background: var(--bg-row-selected); }
+  .table tbody tr.selected:hover td { background: var(--bg-row-selected-hover); }
+  .table tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .table tr.loading td { color: var(--text-muted); font-style: italic; text-align: center; }
+
+  /* CHECKBOX */
+  .checkbox { width: 15px; height: 15px; border: 1.5px solid var(--border-light); border-radius: 3px; cursor: pointer; appearance: none; -webkit-appearance: none; background: transparent; transition: all 0.1s; }
+  .checkbox:checked { background: var(--accent); border-color: var(--accent); }
+  .checkbox:checked::after { content: ''; display: block; width: 4px; height: 7px; border: 2px solid #0a1628; border-top: none; border-left: none; transform: rotate(45deg) translate(2px, 0px); margin: 1px 0 0 3px; }
+  .checkbox:indeterminate { background: var(--accent); border-color: var(--accent); }
+  .checkbox:indeterminate::after { content: ''; display: block; width: 8px; height: 2px; background: #0a1628; margin: 5px auto; }
+
+  /* BADGES */
+  .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .badge-unprotected { background: rgba(107,114,128,0.15); color: #9ca3af; }
+  .badge-protected { background: rgba(52,211,153,0.15); color: var(--success); }
+  .badge-disabled { background: rgba(107,114,128,0.1); color: #6b7280; }
+  .badge-unassigned { background: rgba(107,114,128,0.1); color: #9ca3af; }
+
+  /* VM ICON */
+  .vm-icon { width: 22px; height: 22px; background: var(--accent-dim2); border: 1px solid var(--accent-dim); border-radius: 5px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .vm-icon svg { width: 11px; height: 11px; fill: var(--accent); }
+  .vm-name { display: flex; align-items: center; gap: 8px; }
+  .vm-name-text { color: var(--text-primary); font-weight: 500; }
+
+  /* SELECTION BAR */
+  .selection-bar { background: var(--blue-dim); border: 1px solid rgba(59,130,246,0.3); border-radius: 8px; margin: 8px 24px; padding: 10px 16px; display: flex; align-items: center; gap: 12px; display: none; }
+  .selection-bar.visible { display: flex; }
+  .selection-count { font-size: 12px; font-weight: 600; color: var(--blue); }
+
+  /* MODAL OVERLAY */
+  .modal-overlay { position: fixed; inset: 0; background: var(--overlay); z-index: 100; display: none; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--modal-bg); border: 1px solid var(--border-light); border-radius: 12px; width: 680px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: var(--shadow); overflow: hidden; }
+  .modal-lg { width: 780px; }
+  .modal-header { padding: 20px 24px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .modal-title { font-size: 16px; font-weight: 600; }
+  .modal-close { width: 28px; height: 28px; border-radius: 6px; background: transparent; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .modal-close:hover { background: var(--bg-row-hover); color: var(--text-primary); }
+  .modal-body { padding: 20px 24px; overflow-y: auto; flex: 1; }
+  .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+
+  /* STEPPER */
+  .stepper { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 4px; }
+  .step { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+  .step.done { background: var(--accent); color: #0a1628; }
+  .step.active { background: var(--bg-secondary); border: 2px solid var(--accent); color: var(--accent); }
+  .step.pending { background: var(--bg-secondary); border: 2px solid var(--border); color: var(--text-muted); }
+  .step-line { width: 40px; height: 1px; background: var(--border); }
+  .step-line.done { background: var(--accent); }
+
+  /* FORM */
+  .form-section { margin-bottom: 20px; }
+  .form-section-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 14px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .form-row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; margin-bottom: 12px; }
+  .form-label { font-size: 12px; color: var(--text-secondary); padding-top: 8px; }
+  .form-value { font-size: 12px; color: var(--text-primary); font-weight: 500; padding-top: 8px; }
+  .form-control { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; color: var(--text-primary); font-size: 12px; width: 100%; outline: none; transition: border 0.15s; }
+  .form-control:focus { border-color: var(--accent); }
+  .form-control::placeholder { color: var(--text-muted); }
+  .form-hint { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .form-hint.warn { color: var(--warning); }
+
+  /* SELECT WRAPPER */
+  .select-wrap { position: relative; }
+  .select-wrap select { appearance: none; -webkit-appearance: none; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 28px 7px 10px; color: var(--text-primary); font-size: 12px; width: 100%; outline: none; cursor: pointer; }
+  .select-wrap select:focus { border-color: var(--accent); }
+  .select-wrap::after { content: '▾'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); pointer-events: none; font-size: 10px; }
+  .select-wrap select option { background: var(--dropdown-bg); }
+
+  /* COMBOBOX (searchable single-select) */
+  .combo { position: relative; }
+  .combo-trigger { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 28px 7px 10px; color: var(--text-primary); font-size: 12px; cursor: pointer; display: flex; align-items: center; min-height: 32px; transition: all 0.15s; position: relative; }
+  .combo-trigger:hover { border-color: var(--border-light); }
+  .combo-trigger.open { border-color: var(--accent); }
+  .combo-trigger.placeholder { color: var(--text-muted); }
+  .combo-trigger::after { content: '▾'; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; color: var(--text-muted); }
+  .combo-dropdown { position: fixed; min-width: 280px; max-width: 480px; background: var(--dropdown-bg); border: 1px solid var(--border-light); border-radius: 6px; z-index: 9999; max-height: 360px; display: none; flex-direction: column; box-shadow: var(--shadow); }
+  .combo-dropdown.open { display: flex; }
+  .combo-search-wrap { padding: 8px; border-bottom: 1px solid var(--border); }
+  .combo-search { background: var(--input-bg); border: 1px solid var(--border); border-radius: 5px; padding: 6px 10px; color: var(--text-primary); font-size: 12px; width: 100%; outline: none; }
+  .combo-search:focus { border-color: var(--accent); }
+  .combo-list { overflow-y: auto; flex: 1; max-height: 240px; padding: 4px 0; }
+  .combo-group-label { padding: 6px 12px 4px; font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+  .combo-item { padding: 6px 12px; font-size: 12px; cursor: pointer; color: var(--text-primary); display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .combo-item:hover, .combo-item.highlight { background: var(--bg-row-hover); }
+  .combo-item.selected { background: var(--accent-dim); color: var(--accent); }
+  .combo-item.selected::after { content: '✓'; color: var(--accent); }
+  .combo-item-sub { color: var(--text-muted); font-size: 11px; margin-left: 8px; }
+  .combo-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 11px; }
+
+  /* SNAPSHOT SELECTOR */
+  .snapshot-selector { background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .snapshot-options { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .snapshot-option { padding: 5px 12px; border-radius: 5px; font-size: 12px; cursor: pointer; border: 1px solid var(--border); color: var(--text-secondary); background: transparent; transition: all 0.1s; }
+  .snapshot-option.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  /* DATE + TIME PICKER */
+  .datetime-picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .dt-date, .dt-time-field { position: relative; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 7px 22px 7px 10px; color: var(--text-primary); font-size: 12px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; transition: all 0.15s; }
+  .dt-date:hover, .dt-time-field:hover { border-color: var(--border-light); }
+  .dt-date.active, .dt-time-field.active { border-color: var(--accent); }
+  .dt-date { min-width: 150px; }
+  .dt-time-field { min-width: 56px; justify-content: space-between; }
+  .dt-icon { display: inline-flex; color: var(--text-muted); }
+  .dt-date-text, .dt-time-text { flex: 1; }
+  .dt-date-text.placeholder, .dt-time-text.placeholder { color: var(--text-muted); }
+  .dt-chevron { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--text-muted); }
+  .dt-colon { color: var(--text-secondary); font-weight: 600; font-size: 13px; }
+  .dt-tz { color: var(--text-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.5px; margin-left: 4px; }
+
+  /* CALENDAR DROPDOWN */
+  .dt-calendar { display: none; position: absolute; top: calc(100% + 6px); left: 0; background: var(--dropdown-bg); border: 1px solid var(--border-light); border-radius: 8px; box-shadow: var(--shadow); padding: 12px; z-index: 70; width: 280px; cursor: default; }
+  .dt-calendar.open { display: block; }
+  .dt-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .dt-cal-month { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+  .dt-cal-nav { width: 24px; height: 24px; border-radius: 4px; background: transparent; border: 1px solid var(--border); color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 11px; }
+  .dt-cal-nav:hover { color: var(--accent); border-color: var(--accent); }
+  .dt-cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-bottom: 4px; }
+  .dt-cal-weekday { font-size: 10px; color: var(--text-muted); text-align: center; padding: 4px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+  .dt-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .dt-cal-day { height: 30px; display: flex; align-items: center; justify-content: center; font-size: 12px; border-radius: 4px; cursor: pointer; color: var(--text-primary); }
+  .dt-cal-day:hover { background: var(--bg-row-hover); }
+  .dt-cal-day.other-month { color: var(--text-dim); }
+  .dt-cal-day.today { box-shadow: inset 0 0 0 1px var(--border-light); }
+  .dt-cal-day.selected { background: var(--accent); color: #03101e; font-weight: 600; }
+  .dt-cal-day.selected:hover { background: var(--accent-bright); }
+  .dt-cal-footer { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .dt-cal-footer-btn { flex: 1; padding: 5px 8px; font-size: 11px; border-radius: 5px; background: transparent; border: 1px solid var(--border); color: var(--text-secondary); cursor: pointer; }
+  .dt-cal-footer-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* TIME DROPDOWN (hour / ampm) */
+  .dt-time-dropdown { display: none; position: absolute; top: calc(100% + 6px); left: 0; background: var(--dropdown-bg); border: 1px solid var(--border-light); border-radius: 6px; box-shadow: var(--shadow); padding: 4px; z-index: 70; min-width: 110px; cursor: default; }
+  .dt-time-dropdown.open { display: block; }
+  .dt-time-search { background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; color: var(--text-primary); font-size: 12px; width: 100%; outline: none; margin-bottom: 4px; }
+  .dt-time-search:focus { border-color: var(--accent); }
+  .dt-time-list { max-height: 200px; overflow-y: auto; }
+  .dt-time-option { padding: 6px 10px; font-size: 12px; cursor: pointer; border-radius: 4px; color: var(--text-primary); }
+  .dt-time-option:hover, .dt-time-option.highlight { background: var(--bg-row-hover); }
+  .dt-time-option.selected { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+
+  /* VM LIST IN MODAL */
+  .vm-list-table { width: 100%; border-collapse: collapse; }
+  .vm-list-table th { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; }
+  .vm-list-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; vertical-align: middle; }
+  .vm-list-table tr:last-child td { border-bottom: none; }
+  .vm-list-table input[type=text] { background: var(--input-bg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 8px; color: var(--text-primary); font-size: 12px; width: 100%; outline: none; }
+  .vm-list-table input[type=text]:focus { border-color: var(--accent); }
+
+  /* MACHINE TYPE SELECT IN TABLE */
+  .machine-type-select { background: var(--input-bg); border: 1px solid var(--border); border-radius: 5px; padding: 5px 24px 5px 8px; color: var(--text-primary); font-size: 12px; outline: none; appearance: none; cursor: pointer; width: 100%; }
+
+  /* CHECKBOXES IN FORM */
+  .checkbox-group { display: flex; flex-direction: column; gap: 10px; }
+  .checkbox-item { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+  .checkbox-item input[type=checkbox] { width: 15px; height: 15px; margin-top: 1px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .checkbox-item label { font-size: 12px; color: var(--text-primary); cursor: pointer; }
+  .checkbox-item .hint { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+  /* REVIEW SECTION */
+  .review-banner { background: var(--accent-dim); border: 1px solid rgba(38, 212, 196, 0.25); border-radius: 8px; padding: 10px 16px; margin-bottom: 14px; display: flex; align-items: center; gap: 14px; }
+  .review-banner-label { font-size: 11px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; }
+  .review-banner-value { font-size: 13px; color: var(--text-primary); }
+  .review-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .review-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+  .review-card-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 10px; }
+  .review-item { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
+  .review-item-label { color: var(--text-secondary); }
+  .review-item-value { color: var(--text-primary); font-weight: 500; text-align: right; max-width: 200px; word-break: break-all; }
+
+  /* MODAL XL */
+  .modal-xl { width: 1000px; max-width: 94vw; }
+
+  /* EVENTS MODAL */
+  .events-refresh-indicator { font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+  .events-refresh-indicator .spinner-tiny { width: 10px; height: 10px; border: 2px solid var(--accent-dim); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+  .events-controls { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .events-toggle { display: inline-flex; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 2px; gap: 2px; }
+  .events-toggle-btn { padding: 5px 14px; font-size: 12px; font-weight: 500; color: var(--text-secondary); background: transparent; border: none; border-radius: 4px; cursor: pointer; transition: all 0.12s; }
+  .events-toggle-btn:hover { color: var(--text-primary); }
+  .events-toggle-btn.active { background: var(--accent); color: #03101e; }
+  .events-hint { font-size: 11px; color: var(--text-muted); font-style: italic; }
+  .events-jump-link { font-size: 12px; color: var(--accent); cursor: pointer; text-decoration: none; padding: 7px 0; }
+  .events-jump-link:hover { color: var(--accent-bright); }
+
+  /* EVENTS LIST */
+  .events-list { display: flex; flex-direction: column; gap: 8px; }
+
+  /* AGGREGATE SUMMARY TILES (top of events list) */
+  .events-summary-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+  .events-summary-tile { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; transition: border 0.15s; }
+  .events-summary-tile[data-kind="total"] { border-left: 3px solid var(--accent); }
+  .events-summary-tile[data-kind="in-progress"] { border-left: 3px solid var(--blue); }
+  .events-summary-tile[data-kind="success"] { border-left: 3px solid var(--success); }
+  .events-summary-tile[data-kind="failure"] { border-left: 3px solid var(--danger); }
+  .events-summary-tile[data-kind="canceled"] { border-left: 3px solid var(--text-muted); }
+  .events-summary-num { font-size: 22px; font-weight: 700; line-height: 1; color: var(--text-primary); }
+  .events-summary-tile[data-kind="in-progress"] .events-summary-num { color: var(--blue); }
+  .events-summary-tile[data-kind="success"] .events-summary-num { color: var(--success); }
+  .events-summary-tile[data-kind="failure"] .events-summary-num { color: var(--danger); }
+  .events-summary-tile[data-kind="canceled"] .events-summary-num { color: var(--text-muted); }
+  .events-summary-tile[data-kind="total"] .events-summary-num { color: var(--accent); }
+  .events-summary-lbl { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; }
+  .events-empty { padding: 60px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  .events-empty-icon { font-size: 32px; opacity: 0.5; margin-bottom: 12px; }
+
+  .event-row { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; transition: border 0.15s; }
+  .event-row:hover { border-color: var(--border-light); }
+  .event-row.expanded { border-color: var(--border-light); }
+  .event-row.has-error { border-left: 3px solid var(--danger); }
+  .event-row.is-running { border-left: 3px solid var(--blue); }
+  .event-row.is-success { border-left: 3px solid var(--success); }
+  .event-row.is-queued { border-left: 3px solid var(--warning); }
+  .event-row.is-canceled { border-left: 3px solid var(--text-muted); }
+
+  .event-row-header { padding: 12px 14px; display: flex; align-items: center; gap: 12px; cursor: pointer; user-select: none; }
+  .event-row-toggle { font-size: 10px; color: var(--text-muted); transition: transform 0.15s; flex-shrink: 0; }
+  .event-row.expanded .event-row-toggle { transform: rotate(90deg); }
+  .event-row-title { font-size: 13px; font-weight: 600; color: var(--text-primary); flex-shrink: 0; min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-row-target { font-size: 12px; color: var(--text-secondary); flex-shrink: 0; min-width: 0; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-row-arrow { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .event-row-msg { font-size: 12px; color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .event-row-time { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .event-row-status { flex-shrink: 0; }
+
+  .event-status-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .event-status-badge.queued { background: rgba(245,185,66,0.15); color: var(--warning); }
+  .event-status-badge.running { background: rgba(91,158,255,0.15); color: var(--blue); }
+  .event-status-badge.running .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--blue); animation: pulse 1.5s infinite; }
+  .event-status-badge.success { background: rgba(45,212,163,0.15); color: var(--success); }
+  .event-status-badge.failure { background: rgba(255,107,107,0.15); color: var(--danger); }
+  .event-status-badge.canceled { background: rgba(111,131,168,0.15); color: var(--text-muted); }
+  .event-status-badge.warning { background: rgba(245,185,66,0.15); color: var(--warning); }
+  .event-status-badge.pending { background: rgba(245,185,66,0.1); color: var(--warning); }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* TIMELINE (expanded) */
+  .event-timeline { padding: 0 14px 14px 14px; border-top: 1px solid var(--border); background: rgba(0,0,0,0.15); }
+
+  /* SUMMARY FOOTER */
+  .event-summary { margin-top: 14px; padding: 16px 4px 8px; border-top: 1px solid var(--border); }
+  .event-summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px 28px; margin-bottom: 14px; }
+  .event-summary-grid:last-child { margin-bottom: 0; grid-template-columns: 1fr 1.4fr 1fr 2fr; }
+  .event-summary-item { min-width: 0; }
+  .event-summary-label { font-size: 10.5px; color: var(--text-muted); margin-bottom: 4px; text-transform: none; letter-spacing: 0.2px; }
+  .event-summary-value { font-size: 12.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-summary-pill { display: inline-block; padding: 2px 10px; background: rgba(255,255,255,0.06); border: 1px solid var(--border-light); border-radius: 10px; font-size: 11px; color: var(--text-primary); }
+  .event-timeline-inner { padding: 14px 0 4px 12px; border-left: 2px solid var(--accent-dim); margin-left: 12px; }
+  .event-timeline-item { display: flex; gap: 12px; padding: 8px 0; position: relative; }
+  .event-timeline-item::before { content: ''; position: absolute; left: -19px; top: 14px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-secondary); }
+  .event-timeline-item.error::before { background: var(--danger); }
+  .event-timeline-msg { flex: 1; font-size: 12px; color: var(--text-primary); line-height: 1.5; }
+  .event-timeline-error { font-size: 11px; color: var(--danger); margin-top: 4px; padding: 6px 10px; background: var(--danger-dim); border-radius: 4px; }
+  .event-timeline-time { font-size: 11px; color: var(--text-muted); flex-shrink: 0; min-width: 130px; text-align: right; }
+  .event-timeline-loading { padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+  /* AUTH SCREEN */
+  .auth-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 40px 20px; }
+  .auth-card { background: var(--bg-card); border: 1px solid var(--border-light); border-radius: 16px; padding: 40px 48px; width: 480px; text-align: center; box-shadow: var(--shadow); backdrop-filter: blur(20px); }
+  .auth-icon { width: 56px; height: 56px; background: var(--accent-dim); border: 1px solid var(--accent-dim); border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; box-shadow: 0 8px 24px var(--accent-glow); }
+  .auth-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  .auth-sub { font-size: 13px; color: var(--text-secondary); margin-bottom: 28px; line-height: 1.5; }
+  .auth-drop { border: 2px dashed var(--border-light); border-radius: 10px; padding: 32px; cursor: pointer; transition: all 0.2s; margin-bottom: 20px; position: relative; }
+  .auth-drop:hover, .auth-drop.drag { border-color: var(--accent); background: var(--accent-dim2); }
+  .auth-drop input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+  .auth-drop-icon { font-size: 28px; margin-bottom: 8px; }
+  .auth-drop-text { font-size: 13px; color: var(--text-secondary); }
+  .auth-drop-text strong { color: var(--accent); }
+  .auth-url { margin-bottom: 16px; text-align: left; }
+  .auth-url label { font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 6px; }
+  .auth-url input { width: 100%; background: var(--input-bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; color: var(--text-primary); font-size: 13px; outline: none; }
+  .auth-url input:focus { border-color: var(--accent); }
+  .auth-status { padding: 8px 14px; border-radius: 6px; font-size: 12px; margin-bottom: 16px; display: none; }
+  .auth-status.error { background: rgba(248,113,113,0.15); color: var(--danger); border: 1px solid rgba(248,113,113,0.3); display: block; }
+  .auth-status.success { background: rgba(52,211,153,0.15); color: var(--success); border: 1px solid rgba(52,211,153,0.3); display: block; }
+  .auth-status.loading { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); display: block; }
+
+  /* LOADING SPINNER */
+  .spinner { width: 14px; height: 14px; border: 2px solid rgba(0,212,180,0.2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* TOOLTIP */
+  .has-tooltip { position: relative; }
+  .has-tooltip .tooltip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #1a2f4a; border: 1px solid var(--border-light); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--text-primary); white-space: nowrap; pointer-events: none; margin-bottom: 6px; z-index: 100; }
+  .has-tooltip:hover .tooltip { display: block; }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a5070; }
+
+
+
+  .notice { padding: 10px 16px; background: rgba(0,212,180,0.08); border: 1px solid rgba(0,212,180,0.2); border-radius: 6px; font-size: 12px; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+
+  .col-tag { font-size: 11px; color: var(--text-muted); font-family: 'SF Mono', monospace; }
+
+  select option:disabled { color: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<!-- TOP NAV -->
+<!-- COMPACT APP HEADER -->
+<header class="app-header">
+  <div class="app-header-left">
+    <div class="logo-icon"><svg viewBox="0 0 134 134" xmlns="http://www.w3.org/2000/svg" fill="white">
+        <g transform="translate(-41.26 0.28)">
+    <path d="M 110.246094 41.394531 C 109.128906 42.515625 107.296875 42.515625 106.171875 41.394531 L 87.90625 23.152344 C 86.785156 22.03125 86.785156 20.199219 87.90625 19.082031 L 106.171875 0.839844 C 107.296875 -0.277344 109.128906 -0.277344 110.246094 0.839844 L 128.503906 19.082031 C 129.621094 20.199219 129.621094 22.03125 128.503906 23.152344 L 110.246094 41.394531 "/>
+    <path d="M 110.246094 132.496094 C 109.128906 133.613281 107.296875 133.613281 106.171875 132.496094 L 87.90625 114.257812 C 86.785156 113.136719 86.785156 111.304688 87.90625 110.1875 L 106.171875 91.945312 C 107.296875 90.824219 109.128906 90.824219 110.246094 91.945312 L 128.503906 110.1875 C 129.621094 111.304688 129.621094 113.136719 128.503906 114.257812 L 110.246094 132.496094 "/>
+    <path d="M 155.777344 86.890625 C 154.65625 88.011719 152.824219 88.011719 151.703125 86.890625 L 133.4375 68.648438 C 132.316406 67.527344 132.316406 65.699219 133.4375 64.578125 L 151.703125 46.335938 C 152.824219 45.214844 154.65625 45.214844 155.777344 46.335938 L 174.03125 64.574219 C 175.152344 65.695312 175.152344 67.527344 174.03125 68.648438 L 155.777344 86.890625 "/>
+    <path d="M 85.363281 115.453125 C 85.363281 113.867188 84.445312 113.488281 83.324219 114.609375 L 75.207031 122.71875 C 74.085938 123.839844 74.3125 125.371094 75.707031 126.117188 L 82.699219 129.421875 C 84.164062 130.03125 85.363281 129.230469 85.363281 127.648438 L 85.363281 115.453125 "/>
+    <path d="M 140.699219 126.117188 C 142.097656 125.371094 142.320312 123.839844 141.199219 122.71875 L 133.082031 114.609375 C 131.964844 113.488281 131.046875 113.867188 131.046875 115.453125 L 131.046875 127.648438 C 131.046875 129.230469 132.242188 130.03125 133.707031 129.421875 L 140.699219 126.117188 "/>
+    <path d="M 153.265625 92.316406 C 153.265625 90.734375 151.96875 89.4375 150.386719 89.4375 L 133.929688 89.4375 C 132.34375 89.4375 131.046875 90.734375 131.046875 92.316406 L 131.046875 108.765625 C 131.046875 110.347656 132.34375 111.644531 133.929688 111.644531 L 150.386719 111.644531 C 151.96875 111.644531 153.265625 110.347656 153.265625 108.765625 L 153.265625 92.316406 "/>
+    <path d="M 167.753906 34.140625 C 167.003906 32.746094 165.472656 32.523438 164.351562 33.640625 L 156.234375 41.753906 C 155.117188 42.871094 155.496094 43.789062 157.078125 43.789062 L 169.285156 43.789062 C 170.871094 43.789062 171.667969 42.59375 171.0625 41.128906 L 167.753906 34.140625 "/>
+    <path d="M 141.199219 10.503906 C 142.320312 9.386719 142.097656 7.855469 140.699219 7.109375 L 133.707031 3.800781 C 132.242188 3.195312 131.046875 3.992188 131.046875 5.578125 L 131.046875 17.773438 C 131.046875 19.355469 131.964844 19.734375 133.082031 18.617188 L 141.199219 10.503906 "/>
+    <path d="M 52.054688 33.640625 C 50.933594 32.519531 49.40625 32.746094 48.65625 34.140625 L 45.347656 41.132812 C 44.738281 42.59375 45.535156 43.789062 47.121094 43.789062 L 59.332031 43.789062 C 60.914062 43.789062 61.292969 42.871094 60.171875 41.753906 L 52.054688 33.640625 "/>
+    <path d="M 85.363281 24.460938 C 85.363281 22.878906 84.066406 21.582031 82.480469 21.582031 L 66.019531 21.582031 C 64.4375 21.582031 63.140625 22.878906 63.140625 24.460938 L 63.140625 40.910156 C 63.140625 42.492188 64.4375 43.789062 66.019531 43.789062 L 82.480469 43.789062 C 84.066406 43.789062 85.363281 42.492188 85.363281 40.910156 L 85.363281 24.460938 "/>
+    <path d="M 85.363281 5.578125 C 85.363281 3.992188 84.164062 3.195312 82.699219 3.800781 L 75.707031 7.109375 C 74.3125 7.855469 74.085938 9.386719 75.207031 10.503906 L 83.324219 18.617188 C 84.445312 19.734375 85.363281 19.355469 85.363281 17.773438 L 85.363281 5.578125 "/>
+    <path d="M 171.0625 92.097656 C 171.667969 90.636719 170.871094 89.4375 169.285156 89.4375 L 157.078125 89.4375 C 155.496094 89.4375 155.117188 90.355469 156.234375 91.472656 L 164.351562 99.585938 C 165.472656 100.703125 167.003906 100.476562 167.753906 99.082031 L 171.0625 92.097656 "/>
+    <path d="M 85.363281 92.316406 C 85.363281 90.734375 84.066406 89.4375 82.480469 89.4375 L 66.019531 89.4375 C 64.4375 89.4375 63.140625 90.734375 63.140625 92.316406 L 63.140625 108.765625 C 63.140625 110.347656 64.4375 111.644531 66.019531 111.644531 L 82.480469 111.644531 C 84.066406 111.644531 85.363281 110.347656 85.363281 108.765625 L 85.363281 92.316406 "/>
+    <path d="M 60.171875 91.472656 C 61.292969 90.355469 60.914062 89.4375 59.332031 89.4375 L 47.121094 89.4375 C 45.535156 89.4375 44.738281 90.632812 45.347656 92.09375 L 48.65625 99.082031 C 49.40625 100.476562 50.933594 100.703125 52.054688 99.585938 L 60.171875 91.472656 "/>
+    <path d="M 153.265625 40.910156 C 153.265625 42.492188 151.96875 43.789062 150.386719 43.789062 L 133.929688 43.789062 C 132.34375 43.789062 131.046875 42.492188 131.046875 40.910156 L 131.046875 24.460938 C 131.046875 22.878906 132.34375 21.582031 133.929688 21.582031 L 150.386719 21.582031 C 151.96875 21.582031 153.265625 22.878906 153.265625 24.460938 L 153.265625 40.910156 "/>
+    <path d="M 64.71875 86.890625 C 63.597656 88.011719 61.765625 88.011719 60.644531 86.890625 L 42.378906 68.648438 C 41.257812 67.527344 41.257812 65.699219 42.378906 64.578125 L 60.644531 46.335938 C 61.765625 45.214844 63.597656 45.214844 64.71875 46.335938 L 82.972656 64.574219 C 84.09375 65.695312 84.09375 67.527344 82.972656 68.648438 L 64.71875 86.890625 "/>
+  </g>
+      </svg></div>
+    <div>
+      <div class="app-title">GCP <span class="app-title-accent">Mass Recovery</span></div>
+      <div class="app-subtitle">Multi-select VMs and recover them in parallel</div>
+    </div>
+  </div>
+  <div class="app-header-center" id="rscUrlBadge" style="display:none;"></div>
+  <div class="app-header-right">
+    <button class="btn btn-secondary" onclick="openEventsHistory()" id="viewEventsBtn" style="display:none;align-items:center;gap:6px;">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M9 9v12"/></svg>
+      View Recovery Events
+    </button>
+    <button class="btn btn-ghost" id="signOutBtn" style="display:none;" onclick="signOut()">Sign Out</button>
+  </div>
+</header>
+
+<!-- AUTH SCREEN -->
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-icon">
+      <svg width="36" height="36" viewBox="0 0 134 134" xmlns="http://www.w3.org/2000/svg" fill="var(--accent)">
+        <g transform="translate(-41.26 0.28)">
+    <path d="M 110.246094 41.394531 C 109.128906 42.515625 107.296875 42.515625 106.171875 41.394531 L 87.90625 23.152344 C 86.785156 22.03125 86.785156 20.199219 87.90625 19.082031 L 106.171875 0.839844 C 107.296875 -0.277344 109.128906 -0.277344 110.246094 0.839844 L 128.503906 19.082031 C 129.621094 20.199219 129.621094 22.03125 128.503906 23.152344 L 110.246094 41.394531 "/>
+    <path d="M 110.246094 132.496094 C 109.128906 133.613281 107.296875 133.613281 106.171875 132.496094 L 87.90625 114.257812 C 86.785156 113.136719 86.785156 111.304688 87.90625 110.1875 L 106.171875 91.945312 C 107.296875 90.824219 109.128906 90.824219 110.246094 91.945312 L 128.503906 110.1875 C 129.621094 111.304688 129.621094 113.136719 128.503906 114.257812 L 110.246094 132.496094 "/>
+    <path d="M 155.777344 86.890625 C 154.65625 88.011719 152.824219 88.011719 151.703125 86.890625 L 133.4375 68.648438 C 132.316406 67.527344 132.316406 65.699219 133.4375 64.578125 L 151.703125 46.335938 C 152.824219 45.214844 154.65625 45.214844 155.777344 46.335938 L 174.03125 64.574219 C 175.152344 65.695312 175.152344 67.527344 174.03125 68.648438 L 155.777344 86.890625 "/>
+    <path d="M 85.363281 115.453125 C 85.363281 113.867188 84.445312 113.488281 83.324219 114.609375 L 75.207031 122.71875 C 74.085938 123.839844 74.3125 125.371094 75.707031 126.117188 L 82.699219 129.421875 C 84.164062 130.03125 85.363281 129.230469 85.363281 127.648438 L 85.363281 115.453125 "/>
+    <path d="M 140.699219 126.117188 C 142.097656 125.371094 142.320312 123.839844 141.199219 122.71875 L 133.082031 114.609375 C 131.964844 113.488281 131.046875 113.867188 131.046875 115.453125 L 131.046875 127.648438 C 131.046875 129.230469 132.242188 130.03125 133.707031 129.421875 L 140.699219 126.117188 "/>
+    <path d="M 153.265625 92.316406 C 153.265625 90.734375 151.96875 89.4375 150.386719 89.4375 L 133.929688 89.4375 C 132.34375 89.4375 131.046875 90.734375 131.046875 92.316406 L 131.046875 108.765625 C 131.046875 110.347656 132.34375 111.644531 133.929688 111.644531 L 150.386719 111.644531 C 151.96875 111.644531 153.265625 110.347656 153.265625 108.765625 L 153.265625 92.316406 "/>
+    <path d="M 167.753906 34.140625 C 167.003906 32.746094 165.472656 32.523438 164.351562 33.640625 L 156.234375 41.753906 C 155.117188 42.871094 155.496094 43.789062 157.078125 43.789062 L 169.285156 43.789062 C 170.871094 43.789062 171.667969 42.59375 171.0625 41.128906 L 167.753906 34.140625 "/>
+    <path d="M 141.199219 10.503906 C 142.320312 9.386719 142.097656 7.855469 140.699219 7.109375 L 133.707031 3.800781 C 132.242188 3.195312 131.046875 3.992188 131.046875 5.578125 L 131.046875 17.773438 C 131.046875 19.355469 131.964844 19.734375 133.082031 18.617188 L 141.199219 10.503906 "/>
+    <path d="M 52.054688 33.640625 C 50.933594 32.519531 49.40625 32.746094 48.65625 34.140625 L 45.347656 41.132812 C 44.738281 42.59375 45.535156 43.789062 47.121094 43.789062 L 59.332031 43.789062 C 60.914062 43.789062 61.292969 42.871094 60.171875 41.753906 L 52.054688 33.640625 "/>
+    <path d="M 85.363281 24.460938 C 85.363281 22.878906 84.066406 21.582031 82.480469 21.582031 L 66.019531 21.582031 C 64.4375 21.582031 63.140625 22.878906 63.140625 24.460938 L 63.140625 40.910156 C 63.140625 42.492188 64.4375 43.789062 66.019531 43.789062 L 82.480469 43.789062 C 84.066406 43.789062 85.363281 42.492188 85.363281 40.910156 L 85.363281 24.460938 "/>
+    <path d="M 85.363281 5.578125 C 85.363281 3.992188 84.164062 3.195312 82.699219 3.800781 L 75.707031 7.109375 C 74.3125 7.855469 74.085938 9.386719 75.207031 10.503906 L 83.324219 18.617188 C 84.445312 19.734375 85.363281 19.355469 85.363281 17.773438 L 85.363281 5.578125 "/>
+    <path d="M 171.0625 92.097656 C 171.667969 90.636719 170.871094 89.4375 169.285156 89.4375 L 157.078125 89.4375 C 155.496094 89.4375 155.117188 90.355469 156.234375 91.472656 L 164.351562 99.585938 C 165.472656 100.703125 167.003906 100.476562 167.753906 99.082031 L 171.0625 92.097656 "/>
+    <path d="M 85.363281 92.316406 C 85.363281 90.734375 84.066406 89.4375 82.480469 89.4375 L 66.019531 89.4375 C 64.4375 89.4375 63.140625 90.734375 63.140625 92.316406 L 63.140625 108.765625 C 63.140625 110.347656 64.4375 111.644531 66.019531 111.644531 L 82.480469 111.644531 C 84.066406 111.644531 85.363281 110.347656 85.363281 108.765625 L 85.363281 92.316406 "/>
+    <path d="M 60.171875 91.472656 C 61.292969 90.355469 60.914062 89.4375 59.332031 89.4375 L 47.121094 89.4375 C 45.535156 89.4375 44.738281 90.632812 45.347656 92.09375 L 48.65625 99.082031 C 49.40625 100.476562 50.933594 100.703125 52.054688 99.585938 L 60.171875 91.472656 "/>
+    <path d="M 153.265625 40.910156 C 153.265625 42.492188 151.96875 43.789062 150.386719 43.789062 L 133.929688 43.789062 C 132.34375 43.789062 131.046875 42.492188 131.046875 40.910156 L 131.046875 24.460938 C 131.046875 22.878906 132.34375 21.582031 133.929688 21.582031 L 150.386719 21.582031 C 151.96875 21.582031 153.265625 22.878906 153.265625 24.460938 L 153.265625 40.910156 "/>
+    <path d="M 64.71875 86.890625 C 63.597656 88.011719 61.765625 88.011719 60.644531 86.890625 L 42.378906 68.648438 C 41.257812 67.527344 41.257812 65.699219 42.378906 64.578125 L 60.644531 46.335938 C 61.765625 45.214844 63.597656 45.214844 64.71875 46.335938 L 82.972656 64.574219 C 84.09375 65.695312 84.09375 67.527344 82.972656 68.648438 L 64.71875 86.890625 "/>
+  </g>
+      </svg>
+    </div>
+    <div class="auth-title">GCP Mass VM Recovery</div>
+    <div class="auth-sub">Upload your RSC Service Account JSON to authenticate and load your GCP VM inventory for mass recovery.</div>
+    
+    <div class="auth-drop" id="authDrop">
+      <input type="file" id="saFileInput" accept=".json" onchange="handleSAFile(event)" />
+      <div class="auth-drop-icon">📄</div>
+      <div class="auth-drop-text"><strong>Drop Service Account JSON</strong> or click to browse</div>
+      <div class="auth-drop-text" style="margin-top:4px;font-size:11px;color:var(--text-muted);">Contains client_id, client_secret &amp; access_token_uri</div>
+    </div>
+
+    <div id="authStatus" class="auth-status"></div>
+    <button class="btn btn-primary" style="width:100%;justify-content:center;" onclick="authenticate()" id="authBtn">
+      <span id="authBtnText">Connect &amp; Load Inventory</span>
+    </button>
+    <div style="margin-top:12px;font-size:11px;color:var(--text-muted);">Credentials stay local — no data leaves your browser except to your RSC instance.</div>
+
+    <div id="corsHelp" style="display:none;margin-top:16px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);border-radius:8px;padding:14px;text-align:left;">
+      <div style="font-size:12px;font-weight:600;color:#fbbf24;margin-bottom:8px;">⚠ CORS Error — Serve from localhost</div>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">
+        Browsers block direct API calls from <code style="background:rgba(255,255,255,0.08);padding:1px 5px;border-radius:3px;">file://</code> URLs.<br>
+        Serve this file from a local web server instead:
+      </div>
+      <div style="margin-top:10px;display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px;">Pick any one option:</div>
+        <div style="background:rgba(0,0,0,0.3);border-radius:5px;padding:8px 10px;font-family:monospace;font-size:11px;color:#00d4b4;display:flex;align-items:center;justify-content:space-between;">
+          <span>python3 -m http.server 8080</span>
+          <button onclick="navigator.clipboard.writeText('python3 -m http.server 8080')" style="background:none;border:1px solid rgba(0,212,180,0.3);border-radius:4px;color:var(--accent);font-size:10px;padding:2px 7px;cursor:pointer;">copy</button>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border-radius:5px;padding:8px 10px;font-family:monospace;font-size:11px;color:#00d4b4;display:flex;align-items:center;justify-content:space-between;">
+          <span>npx serve .</span>
+          <button onclick="navigator.clipboard.writeText('npx serve .')" style="background:none;border:1px solid rgba(0,212,180,0.3);border-radius:4px;color:var(--accent);font-size:10px;padding:2px 7px;cursor:pointer;">copy</button>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border-radius:5px;padding:8px 10px;font-family:monospace;font-size:11px;color:#00d4b4;display:flex;align-items:center;justify-content:space-between;">
+          <span>npx http-server -p 8080 --cors</span>
+          <button onclick="navigator.clipboard.writeText('npx http-server -p 8080 --cors')" style="background:none;border:1px solid rgba(0,212,180,0.3);border-radius:4px;color:var(--accent);font-size:10px;padding:2px 7px;cursor:pointer;">copy</button>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5;">
+        Run one of those commands in the same folder as this HTML file, then open<br>
+        <code style="color:var(--accent);">http://localhost:8080/rsc_gcp_mass_recovery.html</code>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP (hidden until auth) -->
+<div id="mainApp" style="display:none;">
+  <div class="content-toolbar">
+    <div class="toolbar-left">
+      <div class="search-box">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" placeholder="Global search across all columns..." id="searchInput" oninput="filterVMs()" />
+      </div>
+      <button class="btn btn-ghost" onclick="clearAllFilters()" id="clearFiltersBtn">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        Clear Filters
+      </button>
+      <div class="col-gear">
+        <button class="col-gear-btn" onclick="toggleColGearMenu(event)" title="Column options">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <div class="col-gear-menu" id="colGearMenu">
+          <div class="col-gear-item" onclick="resetColumnWidths()">Reset widths</div>
+          <div class="col-gear-item" onclick="resetColumnOrder()">Reset order</div>
+          <div class="col-gear-divider"></div>
+          <div class="col-gear-item" onclick="resetColumns()" style="color:var(--accent);">Reset all</div>
+        </div>
+      </div>
+      <div class="result-count" id="resultCount">— of — VMs</div>
+    </div>
+    <div class="toolbar-right">
+      <div id="selectionBar" style="display:none;align-items:center;gap:10px;background:rgba(0,212,180,0.08);border:1px solid rgba(0,212,180,0.2);border-radius:6px;padding:6px 12px;">
+        <span id="selectionCount" style="font-size:12px;font-weight:600;color:var(--accent);"></span>
+        <button class="recover-selected-btn" onclick="openRecoveryModal()">Recover Selected →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="table-scroll">
+    <table class="table" id="vmTable">
+      <thead id="vmTableHead"></thead>
+      <tbody id="vmTableBody">
+            <tr class="loading"><td colspan="8" style="padding:40px;text-align:center;color:var(--text-muted);">
+              <div class="spinner" style="margin:0 auto 8px;width:20px;height:20px;border-width:3px;"></div>
+              Loading GCP inventory...
+            </td></tr>
+          </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- RECOVERY MODAL - STEP 1: VM List & Snapshot selection -->
+<div class="modal-overlay" id="modalStep1">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">GCP GCE Instance Recovery</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div style="padding:16px 24px 0;">
+      <div class="stepper">
+        <div class="step active" id="step1indicator">1</div>
+        <div class="step-line" id="stepline1"></div>
+        <div class="step pending" id="step2indicator">2</div>
+        <div class="step-line" id="stepline2"></div>
+        <div class="step pending" id="step3indicator">3</div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:6px;margin-bottom:4px;">Select VMs &amp; Snapshot Point</div>
+    </div>
+    <div class="modal-body">
+      <div class="form-section">
+        <div class="form-section-title">Snapshot Recovery Point</div>
+        <div class="form-row">
+          <div class="form-label">Recovery Point</div>
+          <div>
+            <div class="snapshot-options">
+              <button class="snapshot-option active" onclick="setSnapshotMode('latest', this)">Latest</button>
+              <button class="snapshot-option" onclick="setSnapshotMode('before', this)">Before</button>
+              <button class="snapshot-option" onclick="setSnapshotMode('after', this)">After</button>
+            </div>
+            <div id="snapshotDateWrap" style="display:none;margin-top:10px;">
+              <div class="datetime-picker">
+                <!-- Date dropdown -->
+                <div class="dt-date" id="dtDateField">
+                  <span class="dt-icon">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  </span>
+                  <span class="dt-date-text" id="dtDateText">mm/dd/yyyy</span>
+                  <span class="dt-chevron">▾</span>
+                  <div class="dt-calendar" id="dtCalendar"></div>
+                </div>
+                <!-- Hour combo -->
+                <div class="dt-time-field" id="dtHourField">
+                  <span class="dt-time-text" id="dtHourText">--</span>
+                  <span class="dt-chevron">▾</span>
+                  <div class="dt-time-dropdown" id="dtHourDropdown"></div>
+                </div>
+                <span class="dt-colon">:00</span>
+                <!-- AM/PM combo -->
+                <div class="dt-time-field" id="dtAmPmField" style="min-width:62px;">
+                  <span class="dt-time-text" id="dtAmPmText">--</span>
+                  <span class="dt-chevron">▾</span>
+                  <div class="dt-time-dropdown" id="dtAmPmDropdown"></div>
+                </div>
+                <span class="dt-tz">CT</span>
+              </div>
+              <div class="form-hint" id="dtError" style="color:var(--warning);display:none;margin-top:6px;">Pick a date to continue</div>
+            </div>
+            <div class="form-hint">All times in Central Time (CT). Rubrik will find the <span id="snapshotModeDesc">latest available</span> snapshot for each VM.</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Selected VMs (<span id="selectedVMCount">0</span>)</div>
+        <table class="vm-list-table" id="vmListStep1">
+          <thead>
+            <tr>
+              <th>Source VM</th>
+              <th>Region</th>
+              <th>Machine Type</th>
+              <th>Selected Snapshot</th>
+              <th>Oldest Snapshot</th>
+              <th>Latest Snapshot</th>
+            </tr>
+          </thead>
+          <tbody id="vmListStep1Body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" onclick="goToStep2()">Next <span id="snapshotLoadingIndicator"></span></button>
+    </div>
+  </div>
+</div>
+
+<!-- RECOVERY MODAL - STEP 2: Recovery Options -->
+<div class="modal-overlay" id="modalStep2">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">GCP GCE Instance Recovery</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div style="padding:16px 24px 0;">
+      <div class="stepper">
+        <div class="step done">✓</div>
+        <div class="step-line done"></div>
+        <div class="step active">2</div>
+        <div class="step-line"></div>
+        <div class="step pending">3</div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:6px;margin-bottom:4px;">Virtual Machine Details</div>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:16px;">
+        Provide details to recover <strong style="color:var(--text-primary)" id="recoverCountLabel">0</strong> virtual machine(s). Settings apply to all selected VMs.
+      </div>
+
+      <!-- Resource Details -->
+      <div class="form-section">
+        <div class="form-section-title">Resource Details</div>
+        <div class="form-row">
+          <div class="form-label">Export From</div>
+          <div id="exportFromLabel" class="form-value">—</div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Target Project</div>
+          <div class="combo" id="combo-targetProject" data-placeholder="Select project..."></div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Service Account</div>
+          <div>
+            <input type="text" class="form-control" id="serviceAccount" placeholder="e.g. 12345-compute@developer.gserviceaccount.com" />
+            <div class="form-hint warn">If the service account isn't usable in the target project, the export will fail.</div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Region</div>
+          <div class="combo" id="combo-targetRegion" data-placeholder="Select region..."></div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Zone</div>
+          <div class="combo" id="combo-targetZone" data-placeholder="Select zone..."></div>
+        </div>
+      </div>
+
+      <!-- Per-VM Names & Machine Types -->
+      <div class="form-section">
+        <div class="form-section-title">Per-VM: Instance Name &amp; Machine Type</div>
+        <div class="form-hint" style="margin-bottom:10px;">Target names are auto-generated with a random suffix. You can edit them per VM. Machine type defaults to the source machine type.</div>
+        <div style="overflow-x:auto;">
+          <table class="vm-list-table" id="perVMTable">
+            <thead>
+              <tr>
+                <th>Source VM</th>
+                <th>Target Instance Name</th>
+                <th>Machine Type</th>
+              </tr>
+            </thead>
+            <tbody id="perVMTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Computing & Storage -->
+      <div class="form-section">
+        <div class="form-section-title">Computing &amp; Storage</div>
+        <div class="form-row">
+          <div class="form-label">Disk Encryption</div>
+          <div class="combo" id="combo-diskEncryption" data-placeholder="Select encryption..."></div>
+        </div>
+        <div id="cmekRow" class="form-row" style="display:none;">
+          <div class="form-label">KMS Key Resource ID</div>
+          <div>
+            <input type="text" class="form-control" id="kmsKey" placeholder="projects/.../keyRings/.../cryptoKeys/..." />
+          </div>
+        </div>
+      </div>
+
+      <!-- Networking -->
+      <div class="form-section">
+        <div class="form-section-title">Networking</div>
+        <div class="form-row">
+          <div class="form-label">Network</div>
+          <div class="combo" id="combo-targetNetwork" data-placeholder="Select network..."></div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Subnet</div>
+          <div class="combo" id="combo-targetSubnet" data-placeholder="Select subnet..."></div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">Network Tags</div>
+          <div>
+            <input type="text" class="form-control" id="networkTags" placeholder="Comma-separated tags (optional)" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Additional Settings -->
+      <div class="form-section">
+        <div class="form-section-title">Additional Settings</div>
+        <div class="checkbox-group">
+          <label class="checkbox-item">
+            <input type="checkbox" id="exportLabels" checked />
+            <div>
+              <div>Export labels</div>
+              <div class="hint">Copy source VM labels to recovered VM</div>
+            </div>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" id="addRubrikLabels" checked />
+            <div>
+              <div>Add Rubrik labels</div>
+              <div class="hint">Tag recovered VMs with Rubrik metadata</div>
+            </div>
+          </label>
+          <label class="checkbox-item">
+            <input type="checkbox" id="launchStopped" />
+            <div>
+              <div>Launch in the stopped state</div>
+              <div class="hint">VMs will be created but not started</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-secondary" onclick="goToStep1()">Back</button>
+      <button class="btn btn-primary" onclick="goToStep3()">Review</button>
+    </div>
+  </div>
+</div>
+
+<!-- RECOVERY MODAL - STEP 3: Review -->
+<div class="modal-overlay" id="modalStep3">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title">GCP GCE Instance Recovery — Review</div>
+      <button class="modal-close" onclick="closeModals()">×</button>
+    </div>
+    <div style="padding:16px 24px 0;">
+      <div class="stepper">
+        <div class="step done">✓</div>
+        <div class="step-line done"></div>
+        <div class="step done">✓</div>
+        <div class="step-line done"></div>
+        <div class="step active">3</div>
+      </div>
+      <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:6px;margin-bottom:4px;">Review &amp; Confirm</div>
+    </div>
+    <div class="modal-body" id="reviewBody">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-secondary" onclick="goToStep2()">Back</button>
+      <button class="btn btn-primary" onclick="startRecovery()" id="recoverBtn">
+        <span id="recoverBtnText">Recover</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- EVENTS / PROGRESS MODAL -->
+<div class="modal-overlay" id="modalEvents">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:16px;">
+        <div class="modal-title" id="eventsModalTitle">Recovery Events</div>
+        <div id="eventsRefreshIndicator" class="events-refresh-indicator"></div>
+      </div>
+      <button class="modal-close" onclick="closeEventsModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding: 16px 24px; max-height: calc(90vh - 140px); overflow-y: auto;">
+      <!-- Mode toggle: session vs all -->
+      <div class="events-controls">
+        <div class="events-toggle">
+          <button class="events-toggle-btn" id="evtTabSession" onclick="setEventsMode('session')">From This Session</button>
+          <button class="events-toggle-btn" id="evtTabAll" onclick="setEventsMode('all')">All RSC Recoveries</button>
+        </div>
+        <div class="events-hint">Showing last 7 days, up to 100 recoveries</div>
+      </div>
+
+      <div id="eventsList" class="events-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeEventsModal()" id="eventsCloseBtn">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==================== STATE ====================
+// Warn if opened as file:// in a browser — but not in Electron, where it's fine
+if (window.location.protocol === 'file:' && !(window.rscApi && window.rscApi.isElectron)) {
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('corsHelp');
+    if (el) el.style.display = 'block';
+    setAuthStatus('error', 'Opened as file:// in a browser — CORS will block API calls. See instructions below.');
+  });
+}
+let authToken = null;
+let rscBaseUrl = '';
+let allVMs = [];
+let selectedVMs = new Set();
+let snapshotMode = 'latest';
+let vmSnapshots = {}; // vmId -> snapshotId
+let allProjects = [];
+let allRegions = [];
+let allNetworks = [];
+let allMachineTypes = [];
+let perVMData = {}; // vmId -> { targetName, machineType }
+let recoverySettings = {};
+
+// ==================== AUTH ====================
+let saData = null;
+
+function handleSAFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      saData = JSON.parse(ev.target.result);
+      // Validate fields immediately
+      const missing = ['client_id', 'client_secret', 'access_token_uri'].filter(f => !saData[f]);
+      if (missing.length) {
+        setAuthStatus('error', `JSON missing required fields: ${missing.join(', ')}`);
+        return;
+      }
+      const rscUrl = saData.access_token_uri.replace(/\/api\/client_token$/, '');
+      document.getElementById('authDrop').style.borderColor = 'var(--accent)';
+      document.getElementById('authDrop').querySelector('.auth-drop-text').innerHTML =
+        `<strong style="color:var(--accent)">✓ ${file.name}</strong>`;
+      document.getElementById('authDrop').querySelectorAll('.auth-drop-text')[1].innerHTML =
+        `<span style="color:var(--text-muted)">${rscUrl}</span>`;
+      setAuthStatus('success', `Ready — will connect to ${rscUrl}`);
+    } catch {
+      setAuthStatus('error', 'Invalid JSON file — could not parse');
+    }
+  };
+  reader.readAsText(file);
+}
+
+function setAuthStatus(type, msg) {
+  const el = document.getElementById('authStatus');
+  el.className = 'auth-status ' + type;
+  el.textContent = msg;
+}
+
+async function authenticate() {
+  if (!saData) { setAuthStatus('error', 'Please upload a Service Account JSON file'); return; }
+
+  // Validate required fields — same checks as RSC-Authentication.ps1
+  const missing = ['client_id', 'client_secret', 'access_token_uri'].filter(f => !saData[f]);
+  if (missing.length) { setAuthStatus('error', `Service Account JSON missing: ${missing.join(', ')}`); return; }
+
+  // RSC URL is access_token_uri with /api/client_token stripped
+  rscBaseUrl = saData.access_token_uri.replace(/\/api\/client_token$/, '');
+
+  document.getElementById('authBtnText').innerHTML = '<span class="spinner"></span> Authenticating...';
+  document.getElementById('authBtn').disabled = true;
+  setAuthStatus('loading', `Connecting to ${rscBaseUrl} ...`);
+
+  try {
+    // Exchange credentials using grant_type: client_credentials (per RSC-Authentication.ps1)
+    const tokenRes = await rscFetch(saData.access_token_uri, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'client_credentials',
+        client_id: saData.client_id,
+        client_secret: saData.client_secret
+      })
+    });
+
+    if (!tokenRes.ok) {
+      throw new Error(`${tokenRes.status} ${tokenRes.statusText} — ${(tokenRes.body || '').substring(0, 200)}`);
+    }
+    const tokenData = JSON.parse(tokenRes.body);
+    if (!tokenData.access_token) throw new Error('Response contained no access_token');
+
+    authToken = tokenData.access_token;
+    setAuthStatus('success', `Connected to ${rscBaseUrl}. Loading inventory...`);
+    await loadVMInventory();
+    document.getElementById('authScreen').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+  } catch (err) {
+    let msg = err.message;
+    // CORS / network errors when opened as file:// show as "Failed to fetch"
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('CORS')) {
+      msg = `CORS error — you must serve this file from a local web server, not open it directly as a file. See instructions below.`;
+      document.getElementById('corsHelp').style.display = 'block';
+    }
+    setAuthStatus('error', msg);
+    document.getElementById('authBtnText').textContent = 'Connect & Load Inventory';
+    document.getElementById('authBtn').disabled = false;
+  }
+}
+
+// ==================== GRAPHQL ====================
+async function gql(operationName, query, variables = {}) {
+  const res = await rscFetch(`${rscBaseUrl}/api/graphql?op=${operationName}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    },
+    body: JSON.stringify({ operationName, variables, query })
+  });
+  if (!res.ok) throw new Error(`GraphQL HTTP ${res.status}: ${(res.body || '').substring(0, 200)}`);
+  const data = JSON.parse(res.body);
+  if (data.errors) throw new Error(data.errors[0].message);
+  return data.data;
+}
+
+// rscFetch: routes HTTP through Electron's main process (no CORS) when available,
+// otherwise falls back to browser fetch (will hit CORS unless served from localhost).
+async function rscFetch(url, opts = {}) {
+  if (window.rscApi && window.rscApi.isElectron) {
+    const result = await window.rscApi.request({
+      url,
+      method: opts.method || 'GET',
+      headers: opts.headers || {},
+      body: opts.body || null
+    });
+    if (result.error) throw new Error(result.error);
+    return result;
+  }
+  // Browser fallback
+  const r = await fetch(url, opts);
+  const body = await r.text();
+  return { ok: r.ok, status: r.status, statusText: r.statusText, body };
+}
+
+// ==================== INVENTORY ====================
+async function loadVMInventory() {
+  try {
+    const data = await gql('GCPInstancesListQuery', `
+      query GCPInstancesListQuery($first: Int, $sortBy: GcpNativeGceInstanceSortFields, $sortOrder: SortOrder) {
+        gcpNativeGceInstances(first: $first, sortBy: $sortBy, sortOrder: $sortOrder) {
+          edges {
+            node {
+              id nativeId nativeName vpcName region zone machineType isRelic
+              gcpProjectDetails { id nativeName nativeId }
+              effectiveSlaDomain { id name }
+              allOrgs { fullName }
+            }
+          }
+        }
+      }
+    `, { first: 500, sortBy: 'GCP_INSTANCE_NATIVE_NAME', sortOrder: 'ASC' });
+
+    allVMs = data.gcpNativeGceInstances.edges.map(e => e.node);
+    renderTableHead();
+    renderMultiFilters();
+    filterVMs();
+    // Show RSC URL in header center + Sign Out + View Recovery Events
+    const urlBadge = document.getElementById('rscUrlBadge');
+    if (urlBadge) {
+      urlBadge.textContent = rscBaseUrl.replace(/^https?:\/\//, '');
+      urlBadge.style.display = 'block';
+    }
+    document.getElementById('signOutBtn').style.display = 'inline-flex';
+    document.getElementById('viewEventsBtn').style.display = 'inline-flex';
+  } catch (err) {
+    document.getElementById('vmTableBody').innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--danger);">Failed to load inventory: ${err.message}</td></tr>`;
+  }
+}
+
+// ==================== COLUMN MANAGER ====================
+// Column config — order, widths, sort, filter type, value getter
+const DEFAULT_COLUMNS = [
+  { key: 'nativeName',  label: 'GCE Instance',  width: 220, filter: 'text',  getter: vm => vm.nativeName || '' },
+  { key: 'region',      label: 'Region',        width: 130, filter: 'multi', getter: vm => vm.region || '' },
+  { key: 'vpcName',     label: 'Network',       width: 150, filter: 'text',  getter: vm => vm.vpcName || '' },
+  { key: 'project',     label: 'Project',       width: 200, filter: 'multi', getter: vm => vm.gcpProjectDetails?.nativeName || '' },
+  { key: 'machineType', label: 'Machine Type',  width: 130, filter: 'multi', getter: vm => vm.machineType || '' },
+  { key: 'sla',         label: 'SLA Domain',    width: 150, filter: 'multi', getter: vm => vm.effectiveSlaDomain?.name || '' },
+  { key: 'nativeId',    label: 'Instance ID',   width: 180, filter: 'text',  getter: vm => vm.nativeId || '' },
+];
+// Min column width — ~8 chars wide. Cells will truncate with ellipsis at this point.
+const MIN_COL_WIDTH = 60;
+let columns = DEFAULT_COLUMNS.map(c => ({ ...c })); // working copy with possibly-mutated widths/order
+let multiFilterState = { region: new Set(), project: new Set(), machineType: new Set(), sla: new Set() };
+let sortState = { col: null, dir: 'asc' };
+
+function getVMField(vm, col) {
+  const def = columns.find(c => c.key === col) || DEFAULT_COLUMNS.find(c => c.key === col);
+  return def ? def.getter(_currentVM(vm)) : '';
+}
+
+function _currentVM(vm) { return vm; } // identity, but lets us swap later if needed
+
+
+
+function getFilteredVMs() {
+  const globalQ = document.getElementById('searchInput')?.value?.toLowerCase().trim() || '';
+  const textFilters = {};
+  document.querySelectorAll('.col-filter-input').forEach(inp => {
+    const v = inp.value.toLowerCase().trim();
+    if (v) textFilters[inp.dataset.col] = v;
+  });
+
+  let filtered = allVMs.filter(vm => {
+    // Global search across all visible cols
+    if (globalQ) {
+      const cols = ['nativeName','nativeId','region','vpcName','project','machineType','sla'];
+      const hit = cols.some(c => getVMField(vm, c).toLowerCase().includes(globalQ));
+      if (!hit) return false;
+    }
+    // Per-column text filters
+    for (const [col, q] of Object.entries(textFilters)) {
+      if (!getVMField(vm, col).toLowerCase().includes(q)) return false;
+    }
+    // Multi-select filters
+    for (const [col, set] of Object.entries(multiFilterState)) {
+      if (set.size === 0) continue;
+      if (!set.has(getVMField(vm, col))) return false;
+    }
+    return true;
+  });
+
+  // Sort
+  if (sortState.col) {
+    const dir = sortState.dir === 'asc' ? 1 : -1;
+    filtered = [...filtered].sort((a, b) =>
+      getVMField(a, sortState.col).localeCompare(getVMField(b, sortState.col)) * dir);
+  }
+
+  return filtered;
+}
+
+// Cell renderer for each column - returns HTML for the cell content
+function renderCell(vm, col) {
+  // CSS handles overflow/ellipsis based on column width. We just keep the full text
+  // and put it in title attributes for hover tooltips.
+  switch (col.key) {
+    case 'nativeName': {
+      const name = vm.nativeName || '';
+      return `<span class="vm-name-text" title="${escapeHtml(name)}">${escapeHtml(name)}</span>`;
+    }
+    case 'nativeId':
+      return `<span class="col-tag" title="${escapeHtml(vm.nativeId || '')}">${escapeHtml(vm.nativeId || '—')}</span>`;
+    case 'region':
+      return `<span title="${escapeHtml(vm.region || '')}">${escapeHtml(vm.region || '—')}</span>`;
+    case 'vpcName':
+      return `<span title="${escapeHtml(vm.vpcName || '')}">${escapeHtml(vm.vpcName || '—')}</span>`;
+    case 'project': {
+      const val = vm.gcpProjectDetails?.nativeName || '—';
+      return `<span title="${escapeHtml(val)}">${escapeHtml(val)}</span>`;
+    }
+    case 'machineType':
+      return `<span title="${escapeHtml(vm.machineType || '')}">${escapeHtml(vm.machineType || '—')}</span>`;
+    case 'sla': {
+      const sla = vm.effectiveSlaDomain?.name || '—';
+      const cls = sla === 'UNPROTECTED' ? 'unprotected' : 'protected';
+      return `<span class="badge badge-${cls}" title="${escapeHtml(sla)}">${escapeHtml(sla)}</span>`;
+    }
+    default: return '';
+  }
+}
+
+function renderTableHead() {
+  const head = document.getElementById('vmTableHead');
+  if (!head) return;
+  // Row 1: column headers with sort + drag + resize handles
+  const headerCells = columns.map((c, idx) => {
+    const sortClass = sortState.col === c.key ? `sort-${sortState.dir}` : '';
+    return `<th class="col-h sortable ${sortClass}" data-col="${c.key}" data-idx="${idx}" style="width:${c.width}px;min-width:${c.width}px;">
+      <div class="col-h-inner" draggable="true">
+        <span class="col-h-text" onclick="cycleSort('${c.key}', event)">${escapeHtml(c.label)}</span>
+        <span class="sort-icon"><span class="sort-icon-up">▲</span><span class="sort-icon-down">▼</span></span>
+      </div>
+      <div class="col-resize-handle" data-col="${c.key}"></div>
+    </th>`;
+  }).join('');
+
+  // Row 2: filter inputs (text or multi-select trigger)
+  const filterCells = columns.map(c => {
+    if (c.filter === 'multi') {
+      return `<th style="width:${c.width}px;min-width:${c.width}px;"><div class="multi-filter" id="filter-${c.key}"></div></th>`;
+    }
+    return `<th style="width:${c.width}px;min-width:${c.width}px;"><input type="text" class="col-filter-input" placeholder="Filter..." data-col="${c.key}" oninput="filterVMs()" /></th>`;
+  }).join('');
+
+  head.innerHTML = `
+    <tr>
+      <th class="col-checkbox"><input type="checkbox" class="checkbox" id="selectAll" onchange="toggleSelectAll(this)"></th>
+      ${headerCells}
+    </tr>
+    <tr class="filter-row">
+      <th></th>
+      ${filterCells}
+    </tr>`;
+
+  attachHeaderHandlers();
+}
+
+function renderVMTable(vms) {
+  const tbody = document.getElementById('vmTableBody');
+  if (vms.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="${columns.length + 1}" style="text-align:center;padding:40px;color:var(--text-muted);">No VMs match the current filters</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = vms.map(vm => {
+    const cells = columns.map(c => `<td style="width:${c.width}px;min-width:${c.width}px;">${renderCell(vm, c)}</td>`).join('');
+    return `
+      <tr class="${selectedVMs.has(vm.id) ? 'selected' : ''}" onclick="toggleVM('${vm.id}', event)">
+        <td><input type="checkbox" class="checkbox" ${selectedVMs.has(vm.id) ? 'checked' : ''} onclick="toggleVM('${vm.id}', event)" /></td>
+        ${cells}
+      </tr>`;
+  }).join('');
+  updateSelectionUI();
+}
+
+// ==================== COLUMN HEADER INTERACTIONS ====================
+// Sort cycle: asc -> desc -> none
+function cycleSort(col, e) {
+  e.stopPropagation();
+  if (sortState.col !== col) sortState = { col, dir: 'asc' };
+  else if (sortState.dir === 'asc') sortState.dir = 'desc';
+  else if (sortState.dir === 'desc') sortState = { col: null, dir: 'asc' };
+  filterVMs();
+  // Re-render header to update sort indicators
+  renderTableHead();
+  renderMultiFilters();
+}
+
+let _resizeState = null;
+let _dragState = null;
+
+function attachHeaderHandlers() {
+  // Resize handles
+  document.querySelectorAll('.col-resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', startResize);
+  });
+  // Drag and drop reordering
+  document.querySelectorAll('.col-h .col-h-inner').forEach(inner => {
+    const th = inner.closest('.col-h');
+    inner.addEventListener('dragstart', (e) => {
+      _dragState = { fromKey: th.dataset.col, fromIdx: parseInt(th.dataset.idx) };
+      th.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Required for FF
+      e.dataTransfer.setData('text/plain', th.dataset.col);
+    });
+    inner.addEventListener('dragend', () => {
+      th.classList.remove('dragging');
+      document.querySelectorAll('.drop-target-left, .drop-target-right').forEach(el => {
+        el.classList.remove('drop-target-left', 'drop-target-right');
+      });
+      _dragState = null;
+    });
+  });
+  document.querySelectorAll('.col-h').forEach(th => {
+    th.addEventListener('dragover', (e) => {
+      if (!_dragState) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const rect = th.getBoundingClientRect();
+      const isLeft = (e.clientX - rect.left) < rect.width / 2;
+      document.querySelectorAll('.drop-target-left, .drop-target-right').forEach(el => {
+        if (el !== th) el.classList.remove('drop-target-left', 'drop-target-right');
+      });
+      th.classList.remove(isLeft ? 'drop-target-right' : 'drop-target-left');
+      th.classList.add(isLeft ? 'drop-target-left' : 'drop-target-right');
+    });
+    th.addEventListener('dragleave', (e) => {
+      // Only remove if leaving for real (not entering child)
+      if (!th.contains(e.relatedTarget)) {
+        th.classList.remove('drop-target-left', 'drop-target-right');
+      }
+    });
+    th.addEventListener('drop', (e) => {
+      if (!_dragState) return;
+      e.preventDefault();
+      const toIdx = parseInt(th.dataset.idx);
+      const rect = th.getBoundingClientRect();
+      const isLeft = (e.clientX - rect.left) < rect.width / 2;
+      let insertAt = isLeft ? toIdx : toIdx + 1;
+      if (insertAt > _dragState.fromIdx) insertAt -= 1;
+      if (insertAt === _dragState.fromIdx) return;
+      const [moved] = columns.splice(_dragState.fromIdx, 1);
+      columns.splice(insertAt, 0, moved);
+      renderTableHead();
+      renderMultiFilters();
+      filterVMs();
+    });
+  });
+}
+
+function startResize(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.target;
+  const colKey = handle.dataset.col;
+  const col = columns.find(c => c.key === colKey);
+  if (!col) return;
+  _resizeState = { col, startX: e.clientX, startWidth: col.width };
+  handle.classList.add('resizing');
+  document.body.style.cursor = 'col-resize';
+  document.addEventListener('mousemove', doResize);
+  document.addEventListener('mouseup', endResize);
+}
+
+function doResize(e) {
+  if (!_resizeState) return;
+  const dx = e.clientX - _resizeState.startX;
+  const newW = Math.max(MIN_COL_WIDTH, _resizeState.startWidth + dx);
+  _resizeState.col.width = newW;
+  // Update all <th> and <td> for this column
+  document.querySelectorAll(`[data-col="${_resizeState.col.key}"]`).forEach(el => {
+    if (el.tagName === 'TH') {
+      el.style.width = newW + 'px';
+      el.style.minWidth = newW + 'px';
+    }
+  });
+  // tbody cells don't have data-col, so we update by column index
+  const idx = columns.findIndex(c => c.key === _resizeState.col.key);
+  document.querySelectorAll('#vmTableBody tr').forEach(tr => {
+    const cell = tr.children[idx + 1]; // +1 for checkbox col
+    if (cell) {
+      cell.style.width = newW + 'px';
+      cell.style.minWidth = newW + 'px';
+    }
+  });
+}
+
+function endResize() {
+  if (_resizeState) {
+    document.querySelectorAll('.col-resize-handle').forEach(h => h.classList.remove('resizing'));
+  }
+  _resizeState = null;
+  document.body.style.cursor = '';
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup', endResize);
+}
+
+// ==================== COLUMN GEAR MENU ====================
+function toggleColGearMenu(e) {
+  e.stopPropagation();
+  document.getElementById('colGearMenu').classList.toggle('open');
+}
+
+function resetColumnWidths() {
+  columns.forEach(c => {
+    const def = DEFAULT_COLUMNS.find(d => d.key === c.key);
+    if (def) c.width = def.width;
+  });
+  renderTableHead();
+  renderMultiFilters();
+  filterVMs();
+  document.getElementById('colGearMenu').classList.remove('open');
+}
+
+function resetColumnOrder() {
+  const byKey = Object.fromEntries(columns.map(c => [c.key, c]));
+  columns = DEFAULT_COLUMNS.map(d => byKey[d.key] || { ...d });
+  renderTableHead();
+  renderMultiFilters();
+  filterVMs();
+  document.getElementById('colGearMenu').classList.remove('open');
+}
+
+function resetColumns() {
+  columns = DEFAULT_COLUMNS.map(c => ({ ...c }));
+  renderTableHead();
+  renderMultiFilters();
+  filterVMs();
+  document.getElementById('colGearMenu').classList.remove('open');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c]));
+}
+
+// ==================== COMBOBOX (searchable single-select) ====================
+// Usage: comboInit('combo-targetProject', {
+//   options: [{ value, label, sub?, group? }, ...],
+//   value: currentValue,
+//   onChange: (val, opt) => {},
+//   placeholder: 'Select...',
+//   groupBy: optional fn(opt) => 'group name'
+// })
+const _comboState = {}; // id -> { options, value, onChange, search, highlight, open, groupBy, formatter }
+
+function comboInit(id, config) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const state = {
+    options: config.options || [],
+    value: config.value !== undefined ? config.value : null,
+    onChange: config.onChange || (() => {}),
+    placeholder: config.placeholder || el.dataset.placeholder || 'Select...',
+    groupBy: config.groupBy || null,
+    formatter: config.formatter || null,
+    search: '',
+    highlight: 0,
+    open: false
+  };
+  _comboState[id] = state;
+  renderCombo(id);
+}
+
+function comboSetOptions(id, options, value) {
+  const s = _comboState[id];
+  if (!s) return;
+  s.options = options;
+  if (value !== undefined) s.value = value;
+  s.search = '';
+  s.highlight = 0;
+  renderCombo(id);
+}
+
+function comboSetValue(id, value) {
+  const s = _comboState[id];
+  if (!s) return;
+  s.value = value;
+  renderCombo(id);
+}
+
+function comboGetValue(id) {
+  return _comboState[id]?.value ?? null;
+}
+
+function comboGetSelectedOption(id) {
+  const s = _comboState[id];
+  if (!s || s.value === null || s.value === undefined) return null;
+  return s.options.find(o => o.value === s.value) || null;
+}
+
+// Singleton dropdown attached to body — escapes modal backdrop-filter / overflow issues
+let _comboPortal = null;
+let _comboPortalForId = null;
+
+function ensureComboPortal() {
+  if (_comboPortal) return _comboPortal;
+  _comboPortal = document.createElement('div');
+  _comboPortal.className = 'combo-dropdown';
+  _comboPortal.id = 'comboPortalDropdown';
+  _comboPortal.innerHTML = `
+    <div class="combo-search-wrap">
+      <input class="combo-search" type="text" placeholder="Search..." />
+    </div>
+    <div class="combo-list" id="comboPortalList"></div>`;
+  document.body.appendChild(_comboPortal);
+  // Wire input handlers once
+  const inp = _comboPortal.querySelector('.combo-search');
+  inp.oninput = (e) => {
+    const id = _comboPortalForId;
+    if (!id) return;
+    const s = _comboState[id];
+    if (!s) return;
+    s.search = e.target.value;
+    s.highlight = 0;
+    renderComboList(id);
+  };
+  inp.onkeydown = (e) => {
+    const id = _comboPortalForId;
+    if (id) comboKeydown(id, e);
+  };
+  return _comboPortal;
+}
+
+function renderCombo(id) {
+  const el = document.getElementById(id);
+  const s = _comboState[id];
+  if (!el || !s) return;
+
+  const selected = s.options.find(o => o.value === s.value);
+  const triggerText = selected ? (s.formatter ? s.formatter(selected) : selected.label) : s.placeholder;
+  const triggerCls = selected ? '' : 'placeholder';
+
+  // Only render the trigger inside the .combo element. The dropdown lives on body.
+  el.innerHTML = `
+    <div class="combo-trigger ${triggerCls} ${s.open ? 'open' : ''}" onclick="comboToggle('${id}', event)">
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;">${escapeHtml(triggerText)}</span>
+    </div>`;
+
+  if (s.open) {
+    showComboPortal(id);
+  } else if (_comboPortalForId === id) {
+    hideComboPortal();
+  }
+}
+
+function showComboPortal(id) {
+  const s = _comboState[id];
+  const el = document.getElementById(id);
+  if (!s || !el) return;
+  const portal = ensureComboPortal();
+
+  // Hide any previously open combo other than this one
+  if (_comboPortalForId && _comboPortalForId !== id && _comboState[_comboPortalForId]) {
+    _comboState[_comboPortalForId].open = false;
+    const prevEl = document.getElementById(_comboPortalForId);
+    if (prevEl) {
+      const trig = prevEl.querySelector('.combo-trigger');
+      if (trig) trig.classList.remove('open');
+    }
+  }
+  _comboPortalForId = id;
+
+  // Set the search input value
+  const inp = portal.querySelector('.combo-search');
+  if (inp) {
+    inp.value = s.search || '';
+  }
+
+  // Render list
+  renderComboList(id);
+
+  // Position
+  positionComboDropdown(id);
+
+  portal.classList.add('open');
+
+  // Focus the search input
+  if (inp) {
+    setTimeout(() => {
+      inp.focus();
+      try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch {}
+    }, 0);
+  }
+}
+
+function hideComboPortal() {
+  if (_comboPortal) _comboPortal.classList.remove('open');
+  _comboPortalForId = null;
+}
+
+function positionComboDropdown(id) {
+  const el = document.getElementById(id);
+  const portal = _comboPortal;
+  if (!el || !portal) return;
+  const trigger = el.querySelector('.combo-trigger');
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  let top = rect.bottom + 4;
+  let left = rect.left;
+  const ddWidth = Math.max(rect.width, 280);
+  const vw = window.innerWidth, vh = window.innerHeight;
+  if (left + ddWidth > vw - 8) left = Math.max(8, vw - ddWidth - 8);
+  const estHeight = 360;
+  if (top + estHeight > vh - 8 && rect.top > estHeight) {
+    top = rect.top - 4 - estHeight;
+  }
+  portal.style.top = top + 'px';
+  portal.style.left = left + 'px';
+  portal.style.width = ddWidth + 'px';
+}
+
+// Reposition all open combos on scroll/resize (in case the trigger moves)
+window.addEventListener('scroll', () => {
+  if (_comboPortalForId) positionComboDropdown(_comboPortalForId);
+}, true);
+window.addEventListener('resize', () => {
+  if (_comboPortalForId) positionComboDropdown(_comboPortalForId);
+});
+
+function renderComboList(id) {
+  const s = _comboState[id];
+  // List lives inside the portal when combo is open, else inside the combo (legacy)
+  const list = _comboPortalForId === id ? document.getElementById('comboPortalList') : document.getElementById(`${id}-list`);
+  if (!list || !s) return;
+
+  const q = s.search.toLowerCase().trim();
+  let filtered = q ? s.options.filter(o => (o.label + ' ' + (o.value || '') + ' ' + (o.sub || '')).toLowerCase().includes(q)) : s.options;
+
+  if (s.highlight >= filtered.length) s.highlight = Math.max(0, filtered.length - 1);
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="combo-empty">No matches</div>';
+    return;
+  }
+
+  // Group rendering
+  let html = '';
+  if (s.groupBy) {
+    const groups = {};
+    filtered.forEach(o => {
+      const g = s.groupBy(o) || 'Other';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(o);
+    });
+    let i = 0;
+    Object.keys(groups).forEach(g => {
+      html += `<div class="combo-group-label">${escapeHtml(g)}</div>`;
+      groups[g].forEach(o => {
+        const cls = `combo-item ${o.value === s.value ? 'selected' : ''} ${i === s.highlight ? 'highlight' : ''}`;
+        html += `<div class="${cls}" data-idx="${i}" data-value="${escapeHtml(String(o.value))}">
+          <span>${escapeHtml(o.label)}${o.sub ? `<span class="combo-item-sub">${escapeHtml(o.sub)}</span>` : ''}</span>
+        </div>`;
+        i++;
+      });
+    });
+  } else {
+    filtered.forEach((o, i) => {
+      const cls = `combo-item ${o.value === s.value ? 'selected' : ''} ${i === s.highlight ? 'highlight' : ''}`;
+      html += `<div class="${cls}" data-idx="${i}" data-value="${escapeHtml(String(o.value))}">
+        <span>${escapeHtml(o.label)}${o.sub ? `<span class="combo-item-sub">${escapeHtml(o.sub)}</span>` : ''}</span>
+      </div>`;
+    });
+  }
+
+  list.innerHTML = html;
+
+  // Use event delegation on the LIST container — items don't get individual handlers.
+  // mousedown (not click) so the pick happens before any potential re-render via hover.
+  // Hover toggles the .highlight class directly, no full re-render — so the item under
+  // the cursor stays stable between mousedown and mouseup.
+  list.onmousedown = (e) => {
+    const item = e.target.closest('.combo-item');
+    if (!item) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const idx = parseInt(item.dataset.idx);
+    if (!isNaN(idx) && filtered[idx]) comboPick(id, filtered[idx]);
+  };
+  list.onmouseover = (e) => {
+    const item = e.target.closest('.combo-item');
+    if (!item) return;
+    const idx = parseInt(item.dataset.idx);
+    if (isNaN(idx) || idx === s.highlight) return;
+    s.highlight = idx;
+    // Toggle highlight class only — no DOM rewrite
+    list.querySelectorAll('.combo-item.highlight').forEach(el => el.classList.remove('highlight'));
+    item.classList.add('highlight');
+  };
+
+  // Scroll highlighted into view (only on render, not on hover)
+  const hl = list.querySelector('.combo-item.highlight');
+  if (hl) hl.scrollIntoView({ block: 'nearest' });
+}
+
+function comboKeydown(id, e) {
+  const s = _comboState[id];
+  const q = s.search.toLowerCase().trim();
+  const filtered = q ? s.options.filter(o => (o.label + ' ' + (o.value || '')).toLowerCase().includes(q)) : s.options;
+  if (e.key === 'ArrowDown') { e.preventDefault(); s.highlight = Math.min(filtered.length - 1, s.highlight + 1); renderComboList(id); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); s.highlight = Math.max(0, s.highlight - 1); renderComboList(id); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (filtered[s.highlight]) comboPick(id, filtered[s.highlight]); }
+  else if (e.key === 'Escape') { e.preventDefault(); comboClose(id); }
+}
+
+function comboPick(id, opt) {
+  if (!opt) return;
+  const s = _comboState[id];
+  s.value = opt.value;
+  s.open = false;
+  s.search = '';
+  renderCombo(id);
+  s.onChange(opt.value, opt);
+}
+
+function comboToggle(id, e) {
+  e.stopPropagation();
+  const s = _comboState[id];
+  if (!s) return;
+  // Close all other combos
+  Object.keys(_comboState).forEach(other => {
+    if (other !== id && _comboState[other].open) {
+      _comboState[other].open = false;
+      renderCombo(other);
+    }
+  });
+  s.open = !s.open;
+  if (s.open) { s.search = ''; s.highlight = 0; }
+  renderCombo(id);
+}
+
+function comboClose(id) {
+  const s = _comboState[id];
+  if (!s) return;
+  s.open = false;
+  renderCombo(id);
+}
+
+// Outside-click to close combos
+document.addEventListener('click', (e) => {
+  // Click is inside a combo trigger OR inside the portal dropdown? Keep open.
+  if (e.target.closest('.combo') || e.target.closest('#comboPortalDropdown')) return;
+  Object.keys(_comboState).forEach(id => {
+    if (_comboState[id].open) {
+      _comboState[id].open = false;
+      renderCombo(id);
+    }
+  });
+  hideComboPortal();
+});
+
+// Build a target VM name using the selected snapshot's date in CT as a MMDD-HHMM suffix.
+// Falls back to a 5-char random suffix if no snapshot is selected (edge case).
+// GCP instance names are limited to 63 chars and must be lowercase letters, digits, and dashes.
+function makeTargetName(vm) {
+  const snap = vmSnapshots[vm.id];
+  let suffix;
+  if (snap && snap.date) {
+    suffix = snapshotDateSuffix(new Date(snap.date));
+  } else {
+    suffix = Math.random().toString(36).substring(2, 7);
+  }
+  let base = (vm.nativeName || 'vm').toLowerCase();
+  let name = `${base}-${suffix}`;
+  // Enforce GCP's 63-char limit — truncate the base if needed
+  if (name.length > 63) {
+    const maxBase = 63 - (suffix.length + 1);
+    base = base.substring(0, maxBase).replace(/-+$/, '');
+    name = `${base}-${suffix}`;
+  }
+  return name;
+}
+
+// Format a Date as MMDD-HHMM in Central Time (e.g. "0513-2145")
+function snapshotDateSuffix(d) {
+  if (!d || isNaN(d.getTime())) return Math.random().toString(36).substring(2, 7);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value || '';
+  let hour = get('hour');
+  if (hour === '24') hour = '00';   // Intl in en-US can render midnight as "24" in 24h mode on some engines
+  return `${get('month')}${get('day')}-${hour}${get('minute')}`;
+}
+
+// Format a Date in US Central Time as "M/D/YY h:mma CT" (e.g. "5/13/26 6:18pm CT")
+function formatCT(d) {
+  if (!d || isNaN(d.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: '2-digit', month: 'numeric', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  }).formatToParts(d);
+  const get = (t) => parts.find(p => p.type === t)?.value || '';
+  const month = get('month'), day = get('day'), year = get('year');
+  const hour = get('hour'), minute = get('minute');
+  const dayPeriod = (get('dayPeriod') || '').toLowerCase();
+  return `${month}/${day}/${year} ${hour}:${minute}${dayPeriod} CT`;
+}
+
+function toggleVM(id, e) {
+  e.stopPropagation();
+  if (selectedVMs.has(id)) selectedVMs.delete(id);
+  else selectedVMs.add(id);
+  filterVMs();
+}
+
+function toggleSelectAll(cb) {
+  const vms = getFilteredVMs();
+  if (cb.checked) vms.forEach(vm => selectedVMs.add(vm.id));
+  else vms.forEach(vm => selectedVMs.delete(vm.id));
+  filterVMs();
+}
+
+function filterVMs() {
+  const filtered = getFilteredVMs();
+  renderVMTable(filtered);
+  document.getElementById('resultCount').textContent = `${filtered.length} of ${allVMs.length} VMs`;
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  const count = selectedVMs.size;
+  const selBar = document.getElementById('selectionBar');
+  const selCount = document.getElementById('selectionCount');
+  if (count > 0) {
+    selBar.style.display = 'flex';
+    selCount.textContent = `${count} VM${count > 1 ? 's' : ''} selected`;
+  } else {
+    selBar.style.display = 'none';
+  }
+  const sa = document.getElementById('selectAll');
+  const filtered = getFilteredVMs();
+  const allSelected = filtered.length > 0 && filtered.every(v => selectedVMs.has(v.id));
+  const someSelected = filtered.some(v => selectedVMs.has(v.id));
+  if (sa) {
+    sa.checked = allSelected;
+    sa.indeterminate = !allSelected && someSelected;
+  }
+}
+
+// sortBy(col) is replaced by cycleSort - kept as alias for legacy callers
+function sortBy(col) { cycleSort(col, { stopPropagation: () => {} }); }
+
+function clearAllFilters() {
+  document.getElementById('searchInput').value = '';
+  document.querySelectorAll('.col-filter-input').forEach(i => i.value = '');
+  Object.keys(multiFilterState).forEach(k => multiFilterState[k].clear());
+  renderMultiFilters();
+  filterVMs();
+}
+
+// ==================== MULTI-SELECT FILTER DROPDOWNS ====================
+function renderMultiFilters() {
+  const cols = ['region', 'project', 'machineType', 'sla'];
+  cols.forEach(col => renderMultiFilter(col));
+}
+
+function renderMultiFilter(col) {
+  const container = document.getElementById(`filter-${col}`);
+  if (!container) return;
+
+  // Compute unique values from all VMs (not filtered, so user can always select anything)
+  const values = [...new Set(allVMs.map(vm => getVMField(vm, col)).filter(v => v))].sort();
+  const selected = multiFilterState[col];
+
+  const labelText = selected.size === 0
+    ? 'All'
+    : selected.size === 1
+      ? [...selected][0]
+      : `${selected.size} selected`;
+
+  container.innerHTML = `
+    <div class="multi-filter-trigger ${selected.size > 0 ? 'active' : ''}" onclick="toggleMultiFilter('${col}', event)">
+      <span class="multi-filter-trigger-text">${escapeHtml(labelText)}</span>
+    </div>
+    <div class="multi-filter-dropdown" id="mfd-${col}">
+      <div class="multi-filter-search">
+        <input type="text" placeholder="Search..." oninput="filterMultiOptions('${col}', this.value)" />
+      </div>
+      <div class="multi-filter-actions">
+        <span class="multi-filter-action" onclick="multiSelectAll('${col}', event)">Select all</span>
+        <span class="multi-filter-action" onclick="multiClear('${col}', event)">Clear</span>
+      </div>
+      <div class="multi-filter-list" id="mfl-${col}">
+        ${values.length === 0 ? '<div class="multi-filter-empty">No values</div>' : values.map(v => `
+          <label class="multi-filter-item" data-value="${escapeHtml(v)}">
+            <input type="checkbox" ${selected.has(v) ? 'checked' : ''} onchange="toggleMultiValue('${col}', this)" data-value="${escapeHtml(v)}" />
+            <span>${escapeHtml(v)}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function toggleMultiFilter(col, e) {
+  e.stopPropagation();
+  // Close other open dropdowns
+  document.querySelectorAll('.multi-filter-dropdown').forEach(d => {
+    if (d.id !== `mfd-${col}`) d.classList.remove('open');
+  });
+  document.getElementById(`mfd-${col}`).classList.toggle('open');
+}
+
+function toggleMultiValue(col, cb) {
+  const v = cb.dataset.value;
+  if (cb.checked) multiFilterState[col].add(v);
+  else multiFilterState[col].delete(v);
+  // Update trigger label without closing dropdown
+  const trig = document.querySelector(`#filter-${col} .multi-filter-trigger`);
+  const text = trig.querySelector('.multi-filter-trigger-text');
+  const sz = multiFilterState[col].size;
+  text.textContent = sz === 0 ? 'All' : sz === 1 ? [...multiFilterState[col]][0] : `${sz} selected`;
+  trig.classList.toggle('active', sz > 0);
+  filterVMs();
+}
+
+function filterMultiOptions(col, q) {
+  const lq = q.toLowerCase();
+  document.querySelectorAll(`#mfl-${col} .multi-filter-item`).forEach(item => {
+    const v = item.dataset.value.toLowerCase();
+    item.style.display = v.includes(lq) ? 'flex' : 'none';
+  });
+}
+
+function multiSelectAll(col, e) {
+  e.stopPropagation();
+  const values = [...new Set(allVMs.map(vm => getVMField(vm, col)).filter(v => v))];
+  values.forEach(v => multiFilterState[col].add(v));
+  renderMultiFilter(col);
+  document.getElementById(`mfd-${col}`).classList.add('open');
+  filterVMs();
+}
+
+function multiClear(col, e) {
+  e.stopPropagation();
+  multiFilterState[col].clear();
+  renderMultiFilter(col);
+  document.getElementById(`mfd-${col}`).classList.add('open');
+  filterVMs();
+}
+
+// Close multi-filter dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.multi-filter')) {
+    document.querySelectorAll('.multi-filter-dropdown.open').forEach(d => d.classList.remove('open'));
+  }
+  if (!e.target.closest('.col-gear')) {
+    document.querySelectorAll('.col-gear-menu.open').forEach(d => d.classList.remove('open'));
+  }
+});
+
+// Sign out resets state
+function signOut() {
+  authToken = null;
+  rscBaseUrl = '';
+  allVMs = [];
+  selectedVMs.clear();
+  columns = DEFAULT_COLUMNS.map(c => ({ ...c }));
+  sortState = { col: null, dir: 'asc' };
+  Object.keys(multiFilterState).forEach(k => multiFilterState[k].clear());
+  recoverySession = [];
+  eventsAllRecoveries = [];
+  stopEventsPolling();
+  document.getElementById('mainApp').style.display = 'none';
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('rscUrlBadge').style.display = 'none';
+  document.getElementById('signOutBtn').style.display = 'none';
+  document.getElementById('viewEventsBtn').style.display = 'none';
+  // Reset auth UI
+  saData = null;
+  document.getElementById('authStatus').className = 'auth-status';
+  document.getElementById('authStatus').textContent = '';
+  document.getElementById('authBtnText').textContent = 'Connect & Load Inventory';
+  document.getElementById('authBtn').disabled = false;
+  const drop = document.getElementById('authDrop');
+  drop.style.borderColor = '';
+  drop.querySelector('.auth-drop-text').innerHTML = '<strong>Drop Service Account JSON</strong> or click to browse';
+  drop.querySelectorAll('.auth-drop-text')[1].innerHTML = 'Contains client_id, client_secret &amp; access_token_uri';
+}
+
+// ==================== SNAPSHOT MODE ====================
+function setSnapshotMode(mode, btn) {
+  snapshotMode = mode;
+  document.querySelectorAll('.snapshot-option').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const wrap = document.getElementById('snapshotDateWrap');
+  const desc = document.getElementById('snapshotModeDesc');
+  if (mode === 'latest') {
+    wrap.style.display = 'none';
+    desc.textContent = 'latest available';
+  } else {
+    wrap.style.display = 'block';
+    desc.textContent = mode === 'before' ? 'latest snapshot before the date/time' : 'earliest snapshot after the date/time';
+    if (dtPickerState.hour === null) {
+      dtPickerState.hour = mode === 'before' ? 11 : 12;
+      dtPickerState.ampm = mode === 'before' ? 'PM' : 'AM';
+    }
+    renderDateTimePicker();
+  }
+  // Re-evaluate selected snapshot for each VM
+  repickAllSnapshots();
+}
+
+// ==================== DATE-TIME PICKER ====================
+// State: date is a Date object representing the selected calendar date (time at midnight Central)
+// hour is 1..12, ampm is 'AM' or 'PM'
+let dtPickerState = { date: null, hour: null, ampm: null, calMonth: null, calYear: null };
+
+function getDateTimePickerValueAsUTC() {
+  // Returns a Date representing the picked CT date+hour as a UTC moment, or null if incomplete.
+  // Uses Intl longOffset to get the exact CT offset on that date (handles DST correctly).
+  const { date, hour, ampm } = dtPickerState;
+  if (!date || hour === null || !ampm) return null;
+  let h24 = hour % 12;
+  if (ampm === 'PM') h24 += 12;
+  const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
+  // Get the longOffset for this date in Chicago (e.g. "GMT-05:00" CDT or "GMT-06:00" CST)
+  const sample = new Date(Date.UTC(y, m, d, 12, 0, 0)); // noon UTC as sample point
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', timeZoneName: 'longOffset'
+  }).formatToParts(sample);
+  const offsetStr = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-06:00';
+  // Parse "GMT±HH:MM"
+  const m2 = offsetStr.match(/GMT([+-])(\d{2}):(\d{2})/);
+  let offsetMinutes = 0;
+  if (m2) {
+    const sign = m2[1] === '+' ? 1 : -1;
+    offsetMinutes = sign * (parseInt(m2[2]) * 60 + parseInt(m2[3]));
+  } else {
+    offsetMinutes = -360; // fallback CST
+  }
+  // CT_moment_in_UTC = local_time_in_UTC - offset
+  // If CT is GMT-05:00 (CDT), offsetMinutes = -300. To get the UTC instant for "5/13 2:00pm CT":
+  //   UTC = 2:00pm - (-300 min) = 7:00pm UTC
+  const utcMs = Date.UTC(y, m, d, h24, 0, 0) - offsetMinutes * 60 * 1000;
+  return new Date(utcMs);
+}
+
+function renderDateTimePicker() {
+  // Date field text
+  const dateText = document.getElementById('dtDateText');
+  if (dtPickerState.date) {
+    const d = dtPickerState.date;
+    dateText.textContent = `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+    dateText.classList.remove('placeholder');
+  } else {
+    dateText.textContent = 'mm/dd/yyyy';
+    dateText.classList.add('placeholder');
+  }
+  // Hour text
+  const hourText = document.getElementById('dtHourText');
+  if (dtPickerState.hour !== null) {
+    hourText.textContent = dtPickerState.hour;
+    hourText.classList.remove('placeholder');
+  } else {
+    hourText.textContent = '--';
+    hourText.classList.add('placeholder');
+  }
+  // AM/PM text
+  const apText = document.getElementById('dtAmPmText');
+  if (dtPickerState.ampm) {
+    apText.textContent = dtPickerState.ampm;
+    apText.classList.remove('placeholder');
+  } else {
+    apText.textContent = '--';
+    apText.classList.add('placeholder');
+  }
+}
+
+// === Calendar dropdown ===
+function openCalendar() {
+  // Close other dropdowns
+  closeAllDtDropdowns('cal');
+  const cal = document.getElementById('dtCalendar');
+  const initDate = dtPickerState.date || new Date();
+  dtPickerState.calMonth = initDate.getMonth();
+  dtPickerState.calYear = initDate.getFullYear();
+  renderCalendar();
+  cal.classList.add('open');
+  document.getElementById('dtDateField').classList.add('active');
+}
+
+function renderCalendar() {
+  const cal = document.getElementById('dtCalendar');
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const wkdays = ['S','M','T','W','T','F','S'];
+  const y = dtPickerState.calYear, m = dtPickerState.calMonth;
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const daysInPrev = new Date(y, m, 0).getDate();
+  const today = new Date();
+  const sel = dtPickerState.date;
+  const cells = [];
+  // Prev month spillover
+  for (let i = firstDay - 1; i >= 0; i--) {
+    cells.push({ day: daysInPrev - i, otherMonth: true, m: m - 1, y: m === 0 ? y - 1 : y });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ day: d, otherMonth: false, m, y });
+  }
+  while (cells.length < 42) {
+    const lastM = cells[cells.length - 1];
+    const nd = lastM.day + 1;
+    cells.push({ day: lastM.otherMonth ? nd : (cells.length - firstDay - daysInMonth + 1),
+                  otherMonth: true, m: m + 1, y: m === 11 ? y + 1 : y });
+  }
+  const isSameDay = (a, b) => a && b && a.getDate() === b.getDate() && a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+  cal.innerHTML = `
+    <div class="dt-cal-header">
+      <button class="dt-cal-nav" onclick="navCalendar(-1, event)">‹</button>
+      <span class="dt-cal-month">${monthNames[m]} ${y}</span>
+      <button class="dt-cal-nav" onclick="navCalendar(1, event)">›</button>
+    </div>
+    <div class="dt-cal-weekdays">${wkdays.map(d => `<div class="dt-cal-weekday">${d}</div>`).join('')}</div>
+    <div class="dt-cal-grid">
+      ${cells.map(c => {
+        const cellDate = new Date(c.y, c.m, c.day);
+        const cls = ['dt-cal-day'];
+        if (c.otherMonth) cls.push('other-month');
+        if (isSameDay(cellDate, today)) cls.push('today');
+        if (isSameDay(cellDate, sel)) cls.push('selected');
+        return `<div class="${cls.join(' ')}" onclick="selectCalDay(${c.y},${c.m},${c.day}, event)">${c.day}</div>`;
+      }).join('')}
+    </div>
+    <div class="dt-cal-footer">
+      <button class="dt-cal-footer-btn" onclick="selectCalToday(event)">Today</button>
+      <button class="dt-cal-footer-btn" onclick="clearCalDate(event)">Clear</button>
+    </div>`;
+}
+
+function navCalendar(delta, e) {
+  e.stopPropagation();
+  let m = dtPickerState.calMonth + delta;
+  let y = dtPickerState.calYear;
+  if (m < 0) { m = 11; y -= 1; }
+  if (m > 11) { m = 0; y += 1; }
+  dtPickerState.calMonth = m;
+  dtPickerState.calYear = y;
+  renderCalendar();
+}
+
+function selectCalDay(y, m, d, e) {
+  e.stopPropagation();
+  dtPickerState.date = new Date(y, m, d);
+  if (dtPickerState.hour === null) {
+    dtPickerState.hour = snapshotMode === 'before' ? 11 : 12;
+    dtPickerState.ampm = snapshotMode === 'before' ? 'PM' : 'AM';
+  }
+  renderDateTimePicker();
+  document.getElementById('dtCalendar').classList.remove('open');
+  document.getElementById('dtDateField').classList.remove('active');
+  document.getElementById('dtError').style.display = 'none';
+  repickAllSnapshots();
+}
+
+function selectCalToday(e) {
+  const t = new Date();
+  selectCalDay(t.getFullYear(), t.getMonth(), t.getDate(), e);
+}
+
+function clearCalDate(e) {
+  e.stopPropagation();
+  dtPickerState.date = null;
+  renderDateTimePicker();
+  renderCalendar();
+}
+
+// === Hour / AM-PM combo dropdowns ===
+let _dtComboState = { field: null, options: [], filter: '' };
+
+function openHourDropdown() {
+  closeAllDtDropdowns('hour');
+  const opts = Array.from({ length: 12 }, (_, i) => String(i + 1));
+  renderTimeCombo('Hour', 'dtHourDropdown', opts, dtPickerState.hour === null ? null : String(dtPickerState.hour), (v) => {
+    dtPickerState.hour = parseInt(v);
+    if (!dtPickerState.ampm) dtPickerState.ampm = snapshotMode === 'before' ? 'PM' : 'AM';
+    renderDateTimePicker();
+    closeAllDtDropdowns();
+    repickAllSnapshots();
+  });
+  document.getElementById('dtHourField').classList.add('active');
+}
+
+function openAmPmDropdown() {
+  closeAllDtDropdowns('ampm');
+  const opts = ['AM', 'PM'];
+  renderTimeCombo('AM/PM', 'dtAmPmDropdown', opts, dtPickerState.ampm, (v) => {
+    dtPickerState.ampm = v;
+    if (dtPickerState.hour === null) dtPickerState.hour = snapshotMode === 'before' ? 11 : 12;
+    renderDateTimePicker();
+    closeAllDtDropdowns();
+    repickAllSnapshots();
+  });
+  document.getElementById('dtAmPmField').classList.add('active');
+}
+
+function renderTimeCombo(label, dropdownId, options, selected, onPick) {
+  const dd = document.getElementById(dropdownId);
+  _dtComboState = { dropdownId, options, selected, onPick, filter: '', highlight: 0 };
+  function paint() {
+    const f = _dtComboState.filter.toLowerCase();
+    const filtered = options.filter(o => o.toLowerCase().includes(f));
+    _dtComboState.filtered = filtered;
+    if (_dtComboState.highlight >= filtered.length) _dtComboState.highlight = filtered.length - 1;
+    if (_dtComboState.highlight < 0) _dtComboState.highlight = 0;
+    dd.innerHTML = `
+      <input class="dt-time-search" type="text" placeholder="${label}..." value="${escapeHtml(_dtComboState.filter)}" />
+      <div class="dt-time-list">
+        ${filtered.length === 0 ? '<div style="padding:8px;color:var(--text-muted);font-size:11px;text-align:center;">No matches</div>' :
+          filtered.map((opt, i) => `<div class="dt-time-option ${opt === selected ? 'selected' : ''} ${i === _dtComboState.highlight ? 'highlight' : ''}" data-idx="${i}" data-value="${escapeHtml(opt)}">${escapeHtml(opt)}</div>`).join('')}
+      </div>`;
+    const inp = dd.querySelector('.dt-time-search');
+    inp.focus();
+    inp.setSelectionRange(_dtComboState.filter.length, _dtComboState.filter.length);
+    inp.oninput = (e) => { _dtComboState.filter = e.target.value; _dtComboState.highlight = 0; paint(); };
+    inp.onkeydown = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); _dtComboState.highlight = Math.min(filtered.length - 1, _dtComboState.highlight + 1); paint(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); _dtComboState.highlight = Math.max(0, _dtComboState.highlight - 1); paint(); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (filtered[_dtComboState.highlight]) onPick(filtered[_dtComboState.highlight]);
+      } else if (e.key === 'Escape') {
+        e.preventDefault(); closeAllDtDropdowns();
+      }
+    };
+    // Event delegation + mousedown, same pattern as the main combo
+    const listEl = dd.querySelector('.dt-time-list');
+    if (listEl) {
+      listEl.onmousedown = (e) => {
+        const item = e.target.closest('.dt-time-option');
+        if (!item) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onPick(item.dataset.value);
+      };
+      listEl.onmouseover = (e) => {
+        const item = e.target.closest('.dt-time-option');
+        if (!item) return;
+        const idx = parseInt(item.dataset.idx);
+        if (isNaN(idx) || idx === _dtComboState.highlight) return;
+        _dtComboState.highlight = idx;
+        listEl.querySelectorAll('.dt-time-option.highlight').forEach(el => el.classList.remove('highlight'));
+        item.classList.add('highlight');
+      };
+    }
+  }
+  paint();
+  dd.classList.add('open');
+}
+
+function closeAllDtDropdowns(except) {
+  if (except !== 'cal') {
+    document.getElementById('dtCalendar')?.classList.remove('open');
+    document.getElementById('dtDateField')?.classList.remove('active');
+  }
+  if (except !== 'hour') {
+    document.getElementById('dtHourDropdown')?.classList.remove('open');
+    document.getElementById('dtHourField')?.classList.remove('active');
+  }
+  if (except !== 'ampm') {
+    document.getElementById('dtAmPmDropdown')?.classList.remove('open');
+    document.getElementById('dtAmPmField')?.classList.remove('active');
+  }
+}
+
+// Wire up clicks on the three picker fields when the modal opens
+function wireDateTimePicker() {
+  const dateField = document.getElementById('dtDateField');
+  const hourField = document.getElementById('dtHourField');
+  const apField = document.getElementById('dtAmPmField');
+  if (!dateField) return;
+  dateField.onclick = (e) => {
+    if (e.target.closest('.dt-calendar')) return; // clicks inside don't toggle
+    openCalendar();
+  };
+  hourField.onclick = (e) => {
+    if (e.target.closest('.dt-time-dropdown')) return;
+    openHourDropdown();
+  };
+  apField.onclick = (e) => {
+    if (e.target.closest('.dt-time-dropdown')) return;
+    openAmPmDropdown();
+  };
+}
+
+// Close picker dropdowns on outside click
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.dt-date') && !e.target.closest('.dt-time-field')) {
+    closeAllDtDropdowns();
+  }
+});
+
+// ==================== STEP 1: OPEN MODAL ====================
+async function openRecoveryModal() {
+  if (selectedVMs.size === 0) return;
+  
+  // Build step 1 VM list
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id));
+  document.getElementById('selectedVMCount').textContent = vms.length;
+  document.getElementById('vmListStep1Body').innerHTML = vms.map(vm => `
+    <tr>
+      <td style="font-weight:500">${escapeHtml(vm.nativeName)}</td>
+      <td>${escapeHtml(vm.region)}</td>
+      <td>${escapeHtml(vm.machineType)}</td>
+      <td id="snap-${vm.id}" style="color:var(--text-muted)"><span class="spinner"></span> Loading...</td>
+      <td id="snap-oldest-${vm.id}" style="color:var(--text-muted)">—</td>
+      <td id="snap-latest-${vm.id}" style="color:var(--text-muted)">—</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('modalStep1').classList.add('open');
+  wireDateTimePicker();
+  renderDateTimePicker();
+
+  // Load snapshots for each VM in parallel
+  await loadSnapshotsForVMs(vms);
+}
+
+// Slim SnapshotsListSingleQuery — only the fields we need for GCE snapshots (which are always PolarisSnapshot)
+// No optional feature flags, no unused fragments — avoids GraphQL 400 from unused variable declarations
+const SNAPSHOTS_LIST_QUERY = `
+query SnapshotsListSingleQuery(
+  $snappableId: String!, $first: Int, $after: String,
+  $snapshotFilter: [SnapshotQueryFilterInput!], $sortBy: SnapshotQuerySortByField,
+  $sortOrder: SortOrder, $timeRange: TimeRangeInput,
+  $includeOnlySourceSnapshots: Boolean = false
+) {
+  snapshotsListConnection: snapshotOfASnappableConnection(
+    workloadId: $snappableId
+    first: $first
+    after: $after
+    snapshotFilter: $snapshotFilter
+    sortBy: $sortBy
+    sortOrder: $sortOrder
+    timeRange: $timeRange
+    includeOnlySourceSnapshots: $includeOnlySourceSnapshots
+  ) {
+    edges {
+      cursor
+      node {
+        id
+        date
+        expirationDate
+        isOnDemandSnapshot
+        ... on PolarisSnapshot {
+          snapshotRetentionInfo {
+            localInfo {
+              isSnapshotPresent
+              locationName
+            }
+          }
+        }
+        __typename
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}`;
+
+const SNAPSHOTS_LIST_BASE_VARS = {
+  includeOnlySourceSnapshots: true,
+  first: 200,
+  sortBy: 'CREATION_TIME',
+  sortOrder: 'DESC',
+  snapshotFilter: [{ field: 'SNAPSHOT_TYPE', typeFilters: [] }],
+  timeRange: null
+};
+
+// Cache of fetched snapshots per VM, so we don't refetch on mode change
+let vmSnapshotsCache = {}; // vmId -> array of snapshots (sorted DESC by date)
+let vmSnapshotsError = {}; // vmId -> error message
+
+async function loadSnapshotsForVMs(vms) {
+  vmSnapshots = {};
+  vmSnapshotsCache = {};
+  vmSnapshotsError = {};
+
+  await Promise.all(vms.map(async (vm) => {
+    try {
+      let allSnapshots = [];
+      let after = null;
+      let hasNextPage = true;
+      while (hasNextPage) {
+        const vars = { ...SNAPSHOTS_LIST_BASE_VARS, snappableId: vm.id };
+        if (after) vars.after = after;
+        const data = await gql('SnapshotsListSingleQuery', SNAPSHOTS_LIST_QUERY, vars);
+        const conn = data.snapshotsListConnection;
+        const nodes = conn.edges.map(e => e.node);
+        allSnapshots.push(...nodes);
+        hasNextPage = conn.pageInfo.hasNextPage;
+        after = conn.pageInfo.endCursor;
+        if (allSnapshots.length >= 1000) break;
+      }
+      // Sort DESC by date defensively (API should already return this way)
+      allSnapshots.sort((a, b) => new Date(b.date) - new Date(a.date));
+      vmSnapshotsCache[vm.id] = allSnapshots;
+    } catch (err) {
+      vmSnapshotsError[vm.id] = err.message || 'Unknown error';
+    }
+    // Re-pick selection for this VM with whatever mode is current
+    pickAndRenderSnapshot(vm);
+  }));
+}
+
+// Re-evaluates selected snapshot for a single VM based on current mode + picker state,
+// then updates the row in the Step 1 table. Uses cached snapshots — no refetch.
+function pickAndRenderSnapshot(vm) {
+  const cell = document.getElementById(`snap-${vm.id}`);
+  const oldestCell = document.getElementById(`snap-oldest-${vm.id}`);
+  const latestCell = document.getElementById(`snap-latest-${vm.id}`);
+  if (!cell) return;
+
+  // Error case
+  if (vmSnapshotsError[vm.id]) {
+    const msg = vmSnapshotsError[vm.id].replace(/"/g, "'").substring(0, 80);
+    cell.innerHTML = `<span style="color:var(--danger);cursor:help;" title="${escapeHtml(vmSnapshotsError[vm.id])}">⚠ ${escapeHtml(msg)}${msg.length >= 80 ? '…' : ''}</span>`;
+    if (oldestCell) oldestCell.textContent = '—';
+    if (latestCell) latestCell.textContent = '—';
+    delete vmSnapshots[vm.id];
+    return;
+  }
+
+  const rawSnapshots = vmSnapshotsCache[vm.id];
+  if (!rawSnapshots || rawSnapshots.length === 0) {
+    cell.innerHTML = '<span style="color:var(--warning)">⚠ No snapshots</span>';
+    if (oldestCell) oldestCell.textContent = '—';
+    if (latestCell) latestCell.textContent = '—';
+    delete vmSnapshots[vm.id];
+    return;
+  }
+
+  // Filter to ONLY snapshots present on Primary (local) storage.
+  // Archival-only snapshots can't be recovered with snapshotType: SOURCE — they'd require
+  // rehydration from archive which is slow + a different recovery path.
+  const allSnapshots = rawSnapshots.filter(s =>
+    s.snapshotRetentionInfo?.localInfo?.isSnapshotPresent === true
+  );
+  const filteredOut = rawSnapshots.length - allSnapshots.length;
+
+  if (allSnapshots.length === 0) {
+    cell.innerHTML = '<span style="color:var(--warning)">⚠ No Primary snapshots (archival only)</span>';
+    if (oldestCell) oldestCell.textContent = '—';
+    if (latestCell) latestCell.textContent = '—';
+    delete vmSnapshots[vm.id];
+    return;
+  }
+
+  // Pick the right snapshot based on mode + target date
+  // allSnapshots is sorted DESC: [0] = newest, [last] = oldest
+  let chosen = null;
+  let fallbackUsed = null; // 'after' or 'before' if fallback applied, null otherwise
+
+  if (snapshotMode === 'latest') {
+    chosen = allSnapshots[0];
+  } else {
+    const target = getDateTimePickerValueAsUTC();
+    if (!target) {
+      chosen = allSnapshots[0]; // no date picked yet — default to latest
+    } else if (snapshotMode === 'before') {
+      // Want: latest snapshot <= target. Sorted DESC so find first that qualifies.
+      chosen = allSnapshots.find(s => new Date(s.date) <= target);
+      if (!chosen) {
+        // Fallback: nothing before; use earliest snapshot after (which is oldest of those > target).
+        // In DESC list, snapshots > target are at the start. The oldest of those is the last
+        // snapshot that's still > target. Equivalently: the last item that's > target.
+        const afters = allSnapshots.filter(s => new Date(s.date) > target);
+        chosen = afters[afters.length - 1] || allSnapshots[0];
+        if (chosen) fallbackUsed = 'after';
+      }
+    } else { // after
+      // Want: earliest snapshot >= target. In DESC list, those are at the start; earliest = last of them.
+      const afters = allSnapshots.filter(s => new Date(s.date) >= target);
+      if (afters.length > 0) {
+        chosen = afters[afters.length - 1];
+      } else {
+        // Fallback: nothing after; use latest snapshot before target (newest of those < target = first in DESC list).
+        chosen = allSnapshots.find(s => new Date(s.date) < target);
+        if (chosen) fallbackUsed = 'before';
+      }
+    }
+  }
+
+  if (!chosen) {
+    cell.innerHTML = '<span style="color:var(--warning)">⚠ No snapshots</span>';
+    delete vmSnapshots[vm.id];
+  } else {
+    vmSnapshots[vm.id] = { id: chosen.id, date: chosen.date, type: 'SOURCE', isOnDemand: chosen.isOnDemandSnapshot };
+
+    const selDate = formatCT(new Date(chosen.date));
+    let html = `<div style="color:var(--text-primary);font-weight:500;">${selDate}</div>`;
+    if (fallbackUsed) {
+      const hintText = fallbackUsed === 'after'
+        ? 'No match before — using closest after'
+        : 'No match after — using closest before';
+      html += `<div style="color:var(--warning);font-size:10.5px;margin-top:2px;">⚠ ${hintText}</div>`;
+    }
+    cell.innerHTML = html;
+  }
+
+  // Oldest & latest reflect Primary-present range. If any archival-only snapshots were filtered,
+  // show a small "(N archival only)" hint to make it clear why dates may not match the total count.
+  const oldest = allSnapshots[allSnapshots.length - 1];
+  const latest = allSnapshots[0];
+  const archivalHint = filteredOut > 0
+    ? `<div style="color:var(--text-muted);font-size:10px;margin-top:2px;">+${filteredOut} archival only</div>`
+    : '';
+  if (oldestCell) oldestCell.innerHTML = `<span style="color:var(--text-secondary);font-size:11.5px;">${formatCT(new Date(oldest.date))}</span>${archivalHint}`;
+  if (latestCell) latestCell.innerHTML = `<span style="color:var(--text-secondary);font-size:11.5px;">${formatCT(new Date(latest.date))}</span>`;
+}
+
+// Re-pick selected snapshot for all selected VMs (called when mode or picker changes)
+function repickAllSnapshots() {
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id));
+  vms.forEach(vm => pickAndRenderSnapshot(vm));
+}
+
+// ==================== STEP 2 ====================
+async function goToStep2() {
+  // Validate date picker if in before/after mode
+  if (snapshotMode !== 'latest') {
+    if (!dtPickerState.date || dtPickerState.hour === null || !dtPickerState.ampm) {
+      document.getElementById('dtError').style.display = 'block';
+      document.getElementById('dtError').textContent = `Pick a date and time to continue (${snapshotMode === 'before' ? 'before' : 'after'} mode requires a target date)`;
+      return;
+    }
+  }
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id));
+  const noSnap = vms.filter(vm => !vmSnapshots[vm.id]);
+  if (noSnap.length > 0) {
+    if (!confirm(`${noSnap.length} VM(s) have no snapshots and will be skipped. Continue?`)) return;
+  }
+
+  document.getElementById('modalStep1').classList.remove('open');
+  document.getElementById('modalStep2').classList.add('open');
+
+  // Fill data
+  document.getElementById('recoverCountLabel').textContent = vms.length;
+  const sourceProject = allVMs.find(v => selectedVMs.has(v.id))?.gcpProjectDetails?.nativeName || '—';
+  document.getElementById('exportFromLabel').textContent = sourceProject;
+
+  // Build per-VM table
+  const tbody = document.getElementById('perVMTableBody');
+  perVMData = {};
+  tbody.innerHTML = vms.map(vm => {
+    const targetName = makeTargetName(vm);
+    perVMData[vm.id] = { targetName, machineType: vm.machineType };
+    return `
+      <tr>
+        <td>${vm.nativeName}</td>
+        <td><input type="text" value="${targetName}" onchange="perVMData['${vm.id}'].targetName = this.value" /></td>
+        <td>
+          <div class="combo" id="combo-mt-${vm.id}" data-placeholder="Machine type..." style="min-width:160px;"></div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Initialize machine-type combos with source machine type as default (before zone is picked)
+  vms.forEach(vm => {
+    comboInit(`combo-mt-${vm.id}`, {
+      options: [{ value: vm.machineType, label: vm.machineType, sub: '(original)' }],
+      value: vm.machineType,
+      placeholder: 'Machine type...',
+      groupBy: (opt) => machineTypeFamily(opt.value),
+      formatter: makeMTFormatter(vm.machineType),
+      onChange: (val) => { perVMData[vm.id].machineType = val; }
+    });
+  });
+
+  // Load projects
+  await loadProjects();
+}
+
+async function loadProjects() {
+  try {
+    const data = await gql('ListGCPProjectsQuery', `
+      query ListGCPProjectsQuery($first: Int!, $sortBy: GcpNativeProjectSortFields, $sortOrder: SortOrder!) {
+        gcpNativeProjects(first: $first, sortBy: $sortBy, sortOrder: $sortOrder) {
+          edges { node { id name nativeId cloudAccountId } }
+        }
+      }
+    `, { first: 200, sortBy: 'NAME', sortOrder: 'ASC' });
+
+    allProjects = data.gcpNativeProjects.edges.map(e => e.node);
+    const options = allProjects.map(p => ({
+      value: p.id,
+      label: p.name,
+      sub: p.nativeId,
+      _project: p
+    }));
+    comboInit('combo-targetProject', {
+      options,
+      onChange: (val, opt) => onProjectChange(opt._project)
+    });
+    // Initialize empty placeholders for downstream combos
+    comboInit('combo-targetRegion', { options: [], placeholder: 'Select project first...', onChange: (val) => onRegionChange(val) });
+    comboInit('combo-targetZone', { options: [], placeholder: 'Select region first...', onChange: (val) => onZoneChange(val) });
+    comboInit('combo-targetNetwork', { options: [], placeholder: 'Select project first...', onChange: (val) => onNetworkChange(val) });
+    comboInit('combo-targetSubnet', { options: [], placeholder: 'Select network first...', onChange: () => {} });
+    comboInit('combo-diskEncryption', {
+      options: [
+        { value: 'GOOGLE_MANAGED_KEY', label: 'Google-managed key' },
+        { value: 'CUSTOMER_MANAGED_KEY', label: 'Customer-managed key (CMEK)' }
+      ],
+      value: 'GOOGLE_MANAGED_KEY',
+      onChange: (val) => onEncryptionChange(val)
+    });
+  } catch (err) {
+    console.error('Failed to load projects:', err);
+  }
+}
+
+async function onProjectChange(project) {
+  if (!project) return;
+  const projectId = project.id;
+  const cloudAccountId = project.cloudAccountId;
+
+  // Load service account
+  if (cloudAccountId) {
+    try {
+      const data = await gql('GcpCloudAccountInfoQuery', `
+        query GcpCloudAccountInfoQuery($input: GcpCloudAccountGetProjectReq!) {
+          gcpCloudAccountGetProject(input: $input) {
+            project { effectiveServiceAccount projectNumber }
+          }
+        }
+      `, { input: { projectId: cloudAccountId } });
+      const sa = data.gcpCloudAccountGetProject?.project;
+      if (sa) document.getElementById('serviceAccount').value = sa.effectiveServiceAccount || '';
+    } catch {}
+  }
+
+  // Load regions
+  try {
+    const data = await gql('ListGCPRegionsForProjectQuery', `
+      query ListGCPRegionsForProjectQuery($projectId: UUID!) {
+        allGcpNativeRegions(projectId: $projectId) { name zones }
+      }
+    `, { projectId });
+    allRegions = data.allGcpNativeRegions;
+    comboSetOptions('combo-targetRegion',
+      allRegions.map(r => ({ value: r.name, label: r.name, _region: r })),
+      null);
+    // Reset zone
+    comboSetOptions('combo-targetZone', [], null);
+  } catch (err) { console.error(err); }
+
+  // Load networks
+  try {
+    const data = await gql('ListGCPNetworksQuery', `
+      query ListGCPNetworksQuery($projectId: UUID!) {
+        allGcpNativeNetworks(projectId: $projectId) {
+          name nativeProjectId
+          subnetworks { name region }
+        }
+      }
+    `, { projectId });
+    allNetworks = data.allGcpNativeNetworks;
+    comboSetOptions('combo-targetNetwork',
+      allNetworks.map(n => ({ value: n.name, label: n.name, sub: n.nativeProjectId, _network: n })),
+      null);
+    comboSetOptions('combo-targetSubnet', [], null);
+  } catch (err) { console.error(err); }
+}
+
+function onRegionChange(regionName) {
+  const r = allRegions.find(r => r.name === regionName);
+  const opts = r ? r.zones.map(z => ({ value: z, label: z })) : [];
+  comboSetOptions('combo-targetZone', opts, null);
+}
+
+async function onZoneChange(zone) {
+  if (!zone) return;
+
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id) && vmSnapshots[vm.id]);
+  if (vms.length === 0) return;
+
+  // Load compatible machine types PER VM in parallel.
+  // Each VM gets its own compatibility-filtered list based on its snapshot (disk sizes etc).
+  // Populate each combo independently as its API call returns.
+  vms.forEach(async (vm) => {
+    const comboId = `combo-mt-${vm.id}`;
+    const current = perVMData[vm.id]?.machineType || vm.machineType;
+
+    // Show loading state
+    if (_comboState[comboId]) {
+      _comboState[comboId].placeholder = 'Loading compatible types...';
+      _comboState[comboId].options = [];
+      renderCombo(comboId);
+    }
+
+    try {
+      const data = await gql('ListGCPMachineTypeQuery', `
+        query ListGCPMachineTypeQuery($snapshotId: UUID!, $targetZone: String!) {
+          allGcpNativeCompatibleMachineTypes(snapshotId: $snapshotId, targetZone: $targetZone)
+        }
+      `, { snapshotId: vmSnapshots[vm.id].id, targetZone: zone });
+
+      const types = data.allGcpNativeCompatibleMachineTypes || [];
+      // Ensure the source machine type is always present, marked as "source"
+      const fullList = [...types];
+      let sourceTagged = false;
+      if (current && !fullList.includes(current)) {
+        fullList.unshift(current);
+        sourceTagged = true;
+      }
+      const options = fullList.map(mt => ({
+        value: mt,
+        label: mt,
+        sub: (mt === vm.machineType
+          ? '(original)'
+          : (sourceTagged && mt === current ? '(original, not in zone)' : ''))
+      }));
+
+      if (_comboState[comboId]) {
+        _comboState[comboId].placeholder = 'Machine type...';
+        _comboState[comboId].formatter = makeMTFormatter(vm.machineType);
+        comboSetOptions(comboId, options, current);
+      } else {
+        comboInit(comboId, {
+          options,
+          value: current,
+          placeholder: 'Machine type...',
+          groupBy: (opt) => machineTypeFamily(opt.value),
+          formatter: makeMTFormatter(vm.machineType),
+          onChange: (val) => { perVMData[vm.id].machineType = val; }
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to load machine types for ${vm.nativeName}:`, err);
+      // Fallback: just show the source machine type so the user can still proceed
+      const fallback = [{ value: current, label: current, sub: '(original, compatibility check failed)' }];
+      if (_comboState[comboId]) {
+        _comboState[comboId].placeholder = 'Machine type...';
+        comboSetOptions(comboId, fallback, current);
+      }
+    }
+  });
+}
+
+// Format a machine type combo trigger: append '(original)' when the selected value
+// equals the VM's source machine type, so the user can see at a glance they're keeping it.
+function makeMTFormatter(sourceMt) {
+  return (opt) => opt && opt.value === sourceMt ? `${opt.label} (original)` : (opt ? opt.label : '');
+}
+
+// Extract the family prefix from a machine type (e.g. 'n2-standard-4' -> 'N2')
+function machineTypeFamily(mt) {
+  if (!mt) return 'Other';
+  const m = mt.match(/^([a-z]\d+[a-z]?)/i);
+  return m ? m[1].toUpperCase() : 'Other';
+}
+
+function onNetworkChange(networkName) {
+  const region = comboGetValue('combo-targetRegion');
+  const net = allNetworks.find(n => n.name === networkName);
+  if (!net) {
+    comboSetOptions('combo-targetSubnet', [], null);
+    return;
+  }
+  const subnets = net.subnetworks
+    .filter(s => !region || s.region === region)
+    .map(s => ({ value: s.name, label: s.name, sub: s.region }));
+  comboSetOptions('combo-targetSubnet', subnets, null);
+}
+
+function onEncryptionChange(val) {
+  if (val === undefined) val = comboGetValue('combo-diskEncryption');
+  document.getElementById('cmekRow').style.display = val === 'CUSTOMER_MANAGED_KEY' ? 'grid' : 'none';
+}
+
+function goToStep1() {
+  document.getElementById('modalStep2').classList.remove('open');
+  document.getElementById('modalStep3').classList.remove('open');
+  document.getElementById('modalStep1').classList.add('open');
+}
+
+// ==================== STEP 3: REVIEW ====================
+function goToStep3() {
+  const targetProjectId = comboGetValue('combo-targetProject');
+  const projectOpt = comboGetSelectedOption('combo-targetProject');
+  const targetProjectName = projectOpt?.label || '—';
+  const targetProjectNativeId = projectOpt?._project?.nativeId || '';
+  const region = comboGetValue('combo-targetRegion');
+  const zone = comboGetValue('combo-targetZone');
+  const network = comboGetValue('combo-targetNetwork');
+  const subnet = comboGetValue('combo-targetSubnet');
+  const encryption = comboGetValue('combo-diskEncryption') || 'GOOGLE_MANAGED_KEY';
+  const serviceAccount = document.getElementById('serviceAccount').value;
+  const networkTagsRaw = document.getElementById('networkTags').value;
+  const networkTags = networkTagsRaw ? networkTagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const exportLabels = document.getElementById('exportLabels').checked;
+  const addRubrikLabels = document.getElementById('addRubrikLabels').checked;
+  const launchStopped = document.getElementById('launchStopped').checked;
+  const kmsKey = document.getElementById('kmsKey').value;
+
+  // Sync per-VM machine types from combos
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id));
+  vms.forEach(vm => {
+    const v = comboGetValue(`combo-mt-${vm.id}`);
+    if (v) perVMData[vm.id].machineType = v;
+  });
+
+  // Save settings
+  recoverySettings = {
+    targetProjectId, targetProjectName, targetProjectNativeId,
+    region, zone, network, subnet, networkTags,
+    encryption, kmsKey, serviceAccount,
+    exportLabels, addRubrikLabels, launchStopped,
+    snapshotMode
+  };
+
+  // Build review HTML
+  const reviewBody = document.getElementById('reviewBody');
+  // Snapshot point banner — explains which time mode was picked
+  let snapshotPointBanner = '';
+  if (snapshotMode === 'latest') {
+    snapshotPointBanner = `<div class="review-banner">
+      <span class="review-banner-label">Snapshot Point</span>
+      <span class="review-banner-value">Latest available per VM</span>
+    </div>`;
+  } else {
+    const target = getDateTimePickerValueAsUTC();
+    const targetStr = target ? formatCT(target) : '(not set)';
+    const modeLabel = snapshotMode === 'before' ? 'Before' : 'After';
+    snapshotPointBanner = `<div class="review-banner">
+      <span class="review-banner-label">Snapshot Point</span>
+      <span class="review-banner-value">${modeLabel} <strong>${targetStr}</strong></span>
+    </div>`;
+  }
+
+  reviewBody.innerHTML = `
+    <div class="review-grid" style="margin-bottom:16px;">
+      <div class="review-card">
+        <div class="review-card-title">Target Infrastructure</div>
+        <div class="review-item"><span class="review-item-label">Project</span><span class="review-item-value">${targetProjectName}</span></div>
+        <div class="review-item"><span class="review-item-label">Region</span><span class="review-item-value">${region || '—'}</span></div>
+        <div class="review-item"><span class="review-item-label">Zone</span><span class="review-item-value">${zone || '—'}</span></div>
+        <div class="review-item"><span class="review-item-label">Service Account</span><span class="review-item-value" style="font-size:10px;">${serviceAccount || '—'}</span></div>
+      </div>
+      <div class="review-card">
+        <div class="review-card-title">Networking &amp; Storage</div>
+        <div class="review-item"><span class="review-item-label">Network</span><span class="review-item-value">${network || '—'}</span></div>
+        <div class="review-item"><span class="review-item-label">Subnet</span><span class="review-item-value">${subnet || '—'}</span></div>
+        <div class="review-item"><span class="review-item-label">Network Tags</span><span class="review-item-value">${networkTags.join(', ') || '—'}</span></div>
+        <div class="review-item"><span class="review-item-label">Disk Encryption</span><span class="review-item-value">${encryption === 'GOOGLE_MANAGED_KEY' ? 'Google-managed key' : 'Customer-managed (CMEK)'}</span></div>
+      </div>
+      <div class="review-card">
+        <div class="review-card-title">Recovery Options</div>
+        <div class="review-item"><span class="review-item-label">Snapshot Mode</span><span class="review-item-value">${snapshotMode.charAt(0).toUpperCase() + snapshotMode.slice(1)}</span></div>
+        <div class="review-item"><span class="review-item-label">Export Labels</span><span class="review-item-value">${exportLabels ? '✓ Yes' : '✗ No'}</span></div>
+        <div class="review-item"><span class="review-item-label">Add Rubrik Labels</span><span class="review-item-value">${addRubrikLabels ? '✓ Yes' : '✗ No'}</span></div>
+        <div class="review-item"><span class="review-item-label">Launch Stopped</span><span class="review-item-value">${launchStopped ? '✓ Yes' : '✗ No'}</span></div>
+      </div>
+      <div class="review-card">
+        <div class="review-card-title">Summary</div>
+        <div class="review-item"><span class="review-item-label">VMs to Recover</span><span class="review-item-value" style="color:var(--accent);font-weight:700;">${vms.length}</span></div>
+        <div class="review-item"><span class="review-item-label">With Snapshots</span><span class="review-item-value" style="color:var(--success);">${vms.filter(v => vmSnapshots[v.id]).length}</span></div>
+        <div class="review-item"><span class="review-item-label">Without Snapshots</span><span class="review-item-value" style="color:var(--warning);">${vms.filter(v => !vmSnapshots[v.id]).length}</span></div>
+      </div>
+    </div>
+    ${snapshotPointBanner}
+    <div class="form-section-title" style="margin-bottom:10px;">Per-VM Recovery Details</div>
+    <table class="vm-list-table">
+      <thead>
+        <tr>
+          <th>Source VM</th>
+          <th>Target Name</th>
+          <th>Machine Type</th>
+          <th>Snapshot Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${vms.map(vm => {
+          const snap = vmSnapshots[vm.id];
+          const snapDate = snap ? new Date(snap.date).toLocaleString() : '—';
+          return `<tr>
+            <td>${vm.nativeName}</td>
+            <td style="color:var(--accent)">${perVMData[vm.id]?.targetName || '—'}</td>
+            <td>${perVMData[vm.id]?.machineType || vm.machineType}</td>
+            <td style="color:var(--text-secondary);font-size:11px;">${snapDate}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+
+  document.getElementById('modalStep2').classList.remove('open');
+  document.getElementById('modalStep3').classList.add('open');
+}
+
+// ==================== RECOVERY SUBMISSION + EVENTS ENGINE ====================
+// Session state: all VMs submitted in this app session, with their progress
+// Each entry: { vmId, vmName, targetName, jobId, activitySeriesId, submittedAt,
+//   lastStatus, lastMessage, lastEventTime, progress, expanded, details, detailsLoaded }
+let recoverySession = []; // array (most recent submission last)
+
+// Modal modes: 'session' shows recoverySession, 'all' pulls last 7 days from RSC
+let eventsMode = 'session';
+let eventsPollTimer = null;
+let eventsCountdownTimer = null;
+let eventsModalOpen = false;
+let eventsAllRecoveries = []; // cache for 'all' mode
+let eventsCountdownSecs = 0;
+const EVENTS_POLL_INTERVAL_SECS = 10;
+const EVENTS_MAX_HISTORY_DAYS = 7;
+const EVENTS_MAX_HISTORY_ITEMS = 100;
+
+// === Submit recoveries ===
+async function startRecovery() {
+  document.getElementById('recoverBtnText').innerHTML = '<span class="spinner"></span> Submitting...';
+  document.getElementById('recoverBtn').disabled = true;
+
+  const vms = allVMs.filter(vm => selectedVMs.has(vm.id) && vmSnapshots[vm.id]);
+  const submittedAt = new Date();
+  const targetProjectNativeId = recoverySettings.targetProjectNativeId;
+
+  // Build session entries for each VM that will be submitted
+  const entries = vms.map(vm => ({
+    vmId: vm.id,
+    vmName: vm.nativeName,
+    targetName: perVMData[vm.id]?.targetName || vm.nativeName,
+    jobId: null,
+    activitySeriesId: null,
+    submittedAt,
+    lastStatus: 'Submitting',
+    lastMessage: 'Sending recovery request to RSC...',
+    lastEventTime: submittedAt.toISOString(),
+    progress: '0%',
+    expanded: false,
+    details: [],
+    detailsLoaded: false,
+    submitError: null
+  }));
+  recoverySession.push(...entries);
+
+  // Switch to events modal in 'session' mode and show submitting state
+  document.getElementById('modalStep3').classList.remove('open');
+  eventsMode = 'session';
+  openEventsModalInternal({ context: 'just-submitted' });
+
+  // Submit each in parallel
+  await Promise.all(vms.map(async (vm) => {
+    const entry = entries.find(e => e.vmId === vm.id);
+    try {
+      const snap = vmSnapshots[vm.id];
+      const input = {
+        snapshotId: snap.id,
+        shouldCopyLabels: recoverySettings.exportLabels,
+        shouldAddRubrikLabels: recoverySettings.addRubrikLabels,
+        shouldPowerOff: recoverySettings.launchStopped,
+        targetZone: recoverySettings.zone,
+        targetInstanceName: entry.targetName,
+        sharedVpcHostProjectNativeId: targetProjectNativeId,
+        targetMachineType: perVMData[vm.id]?.machineType,
+        targetSubnetName: recoverySettings.subnet || 'default',
+        targetNetworkTags: recoverySettings.networkTags,
+        diskEncryptionType: recoverySettings.encryption,
+        kmsCryptoKey: recoverySettings.encryption === 'CUSTOMER_MANAGED_KEY' ? recoverySettings.kmsKey : null,
+        kmsCryptoKeyResourceId: null,
+        snapshotType: snap.type || 'SOURCE',
+        targetGcpProjectRubrikId: recoverySettings.targetProjectId,
+        serviceAccountId: recoverySettings.serviceAccount
+      };
+      const data = await gql('ExportGCPInstanceMutation', `
+        mutation ExportGCPInstanceMutation($input: GcpNativeExportGceInstanceInput!) {
+          gcpNativeExportGceInstance(input: $input) { jobId }
+        }
+      `, { input });
+      entry.jobId = data.gcpNativeExportGceInstance?.jobId;
+      entry.lastStatus = 'Pending';
+      entry.lastMessage = 'Waiting for RSC to register activity...';
+      entry.lastEventTime = new Date().toISOString();
+    } catch (err) {
+      entry.lastStatus = 'Failure';
+      entry.submitError = err.message || 'Submission failed';
+      entry.lastMessage = `Submission failed: ${entry.submitError}`;
+      entry.lastEventTime = new Date().toISOString();
+    }
+    renderEventsList();
+  }));
+
+  // Start polling — first poll fires after ~2s, then every 10s
+  setTimeout(() => pollEvents(), 2000);
+  startEventsCountdown();
+}
+
+// === Open the events modal in history mode (from main toolbar) ===
+function openEventsHistory() {
+  eventsMode = 'all';
+  openEventsModalInternal({ context: 'history' });
+}
+
+// === Internal: open modal, set up UI, kick off initial fetch ===
+function openEventsModalInternal({ context }) {
+  eventsModalOpen = true;
+  document.getElementById('modalEvents').classList.add('open');
+  // Update title
+  const title = document.getElementById('eventsModalTitle');
+  title.textContent = context === 'just-submitted' ? 'Recovery In Progress' : 'Recovery Events';
+  // Set toggle state
+  updateEventsToggleUI();
+  // Initial render
+  renderEventsList();
+  if (eventsMode === 'all') {
+    pollEvents();
+    startEventsCountdown();
+  }
+}
+
+function setEventsMode(mode) {
+  eventsMode = mode;
+  updateEventsToggleUI();
+  renderEventsList();
+  // Reset poll loop for new mode
+  stopEventsPolling();
+  pollEvents();
+  startEventsCountdown();
+}
+
+function updateEventsToggleUI() {
+  document.getElementById('evtTabSession').classList.toggle('active', eventsMode === 'session');
+  document.getElementById('evtTabAll').classList.toggle('active', eventsMode === 'all');
+}
+
+function closeEventsModal() {
+  eventsModalOpen = false;
+  document.getElementById('modalEvents').classList.remove('open');
+  stopEventsPolling();
+  // Reset recover button so user can recover again
+  const btn = document.getElementById('recoverBtn');
+  if (btn) { btn.disabled = false; document.getElementById('recoverBtnText').textContent = 'Recover'; }
+}
+
+// === Polling ===
+function stopEventsPolling() {
+  if (eventsPollTimer) { clearTimeout(eventsPollTimer); eventsPollTimer = null; }
+  if (eventsCountdownTimer) { clearInterval(eventsCountdownTimer); eventsCountdownTimer = null; }
+  document.getElementById('eventsRefreshIndicator').innerHTML = '';
+}
+
+function startEventsCountdown() {
+  if (eventsCountdownTimer) clearInterval(eventsCountdownTimer);
+  eventsCountdownSecs = EVENTS_POLL_INTERVAL_SECS;
+  updateRefreshIndicator();
+  eventsCountdownTimer = setInterval(() => {
+    eventsCountdownSecs--;
+    if (eventsCountdownSecs <= 0) eventsCountdownSecs = EVENTS_POLL_INTERVAL_SECS;
+    updateRefreshIndicator();
+  }, 1000);
+}
+
+function updateRefreshIndicator(refreshing = false) {
+  const el = document.getElementById('eventsRefreshIndicator');
+  if (!el) return;
+  if (!hasAnyNonTerminal()) {
+    el.innerHTML = '<span style="color:var(--success)">✓ All complete</span>';
+    return;
+  }
+  if (refreshing) {
+    el.innerHTML = '<span class="spinner-tiny"></span> Refreshing...';
+  } else {
+    el.innerHTML = `Auto-refresh in ${eventsCountdownSecs}s`;
+  }
+}
+
+function hasAnyNonTerminal() {
+  const items = currentEventsItems();
+  return items.some(it => !isTerminalStatus(it.lastStatus));
+}
+
+function isTerminalStatus(status) {
+  if (!status) return false;
+  const s = status.toLowerCase();
+  return s === 'success' || s === 'failure' || s === 'canceled' || s === 'tasksuccess' || s === 'taskfailure';
+}
+
+async function pollEvents() {
+  if (!eventsModalOpen) return;
+  updateRefreshIndicator(true);
+  try {
+    if (eventsMode === 'session') {
+      await pollSessionEvents();
+    } else {
+      await pollAllRecoveryEvents();
+    }
+    renderEventsList();
+  } catch (err) {
+    console.error('Event poll failed:', err);
+  }
+  updateRefreshIndicator(false);
+  // Schedule next poll only if there's still work to track
+  if (eventsModalOpen && hasAnyNonTerminal()) {
+    eventsPollTimer = setTimeout(pollEvents, EVENTS_POLL_INTERVAL_SECS * 1000);
+    eventsCountdownSecs = EVENTS_POLL_INTERVAL_SECS;
+  } else {
+    stopEventsPolling();
+    document.getElementById('eventsRefreshIndicator').innerHTML = '<span style="color:var(--success)">✓ All complete</span>';
+  }
+}
+
+// === Session mode polling: filter by VM fids that were submitted ===
+async function pollSessionEvents() {
+  if (recoverySession.length === 0) return;
+  // Use the earliest submittedAt minus 10s as the lower bound
+  const earliest = recoverySession.reduce((min, e) => e.submittedAt < min ? e.submittedAt : min, recoverySession[0].submittedAt);
+  const lowerBound = new Date(earliest.getTime() - 10000).toISOString();
+
+  const objectFids = [...new Set(recoverySession.map(e => e.vmId))];
+
+  const data = await fetchActivitySeriesList({
+    objectFid: objectFids,
+    lastActivityTypes: ['RECOVERY', 'BULK_RECOVERY'],
+    lastUpdatedTimeGt: lowerBound
+  });
+
+  // Merge into recoverySession entries
+  // Each session entry pairs with the activity series whose submittedAt is closest (and lastUpdated >= submittedAt)
+  recoverySession.forEach(entry => {
+    // Find the activity series for this VM. If multiple recovery series for the same VM exist,
+    // pick the one whose first event was on/after our submission time (closest match).
+    const candidates = data.filter(s => s.objectId === entry.vmId);
+    if (candidates.length === 0) return;
+    // Sort by lastUpdated; the activitySeries that started right after submittedAt is ours
+    candidates.sort((a, b) => new Date(a.lastUpdated) - new Date(b.lastUpdated));
+    let match = candidates.find(c => new Date(c.lastUpdated) >= new Date(entry.submittedAt.getTime() - 5000));
+    if (!match) match = candidates[candidates.length - 1];
+
+    entry.activitySeriesId = match.activitySeriesId;
+    entry.clusterUuid = match.clusterUuid;
+    entry.lastStatus = match.lastActivityStatus;
+    entry.lastMessage = match.latestMessage || entry.lastMessage;
+    entry.lastEventTime = match.lastUpdated;
+    entry.progress = match.progress || entry.progress;
+  });
+}
+
+// === All-recoveries mode: pull last 7 days of GcpNativeGceInstance Recovery events ===
+async function pollAllRecoveryEvents() {
+  const lowerBound = new Date(Date.now() - EVENTS_MAX_HISTORY_DAYS * 24 * 3600 * 1000).toISOString();
+  const data = await fetchActivitySeriesList({
+    objectTypes: ['GCP_NATIVE_GCE_INSTANCE'],
+    lastActivityTypes: ['RECOVERY', 'BULK_RECOVERY'],
+    lastUpdatedTimeGt: lowerBound,
+    first: EVENTS_MAX_HISTORY_ITEMS
+  });
+  // Sort newest first
+  data.sort((a, b) => new Date(b.lastUpdated) - new Date(a.lastUpdated));
+  // Merge with eventsAllRecoveries, preserving expanded state & cached details
+  const prevMap = Object.fromEntries(eventsAllRecoveries.map(e => [e.activitySeriesId, e]));
+  eventsAllRecoveries = data.map(s => {
+    const prev = prevMap[s.activitySeriesId];
+    return {
+      activitySeriesId: s.activitySeriesId,
+      clusterUuid: s.clusterUuid,
+      vmId: s.objectId,
+      vmName: s.objectName,
+      targetName: extractTargetName(s.latestMessage) || s.objectName,
+      lastStatus: s.lastActivityStatus,
+      lastMessage: s.latestMessage,
+      lastEventTime: s.lastUpdated,
+      progress: s.progress,
+      submittedAt: new Date(s.lastUpdated),
+      expanded: prev?.expanded || false,
+      details: prev?.details || [],
+      detailsLoaded: prev?.detailsLoaded || false
+    };
+  });
+}
+
+// Extract the target VM name from an activity message (e.g. "Export of the rp-gcp-vm-01-4y46i GCE instance...")
+function extractTargetName(msg) {
+  if (!msg) return null;
+  const m = msg.match(/the\s+([\w-]+)\s+GCE instance/i);
+  return m ? m[1] : null;
+}
+
+// === GraphQL helpers ===
+async function fetchActivitySeriesList({ objectFid, objectTypes, lastActivityTypes, lastUpdatedTimeGt, first = 100 }) {
+  // RSC requires enum values as SCREAMING_SNAKE_CASE arrays.
+  // objectFid is supported as an array filter (verified in HAR — RSC inventory recovery flow).
+  const filters = {
+    objectType: objectTypes || null,
+    lastActivityStatus: null,
+    lastActivityType: lastActivityTypes || null,
+    severity: null,
+    clusterId: null,
+    lastUpdatedTimeGt: lastUpdatedTimeGt || null,
+    orgIds: [],
+    userIds: null,
+    objectName: ''
+  };
+  if (objectFid) filters.objectFid = objectFid;
+  const data = await gql('EventSeriesListQuery', `
+    query EventSeriesListQuery($after: String, $filters: ActivitySeriesFilter, $first: Int, $sortBy: ActivitySeriesSortField, $sortOrder: SortOrder) {
+      activitySeriesConnection(after: $after, first: $first, filters: $filters, sortBy: $sortBy, sortOrder: $sortOrder) {
+        edges { node {
+          id activitySeriesId lastUpdated lastActivityType lastActivityStatus
+          objectId objectName objectType severity progress
+          clusterUuid clusterName username
+          activityConnection(first: 1) { nodes { message } }
+        } }
+      }
+    }
+  `, { filters, first });
+  return data.activitySeriesConnection.edges.map(e => ({
+    activitySeriesId: e.node.activitySeriesId,
+    lastUpdated: e.node.lastUpdated,
+    lastActivityType: e.node.lastActivityType,
+    lastActivityStatus: e.node.lastActivityStatus,
+    objectId: e.node.objectId,
+    objectName: e.node.objectName,
+    objectType: e.node.objectType,
+    progress: e.node.progress,
+    clusterUuid: e.node.clusterUuid,
+    latestMessage: e.node.activityConnection?.nodes?.[0]?.message || ''
+  }));
+}
+
+async function fetchActivitySeriesDetails(activitySeriesId, clusterUuid) {
+  const data = await gql('EventSeriesDetailsQuery', `
+    query EventSeriesDetailsQuery($activitySeriesId: UUID!, $clusterUuid: UUID) {
+      activitySeries(input: {activitySeriesId: $activitySeriesId, clusterUuid: $clusterUuid}) {
+        activityConnection { nodes { activityInfo errorInfo message status time severity } }
+        startTime
+        lastUpdated
+        lastActivityType
+        lastActivityStatus
+        objectName
+        objectType
+        location
+        clusterName
+        username
+        organizations { id name }
+      }
+    }
+  `, { activitySeriesId, clusterUuid: clusterUuid || '00000000-0000-0000-0000-000000000000' });
+  const series = data.activitySeries;
+  if (!series) return { events: [], meta: null };
+  return {
+    events: series.activityConnection?.nodes || [],
+    meta: {
+      startTime: series.startTime,
+      lastUpdated: series.lastUpdated,
+      lastActivityType: series.lastActivityType,
+      objectName: series.objectName,
+      objectType: series.objectType,
+      location: series.location,
+      clusterName: series.clusterName,
+      username: series.username,
+      organizations: series.organizations || []
+    }
+  };
+}
+
+// === Rendering ===
+function currentEventsItems() {
+  return eventsMode === 'session' ? recoverySession : eventsAllRecoveries;
+}
+
+function renderEventsList() {
+  const items = currentEventsItems();
+  const list = document.getElementById('eventsList');
+  if (!list) return;
+  if (items.length === 0) {
+    const msg = eventsMode === 'session'
+      ? '<div class="events-empty-icon">📋</div>No recoveries submitted yet in this session.<br><span style="font-size:11px;">Switch to "All RSC Recoveries" to view history.</span>'
+      : '<div class="events-empty-icon">📋</div>No GCP recoveries found in the last 7 days.';
+    list.innerHTML = `<div class="events-empty">${msg}</div>`;
+    return;
+  }
+  const summary = renderEventsSummary(items);
+  list.innerHTML = summary + items.map((it, idx) => renderEventRow(it, idx)).join('');
+  // Wire up expand toggles via event delegation
+  list.onclick = (e) => {
+    const header = e.target.closest('.event-row-header');
+    if (!header) return;
+    const idx = parseInt(header.dataset.idx);
+    toggleEventRow(idx);
+  };
+}
+
+// Aggregate summary tiles at the top of the events list: total + status counts
+function renderEventsSummary(items) {
+  const counts = { success: 0, failure: 0, canceled: 0, inProgress: 0 };
+  items.forEach(it => {
+    const s = (it.lastStatus || '').toLowerCase();
+    if (s === 'success' || s === 'tasksuccess') counts.success++;
+    else if (s === 'failure' || s === 'taskfailure') counts.failure++;
+    else if (s === 'canceled') counts.canceled++;
+    else counts.inProgress++; // queued, running, pending, warning, submitting, etc.
+  });
+  const total = items.length;
+  return `
+    <div class="events-summary-bar">
+      <div class="events-summary-tile" data-kind="total">
+        <div class="events-summary-num">${total}</div>
+        <div class="events-summary-lbl">Total</div>
+      </div>
+      <div class="events-summary-tile" data-kind="in-progress">
+        <div class="events-summary-num">${counts.inProgress}</div>
+        <div class="events-summary-lbl">In Progress</div>
+      </div>
+      <div class="events-summary-tile" data-kind="success">
+        <div class="events-summary-num">${counts.success}</div>
+        <div class="events-summary-lbl">Succeeded</div>
+      </div>
+      <div class="events-summary-tile" data-kind="failure">
+        <div class="events-summary-num">${counts.failure}</div>
+        <div class="events-summary-lbl">Failed</div>
+      </div>
+      <div class="events-summary-tile" data-kind="canceled">
+        <div class="events-summary-num">${counts.canceled}</div>
+        <div class="events-summary-lbl">Canceled</div>
+      </div>
+    </div>`;
+}
+
+function renderEventRow(item, idx) {
+  const status = (item.lastStatus || 'pending').toLowerCase();
+  const statusClass = ['success','failure','canceled','queued','running','warning','pending'].includes(status) ? status : 'pending';
+  const rowCls = `event-row${item.expanded ? ' expanded' : ''}${status === 'failure' ? ' has-error' : ''}${status === 'running' ? ' is-running' : ''}${status === 'success' ? ' is-success' : ''}${status === 'queued' ? ' is-queued' : ''}${status === 'canceled' ? ' is-canceled' : ''}`;
+  const statusBadge = `<span class="event-status-badge ${statusClass}">${status === 'running' ? '<span class="pulse-dot"></span>' : ''}${escapeHtml(displayStatus(item.lastStatus))}</span>`;
+
+  const msg = item.lastMessage || '—';
+  const time = item.lastEventTime ? relativeTime(new Date(item.lastEventTime)) : '';
+  const fullTime = item.lastEventTime ? formatCT(new Date(item.lastEventTime)) : '';
+
+  let targetSection = '';
+  if (item.targetName && item.targetName !== item.vmName) {
+    targetSection = `<span class="event-row-arrow">→</span><span class="event-row-target" title="${escapeHtml(item.targetName)}">${escapeHtml(item.targetName)}</span>`;
+  }
+
+  let timeline = '';
+  if (item.expanded) {
+    // Refresh details if:
+    //  - we never loaded them
+    //  - the activitySeriesId changed (e.g. got linked up after a poll)
+    //  - the latest event timestamp moved past what we last loaded
+    const needsLoad = !item.detailsLoaded
+      || (item.activitySeriesId && item.detailsForId !== item.activitySeriesId)
+      || (item.lastEventTime && item.detailsLoadedAt && new Date(item.lastEventTime) > new Date(item.detailsLoadedAt));
+    if (!item.activitySeriesId) {
+      timeline = '<div class="event-timeline"><div class="event-timeline-loading"><span class="spinner-tiny"></span> Waiting for RSC to register activity...</div></div>';
+      // Also: if we have a jobId but no activitySeriesId yet, the next poll will fill it in;
+      // we just keep showing this state.
+    } else if (needsLoad && !item.detailsLoading) {
+      timeline = '<div class="event-timeline"><div class="event-timeline-loading"><span class="spinner-tiny"></span> Loading timeline...</div></div>';
+      loadEventDetails(idx);
+    } else if (item.detailsLoading) {
+      timeline = '<div class="event-timeline"><div class="event-timeline-loading"><span class="spinner-tiny"></span> Loading timeline...</div></div>';
+    } else if (item.details.length === 0) {
+      timeline = '<div class="event-timeline"><div class="event-timeline-loading">No events recorded yet.</div></div>';
+    } else {
+      // Sort newest first
+      const sorted = [...item.details].sort((a, b) => new Date(b.time) - new Date(a.time));
+      const meta = item.detailsMeta || {};
+      timeline = `<div class="event-timeline"><div class="event-timeline-inner">
+        ${sorted.map(ev => `
+          <div class="event-timeline-item ${ev.errorInfo ? 'error' : ''}">
+            <div class="event-timeline-msg">
+              ${escapeHtml(ev.message)}
+              ${ev.errorInfo ? `<div class="event-timeline-error">${escapeHtml(ev.errorInfo)}</div>` : ''}
+            </div>
+            <div class="event-timeline-time">${formatCT(new Date(ev.time))}</div>
+          </div>
+        `).join('')}
+      </div>
+      ${renderEventSummary(meta, item)}
+      </div>`;
+    }
+  }
+
+  return `
+    <div class="${rowCls}">
+      <div class="event-row-header" data-idx="${idx}">
+        <span class="event-row-toggle">▶</span>
+        <span class="event-row-title" title="${escapeHtml(item.vmName || '')}">${escapeHtml(item.vmName || '—')}</span>
+        ${targetSection}
+        <span class="event-row-msg" title="${escapeHtml(msg)}">${escapeHtml(msg)}</span>
+        <span class="event-row-time" title="${escapeHtml(fullTime)}">${escapeHtml(time)}</span>
+        <span class="event-row-status">${statusBadge}</span>
+      </div>
+      ${timeline}
+    </div>`;
+}
+
+// Render the metadata summary footer for an expanded event series
+function renderEventSummary(meta, item) {
+  // Pull fields from meta (loaded via details query) with fallbacks to list-query data
+  const cluster = meta.clusterName || item.clusterName || 'Rubrik Cluster';
+  const objectType = formatObjectType(meta.objectType || 'GcpNativeGceInstance');
+  const objectName = meta.objectName || item.vmName || '—';
+  const eventType = meta.lastActivityType || 'Recovery';
+  const location = meta.location || '';
+  const startTime = meta.startTime ? formatCT(new Date(meta.startTime)) : '—';
+  const duration = (meta.startTime && meta.lastUpdated)
+    ? formatDuration(new Date(meta.startTime), new Date(meta.lastUpdated))
+    : '—';
+  const org = (meta.organizations && meta.organizations.length > 0)
+    ? meta.organizations.map(o => o.name).join(', ')
+    : '—';
+  const username = formatUsername(meta.username || item.username || '—');
+
+  return `
+    <div class="event-summary">
+      <div class="event-summary-grid">
+        <div class="event-summary-item">
+          <div class="event-summary-label">Cluster</div>
+          <div class="event-summary-value">${escapeHtml(cluster)}</div>
+        </div>
+        <div class="event-summary-item">
+          <div class="event-summary-label">Object Type</div>
+          <div class="event-summary-value">${escapeHtml(objectType)}</div>
+        </div>
+        <div class="event-summary-item">
+          <div class="event-summary-label">Object</div>
+          <div class="event-summary-value" style="color:var(--accent);">${escapeHtml(objectName)}</div>
+        </div>
+        <div class="event-summary-item">
+          <div class="event-summary-label">Event Type</div>
+          <div class="event-summary-value">${escapeHtml(eventType)}</div>
+        </div>
+        <div class="event-summary-item">
+          <div class="event-summary-label">Duration</div>
+          <div class="event-summary-value">${escapeHtml(duration)}</div>
+        </div>
+      </div>
+      <div class="event-summary-grid">
+        <div class="event-summary-item">
+          <div class="event-summary-label">Start Timestamp</div>
+          <div class="event-summary-value">${escapeHtml(startTime)}</div>
+        </div>
+        <div class="event-summary-item" style="grid-column: span 4;">
+          <div class="event-summary-label">Username</div>
+          <div class="event-summary-value" style="font-family:'SF Mono',monospace;font-size:11px;word-break:break-all;">${escapeHtml(username)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Format Rubrik object type enum to a nice label (e.g. "GcpNativeGceInstance" -> "GCP GCE instance")
+function formatObjectType(typ) {
+  if (!typ) return '—';
+  // Map known types
+  const map = {
+    'GcpNativeGceInstance': 'GCP GCE instance',
+    'GcpNativeDisk': 'GCP Disk',
+    'GcpNativeProject': 'GCP Project',
+    'GcpCloudSqlInstance': 'GCP Cloud SQL Instance'
+  };
+  if (map[typ]) return map[typ];
+  // Fallback: insert spaces before uppercase letters
+  return typ.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+// Format a username — service-account client IDs get a shorter display
+function formatUsername(u) {
+  if (!u) return '—';
+  return u;
+}
+
+// Compute a human-readable duration between two dates
+function formatDuration(start, end) {
+  let secs = Math.max(0, Math.floor((end.getTime() - start.getTime()) / 1000));
+  if (secs < 60) return `${secs} second${secs === 1 ? '' : 's'}`;
+  const mins = Math.floor(secs / 60); secs = secs % 60;
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'}${secs ? `, ${secs} second${secs === 1 ? '' : 's'}` : ''}`;
+  const hrs = Math.floor(mins / 60); const remMins = mins % 60;
+  return `${hrs} hour${hrs === 1 ? '' : 's'}${remMins ? `, ${remMins} minute${remMins === 1 ? '' : 's'}` : ''}`;
+}
+
+function displayStatus(status) {
+  if (!status) return 'Pending';
+  // Some RSC statuses use camelCase
+  const s = String(status);
+  if (s.toLowerCase() === 'tasksuccess') return 'Success';
+  if (s.toLowerCase() === 'taskfailure') return 'Failure';
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+}
+
+function toggleEventRow(idx) {
+  const items = currentEventsItems();
+  const item = items[idx];
+  if (!item) return;
+  item.expanded = !item.expanded;
+  renderEventsList();
+}
+
+async function loadEventDetails(idx) {
+  const items = currentEventsItems();
+  const item = items[idx];
+  if (!item) return;
+  // No activitySeriesId yet (just-submitted, RSC hasn't registered the activity).
+  // Don't latch detailsLoaded — leave it false so next poll + re-render will retry.
+  if (!item.activitySeriesId) {
+    item.detailsLoaded = false;
+    item.details = [];
+    item.detailsMeta = null;
+    renderEventsList();
+    return;
+  }
+  if (item.detailsLoading) return;
+  item.detailsLoading = true;
+  try {
+    const res = await fetchActivitySeriesDetails(item.activitySeriesId, item.clusterUuid);
+    item.details = res.events;
+    item.detailsMeta = res.meta;
+    item.detailsLoaded = true;
+    // Track which series id the details correspond to, so we can refetch when it changes
+    item.detailsForId = item.activitySeriesId;
+    item.detailsLoadedAt = item.lastEventTime || new Date().toISOString();
+  } catch (err) {
+    console.error('Failed to load timeline:', err);
+    item.details = [];
+    item.detailsMeta = null;
+    item.detailsLoaded = true;
+  }
+  item.detailsLoading = false;
+  renderEventsList();
+}
+
+// Relative time helper — "5 sec ago", "2 min ago", "1 hr ago", or absolute CT for older
+function relativeTime(date) {
+  if (!date) return '';
+  const diff = (Date.now() - date.getTime()) / 1000;
+  if (diff < 5) return 'just now';
+  if (diff < 60) return `${Math.floor(diff)} sec ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)} hr ago`;
+  return formatCT(date);
+}
+
+// ==================== UTILS ====================
+function closeModals() {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('open'));
+  // Hide any open combo
+  hideComboPortal();
+  Object.keys(_comboState).forEach(id => { if (_comboState[id].open) _comboState[id].open = false; });
+  // Stop event polling if events modal is closing
+  if (eventsModalOpen) {
+    eventsModalOpen = false;
+    stopEventsPolling();
+  }
+  // Reset recover button
+  const btn = document.getElementById('recoverBtn');
+  if (btn) { btn.disabled = false; document.getElementById('recoverBtnText').textContent = 'Recover'; }
+}
+
+// Drag & drop on auth
+const drop = document.getElementById('authDrop');
+if (drop) {
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('drag');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      // Reuse same logic as file input handler
+      const fakeEvent = { target: { files: [file] } };
+      handleSAFile(fakeEvent);
+    }
+  });
+}
+</script>
+</body>
+</html>
