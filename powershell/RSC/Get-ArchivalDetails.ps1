@@ -2,11 +2,13 @@
 <#
 .SYNOPSIS
 This script will get the backup and archival details for VMware, SQL, Oracle,
-Windows VG, NAS Share, and Active Directory Domain Controllers.
+Windows VG, NAS Share, Active Directory Domain Controllers, Windows Filesets,
+and Linux Filesets.
 
 .DESCRIPTION
 This script will get the backup and archival details for VMware, SQL, Oracle,
-Windows VG, NAS Share, and Active Directory Domain Controllers.
+Windows VG, NAS Share, Active Directory Domain Controllers, Windows Filesets,
+and Linux Filesets.
 
 The details of all backups are stored with the objects under: $objlist[].backups.
 You can add a loop to export out all backup details if needed from there.
@@ -26,7 +28,7 @@ The script requires communication to RSC via outbound HTTPS (TCP 443).
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 3/1/25
-Updated: 1/13/26
+Updated: 7/1/26
 
 For authentication, use a RSC Service Account:
 ** RSC Settings Room -> Users -> Service Account -> Assign it a read-only reporting role
@@ -989,6 +991,125 @@ Function Get-VGList {
   return $result.data.physicalHosts
 }  ### Function Get-VGList
 
+Function Get-FilesetList {
+  param (
+    [CmdletBinding()]
+    [Parameter(Mandatory=$true)]
+    [string]$hostRoot,
+    [Parameter(Mandatory=$false)]
+    [string]$afterCursor = ''
+  )
+  $variables = @{
+    "first" = 1000
+    "hostRoot" = $hostRoot
+    "filter" = @(
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_REPLICATED"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_KUPR_HOST"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "childFilter" = @(
+      @{
+        "field" = "IS_GHOST"
+        "texts" = @(
+          "false"
+        )
+      },
+      @{
+        "field" = "IS_RELIC"
+        "texts" = @(
+          "false"
+        )
+      }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
+  }
+  if ($afterCursor -ne '') {
+    $variables.after = $afterCursor
+  }
+  $query = "query PhysicalHostFilesetListQuery(`$hostRoot: HostRoot!, `$first: Int!, `$after: String, `$sortBy: HierarchySortByField, `$sortOrder: SortOrder, `$filter: [Filter!], `$childFilter: [Filter!]) {
+  physicalHosts(
+    hostRoot: `$hostRoot
+    filter: `$filter
+    first: `$first
+    after: `$after
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+  ) {
+    edges {
+      cursor
+      node {
+        id
+        name
+        objectType
+        cluster {
+          id
+          name
+          version
+          status
+          __typename
+        }
+        physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], filter: `$childFilter) {
+          edges {
+            node {
+              id
+              name
+              objectType
+              effectiveSlaDomain {
+                id
+                name
+              }
+              ... on LinuxFileset {
+                isRelic
+                includes: pathIncluded
+                __typename
+              }
+              ... on WindowsFileset {
+                isRelic
+                includes: pathIncluded
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    pageInfo {
+      endCursor
+      hasNextPage
+      __typename
+    }
+    __typename
+  }
+}"
+  $payload = @{
+    "query" = $query
+    "variables" = $variables
+  }
+  $result = $(Invoke-RestMethod -Method POST -Uri $endpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $headers)
+  return $result.data.physicalHosts
+}  ### Function Get-FilesetList
+
 Function Get-nasList {
   param (
     [CmdletBinding()]
@@ -1525,9 +1646,14 @@ Write-Host "Found $($oracleList.count) DBs" -foregroundcolor green
 $allObjList += $oracleList
 
 Write-Host "Getting a list of all Active Directory Domain Controllers"
+$adList = @()
 $afterCursor = ''
-$adList = Get-DCs -afterCursor $afterCursor
-$adList = $adList.edges.node
+do {
+  $adInventory = Get-DCs -afterCursor $afterCursor
+  $adList += $adInventory.edges.node
+  Write-Host "Found $($adList.count) AD Domain Controllers so far..." -foregroundcolor yellow
+  $afterCursor = $adInventory.pageInfo.endCursor
+} while ($adInventory.pageInfo.hasNextPage)
 
 Write-Host "Found $($adList.count) AD Domain Controllers" -foregroundcolor green
 
@@ -1559,24 +1685,93 @@ do {
 
 Write-Host "Found $($vgList.count) Volume Groups" -foregroundcolor green
 
-$allObjCount = $allObjList.count + $nasList.count + $vgList.count
+# Windows Filesets - fetch hosts then flatten to individual filesets
+Write-Host "Getting a list of all Windows Filesets"
+$winHostList = @()
+$afterCursor = ''
+do {
+  $winHostInventory = Get-FilesetList -hostRoot 'WINDOWS_HOST_ROOT' -afterCursor $afterCursor
+  $winHostList += $winHostInventory.edges.node
+  Write-Host "Found $($winHostList.count) Windows hosts so far..." -foregroundcolor yellow
+  $afterCursor = $winHostInventory.pageInfo.endCursor
+} while ($winHostInventory.pageInfo.hasNextPage)
+
+$winFilesetList = @()
+foreach ($fsHost in $winHostList) {
+  foreach ($fs in $fsHost.physicalChildConnection.edges.node) {
+    if ($fs.objectType -eq 'WindowsFileset') {
+      $winFilesetList += [PSCustomObject] @{
+        id = $fs.id
+        name = $fs.name
+        objectType = $fs.objectType
+        effectiveSlaDomain = $fs.effectiveSlaDomain
+        cluster = $fsHost.cluster
+        hostName = $fsHost.name
+      }
+    }
+  }
+}
+Write-Host "Found $($winFilesetList.count) Windows Filesets" -foregroundcolor green
+
+# Linux Filesets - fetch hosts then flatten to individual filesets
+Write-Host "Getting a list of all Linux Filesets"
+$linHostList = @()
+$afterCursor = ''
+do {
+  $linHostInventory = Get-FilesetList -hostRoot 'LINUX_HOST_ROOT' -afterCursor $afterCursor
+  $linHostList += $linHostInventory.edges.node
+  Write-Host "Found $($linHostList.count) Linux hosts so far..." -foregroundcolor yellow
+  $afterCursor = $linHostInventory.pageInfo.endCursor
+} while ($linHostInventory.pageInfo.hasNextPage)
+
+$linFilesetList = @()
+foreach ($fsHost in $linHostList) {
+  foreach ($fs in $fsHost.physicalChildConnection.edges.node) {
+    if ($fs.objectType -eq 'LinuxFileset') {
+      $linFilesetList += [PSCustomObject] @{
+        id = $fs.id
+        name = $fs.name
+        objectType = $fs.objectType
+        effectiveSlaDomain = $fs.effectiveSlaDomain
+        cluster = $fsHost.cluster
+        hostName = $fsHost.name
+      }
+    }
+  }
+}
+Write-Host "Found $($linFilesetList.count) Linux Filesets" -foregroundcolor green
+
+$allObjCount = $allObjList.count + $nasList.count + $vgList.count + $winFilesetList.count + $linFilesetList.count
 
 Write-Host ""
 Write-Host "Total object count so far: $allObjCount" -foregroundcolor green
 Write-Host "Now filtering out objects by Protected, SLA, and Cluster" -foregroundcolor green
 Write-Host ""
 
-# Filter list by protected objects
+# Filter out unprotected objects (UNPROTECTED / DO_NOT_PROTECT SLAs)
+# VMs are filtered by whether they have snapshots; all others by SLA name
 $vmList = $vmList | Where-Object { $_.SnapshotConnection.edges.node -ne $null }
+$sqlList = $sqlList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$oracleList = $oracleList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$adList = $adList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$winFilesetList = $winFilesetList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$linFilesetList = $linFilesetList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
 
-# Create a new list with the filtered VM objects
-$objList = $vmList + $sqlList + $oracleList + $adList
+# Where-Object returns $null when no items match, which causes null entries
+# when concatenating arrays with +. Reset any $null lists to empty arrays.
+if ($null -eq $vmList) { $vmList = @() }
+if ($null -eq $sqlList) { $sqlList = @() }
+if ($null -eq $oracleList) { $oracleList = @() }
+if ($null -eq $adList) { $adList = @() }
+if ($null -eq $winFilesetList) { $winFilesetList = @() }
+if ($null -eq $linFilesetList) { $linFilesetList = @() }
 
-# Handle NAS separately since we need to look at the primary fileset to see what's protected
+# Combine all workload lists into a single object list
+$objList = $vmList + $sqlList + $oracleList + $adList + $winFilesetList + $linFilesetList
+
+# NAS and Windows VG are handled separately - their SLA is nested under a child object
 $nasListProtected = $nasList | Where-Object { $null -ne $_.primaryFileset -and $_.primaryFileset.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
   $_.primaryFileset.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
-
-# Handle Windows VG separately since we need to look at the volumes to see what's protected
 $vgListProtected = $vgList | Where-Object { $_.descendantConnection.edges.node.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
   $_.descendantConnection.edges.node.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
 
@@ -1584,16 +1779,17 @@ $protectedCount = $objList.count + $nasListProtected.count + $vgListProtected.co
 
 Write-Host "Object count after filtering by Protected: $protectedCount" -foregroundcolor green
 
-# Filter list by removing any in the SLA ignore list
+# Filter out any objects in the SLA ignore list
 $objList = $objList | Where-Object { $_.effectiveSlaDomain.name -notin $slaIgnoreList }
+if ($null -eq $objList) { $objList = @() }
 
-# Handle NAS and Windows VG separately since it's in a separate list
+# Filter NAS and Windows VG by SLA ignore list separately (nested SLA path)
 $nasListProtected = $nasListProtected | Where-Object { $_.primaryFileset.effectiveSlaDomain.name -notin $slaIgnoreList }
 $vgListProtected = $vgListProtected | Where-Object { $_.descendantConnection.edges.node.effectiveSlaDomain.name -notin $slaIgnoreList }
 
-# Combine the main object list with Windows VG List for final protected objects minus SLAs
-$objList += $nasListProtected
-$objList += $vgListProtected
+# Add NAS and Windows VG to the main object list
+if ($null -ne $nasListProtected) { $objList += $nasListProtected }
+if ($null -ne $vgListProtected) { $objList += $vgListProtected }
 
 Write-Host "SLAs to ignore: $slaIgnoreList" -foregroundcolor green
 Write-Host "Object count after filtering out ignored SLAs: $($objList.count)" -foregroundcolor green
@@ -1602,6 +1798,7 @@ Write-Host "Object count after filtering out ignored SLAs: $($objList.count)" -f
 if ($cluster -ne '' -and $cluster -ne $null) {
   Write-Host "Cluster name provided: $cluster" -foregroundcolor green
   $objList = $objList | Where-Object { $_.cluster.name -eq $cluster }
+  if ($null -eq $objList) { $objList = @() }
   Write-Host "Object count after filtering by cluster: $($objList.count)" -foregroundcolor green
 } else {
   Write-Host "No cluster name provided so not filtering out by cluster name." -foregroundcolor green
@@ -1609,15 +1806,13 @@ if ($cluster -ne '' -and $cluster -ne $null) {
 
 $totalCount = $objList.count
 Write-Host "Total number of objects to process: $totalCount" -foregroundcolor green
-Write-Host "Processing $totalCount Objects..."
 Write-Host ""
 
-$count = 1
-
-# Go through each object and find the last backup that was archived
-# to a single location and to two archive locations.
-foreach ($obj in $objList) {
-  Write-Host "Processing $count / $totalCount"
+# Phase 1: Build prep list with resolved object IDs for backup detail queries
+Write-Host "Phase 1: Resolving object IDs..." -foregroundcolor green
+$prepList = @()
+for ($i = 0; $i -lt $objList.count; $i++) {
+  $obj = $objList[$i]
   $workload = $obj.objectType
   if ($workload -eq 'Mssql') {
     $objID = $obj.dagid
@@ -1627,13 +1822,220 @@ foreach ($obj in $objList) {
     $objID = $obj.primaryFileset.id
   } elseif ($workload -eq 'PhysicalHost') {
     $volGroup = $obj.hostVolumes | Where-Object { $_.volumeGroupId -ne $null }
-    $volGroupString = $volGroup.mountPoints -join ','
     $objID = $volGroup[0].volumeGroupId
   } else {
     $objID = $obj.id
   }
-  $backups = Get-BackupDetail -objId $objID
+  $prepList += [PSCustomObject] @{
+    "Index" = $i
+    "ObjID" = $objID
+  }
+}
+
+# Phase 2: Fetch backup details in parallel
+Write-Host "Phase 2: Fetching backup details for $totalCount objects in parallel..." -foregroundcolor green
+Write-Host "Don't worry if the numbers skip around, it provides directionally accurate progress..." -foregroundcolor green
+
+$snapshotQuery = "query SnapshotsListSingleQuery(`$snappableId: String!, `$first: Int, `$after: String, `$snapshotFilter: [SnapshotQueryFilterInput!], `$sortBy: SnapshotQuerySortByField, `$sortOrder: SortOrder, `$timeRange: TimeRangeInput) {
+  snapshotsListConnection: snapshotOfASnappableConnection(
+    workloadId: `$snappableId
+    first: `$first
+    after: `$after
+    snapshotFilter: `$snapshotFilter
+    sortBy: `$sortBy
+    sortOrder: `$sortOrder
+    timeRange: `$timeRange
+  ) {
+    edges {
+      cursor
+      node {
+        ... on CdmSnapshot {
+          latestUserNote {
+            time
+            userName
+            userNote
+            __typename
+          }
+          __typename
+        }
+        id
+        date
+        isOnDemandSnapshot
+        ... on CdmSnapshot {
+          cdmVersion
+          isRetentionLocked
+          isDownloadedSnapshot
+          pendingSnapshotDeletion {
+            id: snapshotFid
+            status
+            __typename
+          }
+          slaDomain {
+            id
+            name
+            ... on GlobalSlaReply {
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            __typename
+          }
+          pendingSla {
+            id
+            name
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              __typename
+            }
+            __typename
+          }
+          snapshotRetentionInfo {
+            isCustomRetentionApplied
+            archivalInfos {
+              name
+              expirationTime
+              locationId
+            }
+            localInfo {
+              name
+              isExpirationDateCalculated
+              expirationTime
+            }
+            replicationInfos {
+              name
+              isExpirationDateCalculated
+              expirationTime
+              locationId
+            }
+            __typename
+          }
+          legalHoldInfo {
+            shouldHoldInPlace
+            __typename
+          }
+          __typename
+        }
+        ... on PolarisSnapshot {
+          isDeletedFromSource
+          isDownloadedSnapshot
+          isReplica
+          isArchivalCopy
+          slaDomain {
+            name
+            id
+            ... on GlobalSlaReply {
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              isRetentionLockedSla
+              retentionLockMode
+              __typename
+            }
+            __typename
+            ... on ClusterSlaDomain {
+              fid
+              cluster {
+                id
+                name
+                __typename
+              }
+              __typename
+            }
+            ... on GlobalSlaReply {
+              id
+              __typename
+            }
+          }
+        }
+      }
+    }
+    pageInfo {
+      endCursor
+      hasNextPage
+      __typename
+    }
+  }
+}"
+
+$progressState = [hashtable]::Synchronized(@{ Count = 0 })
+$backupResults = $prepList | ForEach-Object -ThrottleLimit 8 -Parallel {
+  $item = $_
+  $variables = @{
+    "snappableId" = $item.ObjID
+    "first" = 50
+    "sortBy" = "CREATION_TIME"
+    "sortOrder" = "DESC"
+    "snapshotFilter" = @(
+      @{
+        "field" = "SNAPSHOT_TYPE"
+        "typeFilters" = @()
+      }
+    )
+    "timeRange" = $null
+  }
+  $payload = @{
+    "query" = $using:snapshotQuery
+    "variables" = $variables
+  }
+  $reqHeaders = $using:headers
+  $reqEndpoint = $using:endpoint
+  try {
+    $result = Invoke-RestMethod -Method POST -Uri $reqEndpoint -Body $($payload | ConvertTo-JSON -Depth 100) -Headers $reqHeaders
+    $backups = $result.data.snapshotsListConnection.edges.node
+  } catch {
+    $backups = @()
+  }
+  $state = $using:progressState
+  $state.Count++
+  if ($state.Count % 10 -eq 0) {
+    Write-Host "Fetched backup details: $($state.Count) / $($using:totalCount)" -foregroundcolor yellow
+  }
+  [PSCustomObject] @{
+    "Index" = $item.Index
+    "Backups" = $backups
+  }
+}
+
+# Build a hashtable for O(1) lookup of backup results by index
+$backupMap = @{}
+foreach ($br in $backupResults) {
+  $backupMap[$br.Index] = $br.Backups
+}
+
+Write-Host "Fetched backup details for $($backupMap.Count) / $totalCount objects" -foregroundcolor green
+
+# Phase 3: Process results sequentially
+Write-Host "Phase 3: Processing backup and archival details..." -foregroundcolor green
+
+foreach ($obj in $objList) {
+  $idx = $objList.IndexOf($obj)
+  $backups = $backupMap[$idx]
   $obj | Add-Member -MemberType NoteProperty -Name backupList -Value $backups
+  $workload = $obj.objectType
   # Reset all variables
   $latestBackupDate = ''
   $oldestLocalBackupDate = ''
@@ -1664,8 +2066,8 @@ foreach ($obj in $objList) {
       $oldestARCHLocation = $oldestARCH.name
       $oldestARCHExpire = $oldestARCH.expirationTime
     }
-  $rcvBKPList = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 -or
-    ($_.snapshotRetentionInfo.archivalInfos[0].name -match 'BKP') }
+    $rcvBKPList = $backups | Where-Object { $_.snapshotRetentionInfo.archivalInfos.count -ge 2 -or
+      ($_.snapshotRetentionInfo.archivalInfos[0].name -match 'BKP') }
     if ($rcvBKPList.count -gt 0) {
       $latestBKPDate = $($rcvBKPList[0].date)
       $oldestBKPDate = $($rcvBKPList[-1].date)
@@ -1675,7 +2077,8 @@ foreach ($obj in $objList) {
     }
   }
   if ($workload -eq 'PhysicalHost') {
-    $location = $volGroupString
+    $volGroup = $obj.hostVolumes | Where-Object { $_.volumeGroupId -ne $null }
+    $location = ($volGroup.mountPoints -join ',')
     $objSLA = $obj.descendantConnection.edges.node.effectiveSlaDomain.name
   } elseif ($workload -eq 'NasShare') {
     $location = $obj.nassystem.name
@@ -1683,6 +2086,9 @@ foreach ($obj in $objList) {
   } elseif ($workload -eq 'ACTIVE_DIRECTORY_DOMAIN_CONTROLLER') {
     $location = $obj.dcLocation
     $objSLA = $obj.effectivesladomain.name
+  } elseif ($workload -eq 'WindowsFileset' -or $workload -eq 'LinuxFileset') {
+    $location = $obj.hostName
+    $objSLA = $obj.effectiveSlaDomain.name
   } else {
     $location = $obj.physicalPath[-1].name
     $objSLA = $obj.effectivesladomain.name
@@ -1707,12 +2113,11 @@ foreach ($obj in $objList) {
     "Oldest BKP Expiration" = $oldestBKPExpire
   }
   $resultList += $objInfo
-  $count++
 }
 
-### $objList() contains each object
-### $objList.backups() contains the backup information for each object
-### Can write some logic to loop through $objList().backups() to filter out by a particular date
+### $objList contains each object
+### $objList[].backupList contains the backup information for each object
+### Can write some logic to loop through $objList[].backupList to filter out by a particular date
 
 # Comparison date to flag any objects that don't have archival to ARCH more recent to this date
 $compDate = $date.AddDays(-32)
