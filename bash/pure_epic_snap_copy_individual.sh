@@ -64,6 +64,8 @@
 # Usage: ./pure_epic_snap_copy_individual.sh [config_file]
 # Example: ./pure_epic_snap_copy_individual.sh /rubrik/scripts/dctst.conf
 
+### Instance-specific variables (can be overridden by config file) - BEGIN ###
+
 # Name of the Epic instance (used in log filenames)
 INSTANCE_NAME="epic_instance"
 
@@ -95,6 +97,8 @@ EPIC_AUTOTHAW_CMD="nohup sh -c '(sleep 8m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 
 EPIC_SERVER="mbepicrel"
 EPIC_ID="root"
 
+### Instance-specific variables (can be overridden by config file) - END ###
+
 # If a config file is passed as an argument, source it to override the defaults above
 if [[ -n "$1" ]]; then
   if [[ ! -f "$1" ]]; then
@@ -104,6 +108,8 @@ if [[ -n "$1" ]]; then
   echo "Sourcing config file: $1"
   source "$1"
 fi
+
+### Derived variables (not overridden by config file) - BEGIN ###
 
 # Directory where script files will be located and run from
 SNAPDIR="."
@@ -132,6 +138,8 @@ if [[ -n "$DELETED_LOGS" ]]; then
   echo "$DELETED_LOGS"
   echo ""
 fi
+
+### Derived variables (not overridden by config file) - END ###
 
 ### VARIABLES - END ###
 
