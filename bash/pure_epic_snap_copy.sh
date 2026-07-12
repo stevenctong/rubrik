@@ -1,14 +1,45 @@
 #!/bin/bash
-
-# Script should be in location: ${SNAPDIR}
+#
+# Author: Steven Tong (Rubrik)
+# Date Updated: 7/12/26
+#
+# Description:
+# Refreshes Epic IRIS ODB volumes on a Proxy VM by creating a Pure Storage
+# Protection Group (PG) snapshot and copying the volumes to the target volumes.
+# The script dynamically discovers source volumes from the PG and maps them
+# to target volumes by replacing the SOURCE_VOL_PREFIX with TARGET_VOL_PREFIX
+# (the volume number suffix carries over automatically).
+#
+# The script unmounts the target, destroys any previous PG snapshots with the
+# configured suffix, creates a new PG snapshot, optionally freezes/thaws the
+# Epic IRIS instance, copies the snapshots to the target volumes, and re-mounts.
+#
+# Usage:
+#   ./pure_epic_snap_copy.sh
+#
+# Script should be in a location that contains: "/rubrik/scripts" in the path
+# Script location can be defined at: ${SNAPDIR}
 # Create a sub-directory "/logs" under ${SNAPDIR} for logs
-
-# Ensure that the SSH public key of the backup proxy host is configured on
-# the Pure Array and the Epic IRIS ODB host under the appropriate users.
-# - Backup proxy SSH public key is similar to: ~/.ssh/id_rsa.pub
-# - Pure Array add to: Settings -> Access -> Users -> "..." -> Edit User -> Public Key
-# - IRIS ODB host add to: ~/.ssh/authorized_keys
-
+#
+# Setup: Configuring the Proxy VM Target Volumes (TARGET_VOL_PREFIX)
+# The first snapshot copy will auto-create the target volumes on the Pure array.
+# After the volumes are created, you still need to map and attach them:
+# 1. Run the script once to create the PG snapshot and copy to target volumes
+#    (the copy command auto-creates the target volumes on the Pure array)
+# 2. Map the new volumes to the host or host group of the ESXi cluster that the
+#    Proxy VM resides on
+# 3. Attach the new volumes as Raw Device Mappings (RDM) to the Proxy VM
+# 4. Set "TARGET_VOL_PREFIX" to the naming prefix of these volumes
+# 5. For first-time setup on the Proxy VM, follow the Linux or AIX steps below
+#    to discover, activate, and mount the LUN
+# On subsequent runs, the target volumes already exist and are overwritten in place.
+#
+# Setup: SSH Key Configuration
+# The Proxy VM uses SSH to run commands on the Pure array and the Epic IRIS ODB
+# host. Copy the Proxy VM's public key (~/.ssh/id_rsa.pub) to both targets:
+# 1. Pure Array: Settings -> Access -> Users -> select user -> Edit User -> Public Key
+# 2. IRIS ODB host: append to ~/.ssh/authorized_keys for the EPIC_ID user
+#
 # For AIX: When copying LUNs for the first time to the proxy host:
 # 1. "lspv" - display all physical disks
 # 2. "chdev -l hdisk4 -a pv=yes" - create a PV from the disk
@@ -18,33 +49,27 @@
 # 6. "lslv <lv_name>" - check LV info
 # 7. "lsfs | grep <lv_name>" - check file system info on LV
 # 8. "mount -o cio /dev/<lv_name> <mount_point>" - mount the LV to a mount point w/'cio'
-
+#
 # For Linux: When copying LUNs for the first time to the proxy host:
-# 1. "lsblk" - display all physical disks
-# 2. "blkid </dev/sdb>>" - Check the physical disk signature to confirm LVM
-# 3. "lvmdevices --adddev /dev/sdb" - Add the device to be discoverable
-# 4. "cat /etc/lvm/devices/system.devices" - Check that the device is added
-# 5. "pvscan" - Scan for new PVs
-# 6. "pvs", "lvs", "vgs" - check PV, LV, VG info
-# 7. "vgchange -ay" - Active discovered VGs
-# 8. "ls -l /dev/mapper" - Find device mapper paths for LVs
-# 9. "mount /dev/mapper/prdvg-prd01 /epic/prd01" - Mount the LV to a mount point
-
+# 1. "echo 1 > /sys/block/sdaf/device/rescan" - rescan the physical volumes
+# 2. "lsblk" - display all physical disks, confirm size
+# 3. "blkid </dev/sdb>" - check the physical disk signature to confirm LVM
+# 4. "pvresize /dev/sdaf" - resize the PV to what it should be
+# 5. "pvs /dev/sdaf" - get the name of the volume group on the PV
+# 6. "vgchange -an epicdctstvg" - vary off the volume group
+# 7. "vgchange -ay epicdctstvg" - vary on the volume group
+# 8. "ls -l /dev/mapper" - find the device mapper paths for LVs
+# 9. "mount /dev/mapper/epicdctstvg-dctstlv001 /mnt/dctst" - mount the LV to a mount point
 
 ### VARIABLES - BEGIN ###
 
+### Instance-specific variables - BEGIN ###
+
+# Name of the Epic instance (used in log filenames)
+INSTANCE_NAME="epic_instance"
+
+# Whether or not to execute the Epic IRIS freeze / thaw for testing
 EXECUTE_EPIC="false"
-
-# Directory where script files will be located and run from
-SNAPDIR="."
-
-# Current date time & location of the logfile
-LAUNCHTIME=`date +%Y-%m-%d_%H%M`
-LOGFILE="${SNAPDIR}/logs/puresnaplog-${LAUNCHTIME}.log"
-touch $LOGFILE
-
-# Lock file to check if the script is already running
-REFRESH_LOCK_FILE="${SNAPDIR}/puresnaplockfile"
 
 # Pure array hostname and username
 PURE_ARRAY="sjc-rcf-pure04.stor.rubrik.com"
@@ -52,12 +77,14 @@ PURE_USER="perf-admin"
 
 # Pure - Name of the Protection Group that the IRIS volumes belong to
 SOURCE_PG_GROUP="Epic-PGPROD"
-# Pure - This suffix will be appended to the PG Snap along with YYYY.MM.DD
-#  <SOURCE_PG_GROUP>.<SOURCE_SNAP_SUFFIX>-YYYY-MM-DD
+# Pure - This suffix will be appended to the PG Snap along with YYYY-MM-DD-HHMM
+#  <SOURCE_PG_GROUP>.<SOURCE_SNAP_SUFFIX>-YYYY-MM-DD-HHMM
 SOURCE_SNAP_SUFFIX="rubriksnap"
-# Pure - Source IRIS volumes - The naming prefix, with a suffix of "##"
+# Pure - Source IRIS volumes naming prefix (volumes are discovered from the PG)
+# The script maps source to target by replacing SOURCE_VOL_PREFIX with TARGET_VOL_PREFIX
 SOURCE_VOL_PREFIX="RNO-Stor-Tier1-EpicODB-PRD/RNO_Stor_Tier1_EpicODB_PRD_PRD1_"
-# Pure - Target IRIS volumes - The naming prefix, with a suffix of "##"
+
+# Pure - Target IRIS volumes naming prefix on the Proxy VM
 TARGET_VOL_PREFIX="RNO-Stor-Tier1-EpicODB-PRD-BAKPRX/RNO-Stor-Tier1-EpicODB-PRD-BAKPRX-"
 
 # The mount point details for the backup proxy
@@ -79,6 +106,49 @@ EPIC_ID="root"
 # JFS2_THAW_CMD="chfs -a freeze=off /epic/sup01 ; chfs -a freeze=off /epic/sup02 ; chfs -a freeze=off /epic/sup03 ; chfs -a freeze=off /epic/sup04"
 # JFS2_AUTOTHAW_CMD="nohup sh -c '(sleep 1m && ${JFS2_THAW_CMD}) > /dev/null 2>&1 &'"
 
+### Instance-specific variables - END ###
+
+# Check the shell that the script is currently running in
+CURRENT_SHELL=$(ps -p $$ -o args=)
+
+# Split comma-separated mount point lists into arrays
+if [[ "$CURRENT_SHELL" == *ksh* ]]; then
+    IFS=',' set -A MOUNT_POINTS_ARRAY $MOUNT_POINTS
+    IFS=',' set -A DEV_LV_ARRAY $DEV_LV
+else
+    IFS=',' read -ra MOUNT_POINTS_ARRAY <<< "$MOUNT_POINTS"
+    IFS=',' read -ra DEV_LV_ARRAY <<< "$DEV_LV"
+fi
+IFS=$' \t\n'
+
+### Derived variables (not overridden) - BEGIN ###
+
+# Directory where script files will be located and run from
+SNAPDIR="."
+
+# Lock file to check if the script is already running
+REFRESH_LOCK_FILE="${SNAPDIR}/puresnaplockfile"
+
+# Number of days of log files to keep, older logs will be deleted
+LOG_RETENTION_DAYS=60
+
+# Current date time & location of the logfile
+LAUNCHTIME=$(date +%Y-%m-%d_%H%M)
+LOGDIR="${SNAPDIR}/logs"
+LOGFILE="${LOGDIR}/puresnaplog-${INSTANCE_NAME}-${LAUNCHTIME}.log"
+mkdir -p "${LOGDIR}"
+touch $LOGFILE
+
+# Delete log files older than the retention period
+DELETED_LOGS=$(find "${LOGDIR}" -name "puresnaplog-*.log" -type f -mtime +${LOG_RETENTION_DAYS} -print -exec rm -f {} \; 2>/dev/null)
+if [[ -n "$DELETED_LOGS" ]]; then
+  echo "Cleaned up log files older than ${LOG_RETENTION_DAYS} days:"
+  echo "$DELETED_LOGS"
+  echo ""
+fi
+
+### Derived variables (not overridden) - END ###
+
 ### VARIABLES - END ###
 
 exit_failed() {
@@ -88,11 +158,18 @@ exit_failed() {
     # EMAILBODY=${EMAILMSG}${EMAILLOG}
     #FN_email_log ${ADMINEMAILS} ${SUBJECT} ${EMAILBODY}
     rm $REFRESH_LOCK_FILE
-    # exit 1
+    exit 1
 }
 
-echo "Starting Pure IRIS ODB snap refresh script on $(hostname)"
+# Redirect all output to both stdout and the log file (bash only, ksh does not support process substitution)
+if [[ "$CURRENT_SHELL" != *ksh* ]]; then
+  exec &> >(tee -a "${LOGFILE}")
+fi
+
+echo "Starting Pure IRIS ODB PG snap refresh script on $(hostname)"
 echo "Current date is: $(date)"
+echo "Currently running shell: ${CURRENT_SHELL}"
+echo "Log file: ${LOGFILE}"
 echo ""
 
 # Check if there is an existing lock file, if so then exit
@@ -115,28 +192,6 @@ if [ "$EXECUTE_EPIC" = "true" ]; then
   # JFS_AUTOTHAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_AUTOTHAW_CMD} 2>&1)
 fi
 
-# Check the shell that the script is currently running in
-CURRENT_SHELL=$(ps -p $$ -o args=)
-echo "Currently running shell: ${CURRENT_SHELL}"
-
-# Initialize the mount point arrays differently based on shell
-if [[ "$CURRENT_SHELL" == *ksh* ]]; then
-    echo "Defining mount point arrays for KornShell..."
-    IFS=',' set -A MOUNT_POINTS_ARRAY $MOUNT_POINTS
-    IFS=',' set -A DEV_LV_ARRAY $DEV_LV
-fi
-
-# Comment this out if using ksh
-if [[ "$CURRENT_SHELL" != *ksh* ]]; then
-    echo "Defining mount point arrays for Bash..."
-    IFS=','
-    MOUNT_POINTS_ARRAY=($MOUNT_POINTS)
-    DEV_LV_ARRAY=($DEV_LV)
-fi
-echo ""
-
-IFS=$' \t\n'  # Restore IFS to its default value
-
 # Un-mount the mount points. This will also ensure that if the script fails to
 # complete a refresh and re-mount, then if a backup runs it will fail since no
 # files will be found.
@@ -151,7 +206,7 @@ while [ $i -lt $ARRAY_LENGTH ]; do
 done
 
 echo ""
-echo "Starting Pure snap and copy process."
+echo "Starting Pure PG snap and copy process."
 echo ""
 
 echo "Getting volume information for PG: ${SOURCE_PG_GROUP}"
@@ -166,12 +221,11 @@ if [[ -z "${PGOUTPUT}" ]]; then
 fi
 
 PGVOLUMES=$(echo "$PGOUTPUT" | sed -n 's/.*Volumes=//p')
-echo "$PGVOLUMES" > "${SNAPDIR}/volumes.txt"
 echo "Found volumes for PG: ${SOURCE_PG_GROUP}"
 echo ${PGVOLUMES}
 echo ""
 
-echo "Checking for existing Rubrik PG snaps to destroy."
+echo "Checking for existing PG snaps to destroy."
 echo "Running Pure CLI: purepgroup list ${SOURCE_PG_GROUP} --snap --notitle"
 echo ""
 PGSNAPLIST=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup list ${SOURCE_PG_GROUP} --snap --notitle")
@@ -181,7 +235,7 @@ if [[ -z "$RUBRIKSNAPS" ]]; then
   echo "No PG snapshots found matching ${SOURCE_SNAP_SUFFIX}."
   echo ""
 else
-  echo "Found the following PG snapshot(s) with Rubrik suffix: ${SOURCE_SNAP_SUFFIX}"
+  echo "Found the following PG snapshot(s) with suffix: ${SOURCE_SNAP_SUFFIX}"
   echo ${RUBRIKSNAPS}
   echo ""
   IFS=$'\n'
@@ -197,12 +251,11 @@ else
       echo ""
     fi
   done
-  IFS=$' \t\n'  # Restore IFS to its default value
+  IFS=$' \t\n'
 fi
 
 echo "Creating PG snapshot of PG: ${SOURCE_PG_GROUP}"
-# Get the current date and format the suffix for the new PG snapshot
-CURRENT_DATE=$(date +%Y-%m-%d)
+CURRENT_DATE=$(date +%Y-%m-%d-%H%M)
 PG_SNAP_SUFFIX="${SOURCE_SNAP_SUFFIX}-${CURRENT_DATE}"
 echo "PG snapshot suffix will be: ${PG_SNAP_SUFFIX}"
 echo ""
@@ -221,8 +274,8 @@ sleep 3
 
 if [ "$EXECUTE_EPIC" = "true" ]; then
   echo "Sending out commands to thaw IRIS ODB"
-  # JFS2_THAW_RESULT=$(/usr/bin/ssh ${EPIC_PUBKEY_PATH} ${EPIC_ID}@${EPIC_SERVER} ${JFS2_THAW_CMD} 2>&1)
-  EPIC_THAW_RESULT=$(/usr/bin/ssh ${EPIC_PUBKEY_PATH} ${EPIC_ID}@${EPIC_SERVER} ${EPIC_THAW_CMD} 2>&1)
+  # JFS2_THAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_THAW_CMD} 2>&1)
+  EPIC_THAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_THAW_CMD} 2>&1)
 fi
 
 echo "Copying source volumes to target volumes"
@@ -235,9 +288,7 @@ echo ""
 
 IFS=','
 for SOURCE_VOL in $PGVOLUMES; do
-  echo ${SOURCE_VOL}
   TARGET_VOL=$(echo "$SOURCE_VOL" | sed "s|^$SOURCE_VOL_PREFIX|$TARGET_VOL_PREFIX|")
-  # TARGET_VOL=$(echo "$SOURCE_VOL" | sed "s/^$SOURCE_VOL_PREFIX/$TARGET_VOL_PREFIX/")
   echo "Copying source volume: $SOURCE_VOL to target volume: $TARGET_VOL"
   echo "Running Pure CLI: purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force"
   COPYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force" 2>&1)
@@ -248,12 +299,10 @@ for SOURCE_VOL in $PGVOLUMES; do
   echo "$COPYRESULT"
   echo ""
 done
-IFS=$' \t\n'  # Restore IFS to its default value
+IFS=$' \t\n'
 
-# Print the arrays to verify
-echo "Mount Base: $MOUNT_BASE"
-echo "Mount Points Array: ${MOUNT_POINTS}"
-echo "Device Logical Volumes Array: ${DEV_LV}"
+echo "Mounting file systems"
+echo ""
 
 ARRAY_LENGTH=${#MOUNT_POINTS_ARRAY[@]}
 i=0
@@ -271,3 +320,8 @@ while [ $i -lt $ARRAY_LENGTH ]; do
     fi
     i=$((i + 1))
 done
+
+echo ""
+echo "Script completed successfully."
+rm $REFRESH_LOCK_FILE
+exit 0

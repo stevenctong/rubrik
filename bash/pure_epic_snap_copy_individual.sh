@@ -23,15 +23,18 @@
 # Create a sub-directory "/logs" under ${SNAPDIR} for logs
 #
 # Setup: Configuring the Proxy VM Target Volume(s) (TARGET_VOLUME)
-# Repeat steps 1-3 for each target volume if the VG has multiple PVs.
-# 1. On the Pure array, create a new volume of any size (the size does not matter
-#    as the source snapshot copy will overwrite it)
-# 2. Map the new volume to the host or host group of the ESXi cluster that the
+# The first snapshot copy will auto-create the target volume(s) on the Pure array.
+# After the volumes are created, you still need to map and attach them:
+# 1. Run the script once to create the snapshot and copy to target volume(s)
+#    (the copy command auto-creates the target volumes on the Pure array)
+# 2. Map the new volume(s) to the host or host group of the ESXi cluster that the
 #    Proxy VM resides on
-# 3. Attach the new volume as a Raw Device Mapping (RDM) to the Proxy VM
+# 3. Attach the new volume(s) as Raw Device Mappings (RDM) to the Proxy VM
 # 4. The name(s) of these volumes on the Pure array go in the "TARGET_VOLUME" variable
 # 5. For first-time setup on the Proxy VM, follow the Linux or AIX steps below
 #    to discover, activate, and mount the LUN
+# On subsequent runs, the target volumes already exist and are overwritten in place.
+# Repeat steps 2-3 for each target volume if the VG has multiple PVs.
 #
 # Setup: SSH Key Configuration
 # The Proxy VM uses SSH to run commands on the Pure array and the Epic IRIS ODB
