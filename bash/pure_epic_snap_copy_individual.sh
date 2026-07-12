@@ -4,11 +4,12 @@
 # Date Updated: 7/10/26
 #
 # Description:
-# Refreshes an Epic IRIS ODB volume on a Proxy VM by creating a Pure Storage
-# snapshot of the source volume and copying it to the target volume. The script
-# unmounts the target, destroys any previous snapshots with the configured suffix,
-# creates a new snapshot, optionally freezes/thaws the Epic IRIS instance, copies
-# the snapshot to the target volume, and re-mounts it.
+# Refreshes Epic IRIS ODB volume(s) on a Proxy VM by creating Pure Storage
+# snapshots of the source volume(s) and copying them to the target volume(s).
+# Supports multiple volumes for VG/LVM setups with a 1:1 source-to-target mapping.
+# The script unmounts the target, destroys any previous snapshots with the
+# configured suffix, creates new snapshots, optionally freezes/thaws the Epic
+# IRIS instance, copies the snapshots to the target volumes, and re-mounts.
 #
 # Supports multiple Epic instances by passing an optional config file as an
 # argument to override the default variables (see .conf example file).
@@ -21,13 +22,14 @@
 # Script location can be defined at: ${SNAPDIR}
 # Create a sub-directory "/logs" under ${SNAPDIR} for logs
 #
-# Setup: Configuring the Proxy VM Target Volume (TARGET_VOLUME)
+# Setup: Configuring the Proxy VM Target Volume(s) (TARGET_VOLUME)
+# Repeat steps 1-3 for each target volume if the VG has multiple PVs.
 # 1. On the Pure array, create a new volume of any size (the size does not matter
 #    as the source snapshot copy will overwrite it)
 # 2. Map the new volume to the host or host group of the ESXi cluster that the
 #    Proxy VM resides on
 # 3. Attach the new volume as a Raw Device Mapping (RDM) to the Proxy VM
-# 4. The name of this volume on the Pure array is the "TARGET_VOLUME" variable
+# 4. The name(s) of these volumes on the Pure array go in the "TARGET_VOLUME" variable
 # 5. For first-time setup on the Proxy VM, follow the Linux or AIX steps below
 #    to discover, activate, and mount the LUN
 #
@@ -76,14 +78,20 @@ EXECUTE_EPIC="false"
 PURE_ARRAY="sjc-rcf-pure04.stor.rubrik.com"
 PURE_USER="perf-admin"
 
-# Pure - This is the name of the source IRIS ODB volume on the Pure array
+# Pure - source IRIS ODB volume(s) on the Pure array
+# For multiple volumes (e.g. VG with multiple PVs), use comma-separated values
+# Each source volume maps 1:1 to the corresponding target volume by position
 SOURCE_VOLUME="iris_sourcevol"
-# Pure - This suffix will be appended to the Volume Snap along with YYYY-MM-DD
-#  <SOURCE_VOLUME>.<SOURCE_SNAP_SUFFIX>-YYYY-MM-DD_HHMM
+# SOURCE_VOLUME="iris_sourcevol1,iris_sourcevol2,iris_sourcevol3"
+
+# Pure - This suffix will be appended to the Volume Snap along with YYYY-MM-DD-HHMM
+#  <SOURCE_VOLUME>.<SOURCE_SNAP_SUFFIX>-YYYY-MM-DD-HHMM
 SOURCE_SNAP_SUFFIX="rubriksnap"
 
-# Pure - Target IRIS volume, the name of the target volume mounted on the Proxy VM that will be refreshed
+# Pure - target IRIS volume(s), the name of the target volume(s) on the Proxy VM that will be refreshed
+# Must have the same number of entries as SOURCE_VOLUME (1:1 mapping)
 TARGET_VOLUME="proxy_iris_vol"
+# TARGET_VOLUME="proxy_target1,proxy_target2,proxy_target3"
 
 # Mount point of the IRIS DB instance
 MOUNT_POINT="/prd01"
@@ -107,6 +115,16 @@ if [[ -n "$1" ]]; then
   fi
   echo "Sourcing config file: $1"
   source "$1"
+fi
+
+# Split comma-separated volume lists into arrays and validate 1:1 mapping
+IFS=',' read -ra SOURCE_VOLUMES <<< "$SOURCE_VOLUME"
+IFS=',' read -ra TARGET_VOLUMES <<< "$TARGET_VOLUME"
+
+if [[ ${#SOURCE_VOLUMES[@]} -ne ${#TARGET_VOLUMES[@]} ]]; then
+  echo "ERROR: SOURCE_VOLUME has ${#SOURCE_VOLUMES[@]} entries but TARGET_VOLUME has ${#TARGET_VOLUMES[@]} entries."
+  echo "Each source volume must map 1:1 to a target volume."
+  exit 1
 fi
 
 ### Derived variables (not overridden by config file) - BEGIN ###
@@ -194,68 +212,78 @@ umount "${MOUNT_POINT}"
 
 echo ""
 echo "Starting Pure snap and copy process."
-echo ""
-
-echo "Getting volume information for: ${SOURCE_VOLUME}"
-echo "Running Pure CLI: purevol list ${SOURCE_VOLUME} --notitle"
-echo ""
-
-VOLOUTPUT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol list ${SOURCE_VOLUME} --notitle")
-
-if [[ -z "${VOLOUTPUT}" ]]; then
-  echo "Volume not found or invalid: ${SOURCE_VOLUME}, exiting..."
-  exit_failed
-fi
-
-echo "Found volume: ${SOURCE_VOLUME}"
-echo ${VOLOUTPUT}
-echo ""
-
-echo "Checking for existing volume snaps to destroy."
-echo "Running Pure CLI: purevol list ${SOURCE_VOLUME} --snap --notitle"
-echo ""
-VOLSNAPLIST=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol list ${SOURCE_VOLUME} --snap --notitle")
-RUBRIKSNAPS=$(echo "$VOLSNAPLIST" | grep "$SOURCE_SNAP_SUFFIX")
-
-if [[ -z "$RUBRIKSNAPS" ]]; then
-  echo "No volume snapshots found matching ${SOURCE_SNAP_SUFFIX}."
-  echo ""
-else
-  echo "Found the following volume snapshots with suffix: ${SOURCE_SNAP_SUFFIX}"
-  echo ${RUBRIKSNAPS}
-  echo ""
-  IFS=$'\n'
-  for SNAP in $RUBRIKSNAPS; do
-    SNAPNAME=$(echo "$SNAP" | awk '{print $1}')
-    echo "Running Pure CLI: purevol destroy ${SNAPNAME}"
-    VOLSNAPDESTROYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol destroy ${SNAPNAME}" 2>&1)
-    if ! echo "$VOLSNAPDESTROYRESULT" | grep -q "Name"; then
-      echo "Failed destroying volume snapshot: ${SNAPNAME}"
-    else
-      echo "Successfully destroyed volume snapshot, SafeMode will handle eradication"
-      echo ${VOLSNAPDESTROYRESULT}
-      echo ""
-    fi
-  done
-  IFS=$' \t\n'  # Restore IFS to its default value
-fi
-
-echo "Creating volume snapshot of: ${SOURCE_VOLUME}"
 CURRENT_DATE=$(date +%Y-%m-%d-%H%M)
 VOL_SNAP_SUFFIX="${SOURCE_SNAP_SUFFIX}-${CURRENT_DATE}"
 echo "Volume snapshot suffix will be: ${VOL_SNAP_SUFFIX}"
+echo "Processing ${#SOURCE_VOLUMES[@]} volume(s)"
 echo ""
 
-echo "Running Pure CLI: purevol snap --suffix ${VOL_SNAP_SUFFIX} ${SOURCE_VOLUME}"
-VOLSNAPRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol snap --suffix ${VOL_SNAP_SUFFIX} ${SOURCE_VOLUME}" 2>&1)
+# Loop 1: Verify volumes, destroy old snapshots, and create new snapshots
+for i in "${!SOURCE_VOLUMES[@]}"; do
+  SRC_VOL="${SOURCE_VOLUMES[$i]}"
+  TGT_VOL="${TARGET_VOLUMES[$i]}"
 
-if ! echo "$VOLSNAPRESULT" | grep -q "Created"; then
-  echo "Failed creating volume snapshot: ${VOLSNAPRESULT}, exiting..."
-  exit_failed
-fi
+  echo "--- Volume $((i+1)) of ${#SOURCE_VOLUMES[@]}: ${SRC_VOL} -> ${TGT_VOL} ---"
+  echo ""
 
-echo ${VOLSNAPRESULT}
-echo ""
+  echo "Getting volume information for: ${SRC_VOL}"
+  echo "Running Pure CLI: purevol list ${SRC_VOL} --notitle"
+  echo ""
+
+  VOLOUTPUT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol list ${SRC_VOL} --notitle")
+
+  if [[ -z "${VOLOUTPUT}" ]]; then
+    echo "Volume not found or invalid: ${SRC_VOL}, exiting..."
+    exit_failed
+  fi
+
+  echo "Found volume: ${SRC_VOL}"
+  echo ${VOLOUTPUT}
+  echo ""
+
+  echo "Checking for existing volume snaps to destroy."
+  echo "Running Pure CLI: purevol list ${SRC_VOL} --snap --notitle"
+  echo ""
+  VOLSNAPLIST=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol list ${SRC_VOL} --snap --notitle")
+  RUBRIKSNAPS=$(echo "$VOLSNAPLIST" | grep "$SOURCE_SNAP_SUFFIX")
+
+  if [[ -z "$RUBRIKSNAPS" ]]; then
+    echo "No volume snapshots found matching ${SOURCE_SNAP_SUFFIX}."
+    echo ""
+  else
+    echo "Found the following volume snapshots with suffix: ${SOURCE_SNAP_SUFFIX}"
+    echo ${RUBRIKSNAPS}
+    echo ""
+    IFS=$'\n'
+    for SNAP in $RUBRIKSNAPS; do
+      SNAPNAME=$(echo "$SNAP" | awk '{print $1}')
+      echo "Running Pure CLI: purevol destroy ${SNAPNAME}"
+      VOLSNAPDESTROYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol destroy ${SNAPNAME}" 2>&1)
+      if ! echo "$VOLSNAPDESTROYRESULT" | grep -q "Name"; then
+        echo "Failed destroying volume snapshot: ${SNAPNAME}"
+      else
+        echo "Successfully destroyed volume snapshot, SafeMode will handle eradication"
+        echo ${VOLSNAPDESTROYRESULT}
+        echo ""
+      fi
+    done
+    IFS=$' \t\n'
+  fi
+
+  echo "Creating volume snapshot of: ${SRC_VOL}"
+  echo "Running Pure CLI: purevol snap --suffix ${VOL_SNAP_SUFFIX} ${SRC_VOL}"
+  VOLSNAPRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol snap --suffix ${VOL_SNAP_SUFFIX} ${SRC_VOL}" 2>&1)
+
+  if ! echo "$VOLSNAPRESULT" | grep -q "Created"; then
+    echo "Failed creating volume snapshot: ${VOLSNAPRESULT}, exiting..."
+    exit_failed
+  fi
+
+  echo ${VOLSNAPRESULT}
+  echo ""
+
+done
+
 sleep 3
 
 if [ "$EXECUTE_EPIC" = "true" ]; then
@@ -264,20 +292,27 @@ if [ "$EXECUTE_EPIC" = "true" ]; then
   EPIC_THAW_RESULT=$(/usr/bin/ssh ${EPIC_PUBKEY_PATH} ${EPIC_ID}@${EPIC_SERVER} ${EPIC_THAW_CMD} 2>&1)
 fi
 
-echo "Copying source volume snapshot to target volume"
-echo ""
-echo "Source volume: ${SOURCE_VOLUME}"
-echo "Target volume: ${TARGET_VOLUME}"
+# Loop 2: Copy each snapshot to its corresponding target volume
+echo "Copying source volume snapshots to target volumes"
 echo ""
 
-echo "Running Pure CLI: purevol copy --overwrite ${SOURCE_VOLUME}.${VOL_SNAP_SUFFIX} ${TARGET_VOLUME}"
-COPYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol copy --overwrite ${SOURCE_VOLUME}.${VOL_SNAP_SUFFIX} ${TARGET_VOLUME}" 2>&1)
-if ! echo "$COPYRESULT" | grep -q "Created"; then
-  echo "Failed copy volume: ${COPYRESULT}, exiting..."
-  exit_failed
-fi
-echo "$COPYRESULT"
-echo ""
+for i in "${!SOURCE_VOLUMES[@]}"; do
+  SRC_VOL="${SOURCE_VOLUMES[$i]}"
+  TGT_VOL="${TARGET_VOLUMES[$i]}"
+
+  echo "--- Copy $((i+1)) of ${#SOURCE_VOLUMES[@]}: ${SRC_VOL}.${VOL_SNAP_SUFFIX} -> ${TGT_VOL} ---"
+  echo ""
+
+  echo "Running Pure CLI: purevol copy --overwrite ${SRC_VOL}.${VOL_SNAP_SUFFIX} ${TGT_VOL}"
+  COPYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol copy --overwrite ${SRC_VOL}.${VOL_SNAP_SUFFIX} ${TGT_VOL}" 2>&1)
+  if ! echo "$COPYRESULT" | grep -q "Created"; then
+    echo "Failed copy volume: ${COPYRESULT}, exiting..."
+    exit_failed
+  fi
+  echo "$COPYRESULT"
+  echo ""
+
+done
 
 echo "Mounting: ${DEV_LV} to: ${MOUNT_POINT}"
 # mount -o cio ${DEV_LV} ${MOUNT_POINT}
