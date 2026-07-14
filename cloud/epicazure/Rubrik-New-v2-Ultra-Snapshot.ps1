@@ -1,4 +1,3 @@
-# https://www.rubrik.com/api
 <#
 .SYNOPSIS
 This script will create a snapshot and disk clone for Epic IRIS ODB backups
@@ -8,12 +7,9 @@ in Azure for v2 / Ultra SSDs.
 This script will create a snapshot and disk clone for Epic IRIS ODB backups
 in Azure for v2 / Ultra SSDs.
 
-This script works with the following config file:
-- rubrik_az_config_rubrik.yml
+This script works with a PSD1 config file (see rubrik_az_config.psd1).
 
-The only config values contained in this script file are:
-1) Log file path and filenames
-2) IRIS ODB freeze / thaw commands
+# TODO: Add support for Azure Instant Snapshots (eliminates background copy wait)
 
 The script supports creating the snapshots from a Prod VM in one subscription
 and creating the clone of the disks to a Proxy VM in another subscription.
@@ -37,20 +33,20 @@ The script performs the following tasks:
    ** unmount <mount_points>
    ** vgchange -an <volume_groups>
 8. Azure - Find Managed Disks with 'rubrik' on the Proxy VM and detaches & deletes them
-9. Azure - Mounts the newly cloned Managed Disk onto theProxy VM
+9. Azure - Mounts the newly cloned Managed Disk onto the Proxy VM
 10. Proxy VM - Re-Mount the refreshed Managed Disk
-   ** vgchange -ay <volume_groups
+   ** vgchange -ay <volume_groups>
    ** mount <using dev mapper>
 11. Rubrik backup begins
 
-The snapshot and the cloned Managed Disks wil be the same name as the source disk
+The snapshot and the cloned Managed Disks will be the same name as the source disk
 but appended with a 'suffix' and datestamped.
 
 .NOTES
 Written by Steven Tong for usage with Rubrik
 GitHub: stevenctong
 Date: 8/30/24
-Updated: 10/18/24
+Updated: 7/12/26
 
 PRE-REQUISITES:
 1. IRIS PROD VM has the Proxy VM keys as 'authorized_keys' for SSH commands
@@ -74,18 +70,21 @@ PRE-REQUISITES:
     "Microsoft.Compute/virtualMachines/write"
   ]
 
+ .PARAMETER configFile
+ Path to the PSD1 config file containing all instance-specific variables.
+ See rubrik_az_config.psd1 for an example.
+
  .EXAMPLE
- ./Rubrik-New-v2-Ultra-Snapshot.ps1 -configFile 'rubrik_az_config.yml'
- Execute the scripts according to the variables in the config file. Specify
+ ./Rubrik-New-v2-Ultra-Snapshot.ps1 -configFile 'rubrik_az_config.psd1'
+ Execute the script according to the variables in the config file. Specify
  variables such as mount points, VG, and LV within the config file.
 
 #>
 
+[CmdletBinding()]
 param (
-  [CmdletBinding()]
-  # Location of the YAML config file
   [Parameter(Mandatory=$true)]
-  [string]$configFile = ''
+  [string]$configFile
 )
 
 Import-Module Az.Accounts
@@ -103,44 +102,18 @@ $dateString = $date.ToString("yyyy-MM-dd_HHmm")
 
 ##### BEGIN - VARIABLES #####
 
-
-Function ConvertFrom-Yaml {
-  param (
-    [string]$YamlContent
-  )
-  $yamlLines = $YamlContent -split "`n"
-  # Create a hashtable to store the converted data
-  $result = @{}
-  foreach ($line in $yamlLines) {
-    if ($line -match '^\s*([^:]+):\s*(.+)\s*$') {
-      $key = $matches[1].Trim()
-      $value = $matches[2].Trim()
-      $result[$key] = $value
-      } elseif ($line -match '^\s*([^:]+):\s*$') {
-        $key = $matches[1].Trim()
-        $value = @{}
-        $result[$key] = $value
-      }
-    }
-    return $result
-}
-
 if (-Not (Test-Path $configFile)) {
   throw "File not found: $configFile"
-} else {
-  $yamlContent = Get-Content -Path $configFile -Raw
 }
 
-$configData = ConvertFrom-Yaml -YamlContent $yamlContent
+$configData = Import-PowerShellDataFile -Path $configFile
 
-$irisName = $configData.IRISNAME
+# Create local variables from all config keys
+foreach ($key in $configData.Keys) {
+  New-Variable -Name $key -Value $configData[$key] -Force
+}
 
-# Directory to write logs to
-$logDir = $configData.logDir
-# Filename of the log when stored in the path. The filename will be appended
-# with: $logFilename-$dateString.log or $logFilename-$irisName-$dateString.log
-$logFilename = $configData.logFilename
-
+# Log path derived from config values + date
 if ($irisName) {
   $logPath = $logDir + '/' + $logFilename + '-' + $irisName + '-' + $dateString + '.log'
 } else {
@@ -148,132 +121,116 @@ if ($irisName) {
 }
 
 Start-Transcript -path $logPath -append
-Write-Host "Starting log capture to: $logPath"
 
-$MOUNT_BASE = $configData.MOUNT_BASE
-$MOUNTS = $configData.MOUNTS
-$VGS = $configData.VGS
-$LVS = $configData.LVS
-
-$azDiskNames = $configData.azDiskNames
-
-# IRIS freeze / thaw commands
+Write-Host ""
+Write-Host "Starting Azure snapshot and clone script on $(hostname)"
+Write-Host "Config file: $configFile"
+Write-Host "Date: $date"
+Write-Host "Date string (appended to resources): $dateString"
+Write-Host "Log file: $logPath"
 if ($irisName) {
-  $EPIC_FREEZE = "sudo /epic/${irisName}/bin/instfreeze"
-  $EPIC_THAW = "sudo /epic/${irisName}/bin/instthaw"
-} else {
-  $EPIC_FREEZE = $configData.EPIC_FREEZE
-  $EPIC_THAW = $configData.EPIC_THAW
+  Write-Host "IRIS instance: $irisName"
 }
+Write-Host ""
+Write-Host "Execution flags:"
+Write-Host "  Epic commands: $executeEpicCommands"
+Write-Host "  Connect to Azure: $executeConnectToAzure"
+Write-Host "  Azure cleanup: $executeAzureCleanup"
+Write-Host "  Azure snapshot: $executeAzureSnapshot"
+Write-Host "  Managed Disk clone: $executeManagedDiskClone"
+Write-Host "  Proxy disk unmount: $executeProxyDiskUnmountCommands"
+Write-Host "  Azure disk detach: $executeAzureDiskDetach"
+Write-Host "  Azure disk attach: $executeAzureDiskAttach"
+Write-Host "  Proxy mount: $executeProxyMountCommands"
+Write-Host ""
 
-$EPIC_FREEZE_CMD = $EPIC_FREEZE
-$EPIC_THAW_CMD = $EPIC_THAW
-$EPIC_AUTOTHAW = "nohup sh -c '(sleep 5m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
-$EPIC_AUTOTHAW_CMD = $EPIC_AUTOTHAW
+# Delete log files older than 60 days
+$logRetentionDays = 60
+$logCutoff = $date.AddDays(-$logRetentionDays)
+Get-ChildItem -Path $logDir -Filter "${logFilename}*.log" -ErrorAction SilentlyContinue |
+  Where-Object { $_.LastWriteTime -lt $logCutoff } |
+  ForEach-Object {
+    Write-Host "Deleting log older than $logRetentionDays days: $($_.Name)"
+    Remove-Item $_.FullName -Force
+  }
 
-$EPIC_PRD_SERVER = $configData.EPIC_PRD_SERVER
-$EPIC_PRD_USER = $configData.EPIC_PRD_USER
-
-$snapDaysToKeep = [int]$configData.snapDaysToKeep
-$clonedDisksDaysToKeep = [int]$configData.clonedDisksDaysToKeep
-$sourceSubscriptionId = $configData.sourceSubscriptionId
-$sourceResourceGroup = $configData.sourceResourceGroup
-$targetSubscriptionId = $configData.targetSubscriptionId
-$targetResourceGroup = $configData.targetResourceGroup
-$proxyVM = $configData.proxyVM
-
-$sourceSnapshotSuffix = $configData.sourceSnapshotSuffix
-$targetDiskSuffix = $configData.targetDiskSuffix
-
-$executeEpicCommands = [bool]::Parse($configData.executeEpicCommands)
-$executeConnectToAzure = [bool]::Parse($configData.executeConnectToAzure)
-$executeAzureCleanup = [bool]::Parse($configData.executeAzureCleanup)
-$executeAzureSnapshot = [bool]::Parse($configData.executeAzureSnapshot)
-$executeManagedDiskClone = [bool]::Parse($configData.executeManagedDiskClone)
-$executeProxyDiskUnmountCommands = [bool]::Parse($configData.executeProxyDiskUnmountCommands)
-$executeAzureDiskDetach = [bool]::Parse($configData.executeAzureDiskDetach)
-$executeAzureDiskAttach = [bool]::Parse($configData.executeAzureDiskAttach)
-$executeProxyMountCommands = [bool]::Parse($configData.executeProxyMountCommands)
-$sendMail = [bool]::Parse($configData.sendMail)
-
-$DiskMBpsReadWrite = [int]$configData.DiskMBpsReadWrite
-$DiskMBpsReadOnly = [int]$configData.DiskMBpsReadOnly
-$DiskIOPSReadWrite = [int]$configData.DiskIOPSReadWrite
-$DiskIOPSReadOnly = [int]$configData.DiskIOPSReadOnly
-
-$statusCheckSecs = [int]$configData.statusCheckSecs
-
-$emailToConfig = $configData.emailTo
-$emailFrom = $configData.emailFrom
-$SMTPServer = $configData.SMTPServer
-$emailSubjectConfig = $configData.emailSubject
-
-$emailTo = @()
-$emailTo = [array]($emailToConfig -split ',').ForEach{ $_.Trim() }
-
+# IRIS freeze / thaw commands - derived from irisName or config
 if ($irisName) {
-  $emailSubject = $emailSubjectConfig + " - " + $irisName + " - " + $date.ToString("yyyy-MM-dd HH:MM")
+  $EPIC_FREEZE_CMD = "sudo /epic/${irisName}/bin/instfreeze"
+  $EPIC_THAW_CMD = "sudo /epic/${irisName}/bin/instthaw"
 } else {
-  $emailSubject = $emailSubjectConfig + " - " + $date.ToString("yyyy-MM-dd HH:MM")
+  $EPIC_FREEZE_CMD = $EPIC_FREEZE
+  $EPIC_THAW_CMD = $EPIC_THAW
 }
+$EPIC_AUTOTHAW_CMD = "nohup sh -c '(sleep 5m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
 
-# List of source disks provided by $azDiskNames either passed as a parameter
-# or defined in the config file
-$sourceDisks = @()
-$sourceDisks = ($azDiskNames -split ',').ForEach{ $_.Trim() }
-
-# MOUNT_LIST holds the list of mounts that will be mounted under $MOUNT_BASE
-# VG_LIST holds the list of volume group names
-# LV_LIST holds the list of logical volume names
-#
-# If $irisName is defined, these are calculated based on the $irisName
-# Otherwise, it will look for a comma seprated list of values provided in
-# the config file.
-
-# Initialize the lists
-$MOUNT_LIST = @()
-$VG_LIST = @()
-$LV_LIST = @()
-
-# If $irisName is provided, derives each value based on $irisName
+# Email subject derived from config + irisName + date
 if ($irisName) {
-  $MOUNT_LIST = ($irisName -split ',').ForEach{ $_.Trim() }
-  $MOUNT_LIST = $MOUNT_LIST.ForEach{ '/' + $_ + '01' }
-  $VG_LIST = ($irisName -split ',').ForEach{ $_.Trim() }
-  $VG_LIST = $VG_LIST.ForEach{ $_ + 'vg' }
-  $LV_LIST = ($irisName -split ',').ForEach{ $_.Trim() }
-  $LV_LIST = $LV_LIST.ForEach{ 'lv_' + $_ }
-
+  $emailSubject = $emailSubject + " - " + $irisName + " - " + $date.ToString("yyyy-MM-dd HH:mm")
 } else {
-  # Otherwise, config file will provide a comma separated list for each
-  $MOUNT_LIST = ($MOUNTS -split ',').ForEach{ $_.Trim() }
-  $VG_LIST = ($VGS -split ',').ForEach{ $_.Trim() }
-  $LV_LIST = ($LVS -split ',').ForEach{ $_.Trim() }
+  $emailSubject = $emailSubject + " - " + $date.ToString("yyyy-MM-dd HH:mm")
 }
 
-# Dev-Mapper holds the name of the device that will be mounted
-$DEVMAPPER_LIST = @()
-$VG_COUNT = $VG_LIST.count
-for($i = 0; $i -lt $VG_COUNT; $i++) {
-  $DEVMAPPER = "/dev/mapper/$($VG_LIST[$i])-$($LV_LIST[$i])"
-  $DEVMAPPER_LIST += $DEVMAPPER
+# MOUNT_LIST, VG_LIST, LV_LIST - derived from irisName or config
+if ($irisName) {
+  $MOUNT_LIST = @('/' + $irisName + '01')
+  $VG_LIST = @($irisName + 'vg')
+  $LV_LIST = @('lv_' + $irisName)
+} else {
+  $MOUNT_LIST = $MOUNTS
+  $VG_LIST = $VGS
+  $LV_LIST = $LVS
 }
 
-# # Stores all the mount points, devmapper, VG, and LVM in PSCustomTable array
-# $MOUNTARRAY = @()
-# $MOUNTCOUNT = $MOUNT_LIST.count
-# for ($mount = 0; $mount -lt $mountCount; $mount++) {
-#   $DEVMAPPER = "/dev/mapper/$($VG_LIST[$i])-$($LV_LIST[$i])"
-#   $MOUNTINFO = [PSCustomObject]@{
-#     MOUNT_POINT = $MOUNT_LIST[$mount]
-#     DEVPATH = $DEVMAPPER
-#     VG_NAME = $VG_LIST[$mount]
-#     LV_NAME = $LV_LIST[$mount]
-#   }
-#   $MOUNTARRAY += $MOUNTINFO
-# }
+# Dev-Mapper paths derived from VG and LV lists
+$DEVMAPPER_LIST = for ($i = 0; $i -lt $VG_LIST.count; $i++) {
+  "/dev/mapper/$($VG_LIST[$i])-$($LV_LIST[$i])"
+}
 
 ##### END - VARIABLES #####
+
+# Deletes Azure snapshots or Managed Disks older than a cutoff date.
+# Parses the embedded yyyy-MM-dd_HHmm timestamp from the resource name.
+function Remove-ExpiredAzureResources {
+  param (
+    [string]$ResourceGroup,
+    [array]$Resources,
+    [string]$NameSuffix,
+    [datetime]$CutoffDate,
+    [int]$RetentionDays,
+    [ValidateSet('snapshot','disk')]
+    [string]$ResourceType,
+    [array]$SourceDisks
+  )
+  foreach ($disk in $SourceDisks) {
+    $matchName = "${disk}-${NameSuffix}"
+    $matched = $Resources | Where-Object { $_.Name -match $matchName }
+    foreach ($resource in $matched) {
+      if ($resource.Name -match '\d{4}-\d{2}-\d{2}_\d{4}') {
+        $dateStamp, $time = $matches[0] -split '_'
+        $time = $time.Insert(2, ':')
+        $resourceDate = [datetime]::ParseExact("$dateStamp $time", 'yyyy-MM-dd HH:mm', $null)
+        if ($resourceDate -lt $CutoffDate) {
+          Write-Host "Deleting $ResourceType older than $RetentionDays days: $($resource.Name)"
+          if ($ResourceType -eq 'snapshot') {
+            $result = Remove-AzSnapshot -ResourceGroupName $ResourceGroup -SnapshotName $resource.Name -Force
+          } else {
+            $result = Remove-AzDisk -ResourceGroupName $ResourceGroup -DiskName $resource.Name -Force
+          }
+          Write-Host "$ResourceType deletion result: $($result.Status)"
+        }
+      }
+    }
+  }
+}
+
+# Sends the IRIS ODB thaw command via SSH if Epic commands are enabled
+function Send-EpicThawCommand {
+  if ($executeEpicCommands) {
+    Write-Host "Sending command to thaw IRIS ODB..." -foregroundcolor cyan
+    ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_THAW_CMD} 2>&1
+  }
+}
 
 #### Login to Azure and initialization of some variables ####
 
@@ -301,11 +258,11 @@ if ($executeConnectToAzure) {
   }
   $diskCount = $sourceDisks.count
   Write-Host "Date: $date" -foregroundcolor green
-  Write-Host "Source Subcription ID: $sourceSubscriptionId" -foregroundcolor green
+  Write-Host "Source Subscription ID: $sourceSubscriptionId" -foregroundcolor green
   Write-Host "Source Resource Group: $sourceResourceGroup" -foregroundcolor green
-  Write-Host "Source Snasphot suffix: -${sourceSnapshotSuffix}-${dateString}" -foregroundcolor green
+  Write-Host "Source Snapshot suffix: -${sourceSnapshotSuffix}-${dateString}" -foregroundcolor green
   Write-Host ""
-  Write-Host "Target (Proxy VM) Subcription ID: $sourceSubscriptionId" -foregroundcolor green
+  Write-Host "Target (Proxy VM) Subscription ID: $targetSubscriptionId" -foregroundcolor green
   Write-Host "Target (Proxy VM) Resource Group: $targetResourceGroup" -foregroundcolor green
   Write-Host "Target (Proxy VM) Disk suffix: -${targetDiskSuffix}-${dateString}" -foregroundcolor green
   Write-Host ""
@@ -325,62 +282,23 @@ if ($executeAzureCleanup) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Cleaning up older snapshots and cloned disks `n"
   Set-AzContext -subscription $sourceSubscriptionId
-  $snapDateToKeep = $date.add("-$snapDaysToKeep")
-  Write-Host "Looking for and cleaning up any snapshots older than: $snapDateToKeep" -foregroundcolor green
-  # Get all snapshots in the source resource group
+
+  $snapCutoff = $date.AddDays(-$snapDaysToKeep)
+  Write-Host "Looking for and cleaning up any snapshots older than: $snapCutoff" -foregroundcolor green
   $azSnapshots = Get-AzSnapshot -ResourceGroup $sourceResourceGroup
-  # Loop through each disk that Rubrik is snapshotting
-  foreach ($disk in $sourceDisks) {
-    $rubrikSnapshotName = "${disk}-${sourceSnapshotSuffix}"
-    $rubrikSnapshots = $azSnapshots | Where { $_.Name -match $rubrikSnapshotName }
-    foreach ($rubrikSnap in $rubrikSnapshots) {
-      $dateStringPattern = '\d{4}-\d{2}-\d{2}_\d{4}'
-      if ($rubrikSnap.name -match $dateStringPattern) {
-        $timestamp = $matches[0]
-        # Split the timestamp into date and time parts
-        $dateStamp, $time = $timestamp -split '_'
-        # Reformat the time from HHMM to HH:MM to make it valid
-        $time = $time.Insert(2, ':')
-        # Combine date and time parts into a single string
-        $dateTimeString = "$dateStamp $time"
-        # Convert to DateTime object
-        $snapDateTime = [datetime]::ParseExact($datetimeString, 'yyyy-MM-dd HH:mm', $null)
-        if ($snapDateTime -lt $snapDateToKeep) {
-          Write-Host "Deleting snapshot older than $snapDaysToKeep days: $($rubrikSnap.name)"
-          $result = Remove-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $rubrikSnap.name -Force
-          Write-Host "Snapshot deletion result: $($result.status)"
-        }
-      }
-    }
-  }
-  $clonedDisksDateToKeep = $date.add("-$clonedDisksDaysToKeep")
-  Write-Host "Looking for and cleaning up Managed Disk clones older than: $clonedDisksDateToKeep" -foregroundcolor green
+  Remove-ExpiredAzureResources -ResourceGroup $sourceResourceGroup -Resources $azSnapshots `
+    -NameSuffix $sourceSnapshotSuffix -CutoffDate $snapCutoff -RetentionDays $snapDaysToKeep `
+    -ResourceType 'snapshot' -SourceDisks $sourceDisks
+
+  $diskCutoff = $date.AddDays(-$clonedDisksDaysToKeep)
+  Write-Host "Looking for and cleaning up Managed Disk clones older than: $diskCutoff" -foregroundcolor green
   Write-Host "Switching subscription context to target subscription."
   Set-AzContext -subscription $targetSubscriptionId
   $azDisks = Get-AzDisk -ResourceGroup $targetResourceGroup
-  foreach ($disk in $sourceDisks) {
-    $rubrikClonedDiskName = "${disk}-${targetDiskSuffix}"
-    $rubrikClonedDisks = $azDisks | Where { $_.Name -match $rubrikClonedDiskName }
-    foreach ($rubrikDisk in $rubrikClonedDisks) {
-      $dateStringPattern = '\d{4}-\d{2}-\d{2}_\d{4}'
-      if ($rubrikDisk.name -match $dateStringPattern) {
-        $timestamp = $matches[0]
-        # Split the timestamp into date and time parts
-        $dateStamp, $time = $timestamp -split '_'
-        # Reformat the time from HHMM to HH:MM to make it valid
-        $time = $time.Insert(2, ':')
-        # Combine date and time parts into a single string
-        $dateTimeString = "$dateStamp $time"
-        # Convert to DateTime object
-        $rubrikDiskDateTime = [datetime]::ParseExact($datetimeString, 'yyyy-MM-dd HH:mm', $null)
-        if ($rubrikDiskDateTime -lt $clonedDisksDateToKeep) {
-          Write-Host "Deleting cloned disk older than $clonedDisksDaysToKeep days: $($rubrikDisk.name)"
-          $result = Remove-AzDisk -ResourceGroupName $targetResourceGroup -DiskName $rubrikDisk.name -Force
-          Write-Host "Cloned disk deletion result: $($result.status)"
-        }
-      }
-    }
-  }
+  Remove-ExpiredAzureResources -ResourceGroup $targetResourceGroup -Resources $azDisks `
+    -NameSuffix $targetDiskSuffix -CutoffDate $diskCutoff -RetentionDays $clonedDisksDaysToKeep `
+    -ResourceType 'disk' -SourceDisks $sourceDisks
+
   Write-Host "Switching subscription context to source subscription."
   Set-AzContext -subscription $sourceSubscriptionId
 }  # if ($executeAzureCleanup)
@@ -393,8 +311,12 @@ if ($executeEpicCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Sending command to freeze IRIS ODB `n"
   Write-Host "Sending command to freeze & auto-thaw IRIS ODB..." -foregroundcolor cyan
-  ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_FREEZE_CMD} 2>&1
-  ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_AUTOTHAW_CMD} 2>&1
+  Write-Host "Freeze: ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_FREEZE_CMD}"
+  $freezeResult = ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_FREEZE_CMD} 2>&1
+  Write-Host "Freeze result: $freezeResult"
+  Write-Host "Auto-thaw: ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_AUTOTHAW_CMD}"
+  $autothawResult = ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_AUTOTHAW_CMD} 2>&1
+  Write-Host "Auto-thaw result: $autothawResult"
 }
 
 if ($executeAzureSnapshot) {
@@ -417,10 +339,7 @@ if ($executeAzureSnapshot) {
       $result = New-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName -Snapshot $snapshotConfig -ErrorAction Stop
     } catch {
       $Error[0]
-      if ($executeEpicCommands) {
-        Write-Host "Sending command to thaw IRIS ODB..." -foregroundcolor cyan
-        ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_THAW_CMD} 2>&1
-      }
+      Send-EpicThawCommand
       Write-Error "Exiting script..."
       exit 10
     }
@@ -431,20 +350,14 @@ if ($executeAzureSnapshot) {
     } else {
       Write-Error "Error taking snapshot: $snapshotState"
       $result
-      if ($executeEpicCommands) {
-        Write-Host "Sending command to thaw IRIS ODB..." -foregroundcolor cyan
-        ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_THAW_CMD} 2>&1
-      }
+      Send-EpicThawCommand
       Write-Error "Exiting script..."
       exit 11
     }
-  } # foreach ($disk in $sourceDisks)
+  } # foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator())
 
   # If all snapshots successful, send IRIS thaw command
-  if ($executeEpicCommands) {
-    Write-Host "Sending command to thaw IRIS ODB..." -foregroundcolor cyan
-    ssh ${EPIC_PRD_USER}@${EPIC_PRD_SERVER} ${EPIC_THAW_CMD} 2>&1
-  }
+  Send-EpicThawCommand
 
   Write-Host ""
   Write-Host "Waiting for $diskCount incremental snapshots to finish background copy" -foregroundcolor green
@@ -452,9 +365,16 @@ if ($executeAzureSnapshot) {
 
   # Hash table of snapshots that have completed their background copy
   $snapshotComplete = @{}
+  $pollIteration = 0
+  $maxPollIterations = 120
 
   # For each incremental snapshot, check and wait until the background copy completes
   while ($snapshotComplete.count -lt $diskCount) {
+    if ($pollIteration -ge $maxPollIterations) {
+      Write-Error "Snapshot background copy timed out after $([math]::Round($pollIteration * $statusCheckSecs / 60)) minutes, exiting..."
+      exit 12
+    }
+    $pollIteration++
     $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
     # Check the status of each snapshot operation
     foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
@@ -474,7 +394,7 @@ if ($executeAzureSnapshot) {
     }
   }
   Write-Host "All $diskCount snapshots have finished background copy" -foregroundcolor green
-} # If ($executeAzureCommands)
+} # if ($executeAzureSnapshot)
 
 # If execute snapshot is skipped, and we want to use an existing snapshot
 # to clone the Managed Disk, grab the Disk and Snapshot Info.
@@ -546,7 +466,7 @@ if ($executeManagedDiskClone) {
     # There is error handling to check if 'diskMBpsReadWrite' or 'diskMBpsReadOnly'
     # is set out of range and attempt to set it to its max value
     # Regex to check 'diskMBpsReadWrite' or 'diskMBpsReadOnly' config error and grab largest supported value
-    $regex = $regex = "disk\.(diskMBpsReadWrite|diskMBpsReadOnly).*between\s+(?:\d+\s+and\s+)?(\d+)"
+    $regex = "disk\.(diskMBpsReadWrite|diskMBpsReadOnly).*between\s+(?:\d+\s+and\s+)?(\d+)"
     $retry = $true
     # Failsafe if the error message changes, then exit script if retries too high
     $retryCount = 0
@@ -573,13 +493,13 @@ if ($executeManagedDiskClone) {
           $diskConfig = New-AzDiskConfig @diskConfigParameters
           $retry = $true
         } else {
-          # If error isn't related to 'diskMBps__' setting
+          Write-Error "Unhandled error creating Managed Disk: $targetDiskName, exiting..."
           exit 30
         }
       }
     }
     Write-Host "Managed Disk creation result: $($result.ProvisioningState)"
-  } # foreach ($disk in $sourceDisks) to create the disk from snasphot
+  } # foreach ($disk in $sourceDisks) to create the disk from snapshot
 
   Write-Host ""
   Write-Host "Waiting until snapshot clone to Managed Disk background copy completes" -foregroundcolor green
@@ -587,9 +507,16 @@ if ($executeManagedDiskClone) {
 
   # Hash table of Managed Disks that have completed their background copy
   $diskComplete = @{}
+  $pollIteration = 0
+  $maxPollIterations = 120
 
   # For each Managed Disk copy, check and wait until the background copy completes
   while ($diskComplete.count -lt $diskCount) {
+    if ($pollIteration -ge $maxPollIterations) {
+      Write-Error "Managed Disk background copy timed out after $([math]::Round($pollIteration * $statusCheckSecs / 60)) minutes, exiting..."
+      exit 21
+    }
+    $pollIteration++
     $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
     # Check the status of each Managed Disk operation
     foreach ($disk in $sourceDisks) {
@@ -607,13 +534,13 @@ if ($executeManagedDiskClone) {
     }
   } # while ($diskComplete.count -lt $diskCount) to check disk copy status
   Write-Host "All $diskCount Managed Disks have finished background copy" -foregroundcolor green
-} # If ($executeAzureCommands)
+} # if ($executeManagedDiskClone)
 
 
 #### Detach Managed Disk from the Proxy VM ####
 # https://learn.microsoft.com/en-us/azure/virtual-machines/windows/detach-disk
 
-# Unmount the file systems from the proxy VM and disable the VG
+# Unmount the file systems from the proxy VM and deactivate VGs
 if ($executeProxyDiskUnmountCommands) {
   Write-Host ""
   Write-Host "On Proxy VM, attempting to unmount file systems" -foregroundcolor green
@@ -621,57 +548,53 @@ if ($executeProxyDiskUnmountCommands) {
     Write-Host "Attempting to unmount ${MOUNT_BASE}${mountPoint}..."
     umount ${MOUNT_BASE}${mountPoint}
   }
+  Write-Host "Deactivating volume groups before disk detach" -foregroundcolor green
+  foreach ($vg_name in $VG_LIST) {
+    Write-Host "Deactivating VG: $vg_name..."
+    vgchange -an $vg_name
+  }
 }
 
 if ($executeAzureDiskDetach) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Detatching disks from Proxy VM `n"
+  $emailBody += "${currentTime}: Detaching disks from Proxy VM `n"
   Write-Host ""
   Write-Host "Detaching existing data disks from the Proxy VM" -foregroundcolor green
 
-  # On the Proxy VM, detach and delete any pre-existing Managed Disks with the
-  # same name we are about to create
-  # List of disk that match to detach
-  $disksToDetach = @()
-  # Get the Proxy VM details
+  # Find and detach any pre-existing Managed Disks whose names match the source disks
   $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
-  # For each source disk, find matching ones on the Proxy VM
-  foreach ($disk in $sourceDisks) {
-    # Disk info is stored in 'StorageProfile.DataDisks'
-    foreach ($proxyVmDisk in $vm.StorageProfile.DataDisks) {
-      # If the data disk matches, then add it to the list to detach
-      if ($proxyVmDisk.name -match $disk) {
-        $disksToDetach += $proxyVmDisk.name
-      }
-    }
-  }
+  $diskPattern = ($sourceDisks | ForEach-Object { [regex]::Escape($_) }) -join '|'
+  $disksToDetach = @($vm.StorageProfile.DataDisks |
+    Where-Object { $_.Name -match $diskPattern } |
+    ForEach-Object { $_.Name })
+  Write-Host "Found $($disksToDetach.Count) disk(s) to detach: $($disksToDetach -join ', ')"
   # Detach all the disks that were matched
-  foreach ($diskDetatch in $disksToDetach) {
+  foreach ($diskDetach in $disksToDetach) {
     # Detach the disk from the VM
-    Write-Host "Attempting to detatch disk: $diskDetatch..."
+    Write-Host "Attempting to detach disk: $diskDetach..."
     $resultUpdate = $null
-    $retry = $true
-    # Failsafe if the error message changes, then exit script if retries too high
     $retryCount = 0
-    while ($resultUpdate -eq $null) {
+    while ($null -eq $resultUpdate) {
       if ($retryCount -gt 4) {
-        Write-Host "Too many retries trying to detatch disk: $diskDetatch, exiting..."
+        Write-Host "Too many retries trying to detach disk: $diskDetach, exiting..."
         exit 40
       }
       $retryCount++
       try {
+        # Random interval avoids Azure API throttling on concurrent VM updates
         $randomInterval = Get-Random -Minimum 20 -Maximum 60
         Start-Sleep -Seconds $randomInterval
         $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
-        $resultRemove = Remove-AzVMDataDisk -VM $vm -Name $diskDetatch -ErrorAction Stop
+        $resultRemove = Remove-AzVMDataDisk -VM $vm -Name $diskDetach -ErrorAction Stop
         $resultUpdate = Update-AzVM -VM $vm -ResourceGroupName $targetResourceGroup -ErrorAction Stop
       } catch {
-        Write-Error "Error detatching disk: $diskDetatch, trying again in 30 seconds..."
+        Write-Error "Error detaching disk: $diskDetach, trying again in 30 seconds..."
         Start-Sleep 30
       }
     }
+    Write-Host "Successfully detached disk: $diskDetach" -foregroundcolor green
   }
-} # If ($executeAzureCommands)
+} # if ($executeAzureDiskDetach)
 
 
 #### Attach Managed Disk to proxy VM ####
@@ -703,15 +626,15 @@ if ($executeAzureDiskAttach) {
     }
     Write-Host "Attaching disk to Proxy VM: $targetDiskName..."
     $resultUpdate = $null
-    # Failsafe if the error message changes, then exit script if retries too high
     $retryCount = 0
-    while ($resultUpdate -eq $null) {
+    while ($null -eq $resultUpdate) {
       if ($retryCount -gt 4) {
         Write-Host "Too many retries trying to attach disk: $targetDiskName, exiting..."
         exit 50
       }
       $retryCount++
       try {
+        # Random interval avoids Azure API throttling on concurrent VM updates
         $randomInterval = Get-Random -Minimum 20 -Maximum 60
         Start-Sleep -Seconds $randomInterval
         $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup -ErrorAction Stop
@@ -722,12 +645,12 @@ if ($executeAzureDiskAttach) {
         Start-Sleep 30
       }
     }
+    Write-Host "Successfully attached disk: $targetDiskName at LUN: $lunNum" -foregroundcolor green
     [int]$lunNum++
   }
-} # If ($executeAzureCommands)
+} # if ($executeAzureDiskAttach)
 
 # Enable each VG and mount the mount points
-# The mount definitions should put in /etc/fstab
 if ($executeProxyMountCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
@@ -735,28 +658,37 @@ if ($executeProxyMountCommands) {
   Write-Host "On Proxy VM, re-mounting the file systems" -foregroundcolor green
   $mountCount = $MOUNT_LIST.count
   for ($mount = 0; $mount -lt $mountCount; $mount++) {
-    Write-Host "Attempting to vary VG on: $VG_LIST[$mount]..."
+    Write-Host "Attempting to vary VG on: $($VG_LIST[$mount])..."
     $vg_name = $VG_LIST[$mount]
     $lv_name = $LV_LIST[$mount]
+    # Deactivate then reactivate LVM so the kernel picks up the new underlying disk
     lvchange -an /dev/$vg_name/$lv_name
     vgchange -an $vg_name
     vgchange -ay $vg_name
     lvchange -ay /dev/$vg_name/$lv_name
     $path = $MOUNT_LIST[$mount]
     $devPath = $DEVMAPPER_LIST[$mount]
+    Write-Host "Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
   }
   foreach ($mountPoint in $MOUNT_LIST) {
     Write-Host ""
-    Write-Host "Verifying mount points" -foregroundcolor green
+    Write-Host "Verifying mount point: ${MOUNT_BASE}${mountPoint}" -foregroundcolor green
+    $fullMountPath = "${MOUNT_BASE}${mountPoint}"
     $output = df -h
-    if ($output -like "*$mountPoint*") {
-      $output -like "*$mountPoint*"
+    if ($output -like "*$fullMountPath*") {
+      $output -like "*$fullMountPath*"
     } else {
-      Write-Error "$mountPoint was not mounted"
+      Write-Error "$fullMountPath was not mounted, exiting..."
+      exit 60
     }
   }
 }
+
+$endTime = Get-Date
+$elapsed = $endTime - $date
+Write-Host ""
+Write-Host "Script completed successfully in $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -foregroundcolor green
 
 Stop-Transcript
 
