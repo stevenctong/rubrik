@@ -1,63 +1,171 @@
 #!/bin/bash
-# Requires 'curl'
-# https://build.rubrik.com
-# Written by Steven Tong for community usage
-# Date: 7/7/22
+#
+# Author: Steven Tong (Rubrik)
+# Updated: 7/13/26
+#
+# Description:
+# Opens or closes a Rubrik Managed Volume (MV) by calling the CDM REST API.
+# Opening a MV transitions it to a read-write state (begin_snapshot).
+# Closing a MV transitions it to a read-only state and triggers a snapshot
+# (end_snapshot).
+#
+# Authentication uses a Rubrik Security Cloud (RSC) Service Account.
+# The service account credentials (client_id, client_secret) are used to
+# create a session on the CDM cluster via the service_account/session API.
+#
+# The MV can be identified by either its ID (MV_ID) or name (MV_NAME).
+# If MV_ID is provided, it is used directly. Otherwise, MV_NAME is used
+# to look up the ID via the internal API.
+#
+# Usage:
+#   ./rubrik_mv_open_close.sh open    # open MV (begin_snapshot)
+#   ./rubrik_mv_open_close.sh close   # close MV (end_snapshot)
+#
+# Setup: Creating an RSC Service Account
+# 1. Log in to Rubrik Security Cloud (RSC)
+# 2. Create a role to be used with the Service Account with the following permissions:
+#    - Managed Volumes > Take On Demand Snapshot
+# 3. Create a Service Account and assign the role
+# 4. Download the JSON file - it contains the client_id and client_secret
+#    that go into the CLIENT_ID and CLIENT_SECRET variables below
 
-# This script will open or close a MV
+### VARIABLES - BEGIN ###
 
-# For authentication, use either an API token or base64 encoded username:password
+# RSC Service Account credentials (from the downloaded JSON file)
+# client_id -> CLIENT_ID, client_secret -> CLIENT_SECRET
+CLIENT_ID=""
+CLIENT_SECRET=""
 
-### RUBRIK VARIABLES - BEGIN ###
-# For authentication, use either an Service Account, API Token, Username+Password
-# Configure a Service Account for authentication
-SVC_ID='User:::d670b65c-8267-45fa-8dc0-678b6c63e488'
-SVC_SECRET=''
-# Configure an API token for authentication
-TOKEN=''
-# Configure a username:password for authenciation
-# The username:password must be encoded as a base64 string.
-# Use 'echo -n "admin:GoRubrik123" | base64' to generate with most Linux distros
-USER_PASS=''
-# Hostname or IP address of the Rubrik cluster
-RUBRIK=''
-# Managed Volume ID - grab it from the URL of the MV
-MV_ID='ManagedVolume:::05191817-3198-40de-92b8-d9d4e48bd62e'
-# Script execution time
-LAUNCHTIME=`date +%Y-%m-%d_%H%M%S`
-### RUBRIK VARIABLES - END ###
+# Hostname or IP address of the Rubrik CDM cluster
+RUBRIK=""
 
+# Managed Volume identification - provide MV_ID or MV_NAME (ID takes priority)
+# MV_ID: grab from the MV URL in the Rubrik UI (e.g. ManagedVolume:::xxxxxxxx-xxxx-...)
+# MV_NAME: the display name of the Managed Volume
+MV_ID=""
+MV_NAME=""
 
-echo "### Starting script rubrik_mv_open_close.sh ###"
-echo "Using shell: $SHELL"
-echo "Script time: $LAUNCHTIME"
-echo ""
+### VARIABLES - END ###
 
-# Define headers and base URL for curl REST API calls
-TYPE_HEADER='Content-Type: application/json'
-BASE_URL='https://'$RUBRIK'/api/'
+### Derived variables - BEGIN ###
 
-# If an API token is provided, use that. Otherwise, use username password
-if [ "$SVC_ID" != '' ]
-then
-  SVC_JSON='{ "serviceAccountId": "'$SVC_ID'", "secret": "'$SVC_SECRET'" }'
-  SVC_RESULT=$(curl -k1s -X POST -H "$AUTH_HEADER" -H "$TYPE_HEADER" -d "$SVC_JSON" "$BASE_URL"'v1/service_account/session')
-  TOKEN=$(echo $SVC_RESULT | sed -e 's/[{}]/''/g' | sed s/\"//g | awk -v RS=',' -F: '$1=="token"{print $2}')
-  AUTH_HEADER='Authorization:bearer '
-  AUTH_HEADER+=$TOKEN
-elif [ "$TOKEN" != '' ]
-then
-  AUTH_HEADER='Authorization:bearer '
-  AUTH_HEADER+=$TOKEN
-else
-  AUTH_HEADER='Authorization:basic '
-  AUTH_HEADER+=$USER_PASS
+SCRIPTDIR="."
+LAUNCHTIME=$(date +%Y-%m-%d_%H%M%S)
+LOG_RETENTION_DAYS=60
+LOGDIR="${SCRIPTDIR}/logs"
+LOGFILE="${LOGDIR}/mv_open_close-${LAUNCHTIME}.log"
+mkdir -p "${LOGDIR}"
+touch "${LOGFILE}"
+
+DELETED_LOGS=$(find "${LOGDIR}" -name "mv_open_close-*.log" -type f -mtime +${LOG_RETENTION_DAYS} -print -delete 2>/dev/null)
+if [[ -n "$DELETED_LOGS" ]]; then
+  echo "Cleaned up log files older than ${LOG_RETENTION_DAYS} days:"
+  echo "$DELETED_LOGS"
+  echo ""
 fi
 
-# Open the Managed Volume into read-write state
-OPEN_MV=$(curl -k1s -X POST -H "$AUTH_HEADER" -H "$TYPE_HEADER" "$BASE_URL"'internal/managed_volume/'"$MV_ID"'/begin_snapshot')
-echo $OPEN_MV
+### Derived variables - END ###
 
-# Close the Managed Volume into read-only state
-CLOSE_MV=$(curl -k1s -X POST -H "$AUTH_HEADER" -H "$TYPE_HEADER" "$BASE_URL"'internal/managed_volume/'"$MV_ID"'/end_snapshot')
-echo $CLOSE_MV
+# Validate CLI argument
+OPERATION="$1"
+if [[ "$OPERATION" != "open" && "$OPERATION" != "close" ]]; then
+  echo "Usage: $0 <open|close>"
+  echo ""
+  echo "  open   - Open the MV into read-write state (begin_snapshot)"
+  echo "  close  - Close the MV into read-only state and take snapshot (end_snapshot)"
+  exit 1
+fi
+
+# Redirect all output to both stdout and the log file
+exec &> >(tee -a "${LOGFILE}")
+
+echo "Starting rubrik_mv_open_close.sh on $(hostname)"
+echo "Current date: $(date)"
+echo "Operation: ${OPERATION}"
+echo "Log file: ${LOGFILE}"
+echo ""
+
+# Validate required variables
+if [[ -z "$RUBRIK" ]]; then
+  echo "ERROR: RUBRIK variable is not set, exiting..."
+  exit 1
+fi
+
+if [[ -z "$CLIENT_ID" || -z "$CLIENT_SECRET" ]]; then
+  echo "ERROR: CLIENT_ID and CLIENT_SECRET must both be set, exiting..."
+  exit 1
+fi
+
+if [[ -z "$MV_ID" && -z "$MV_NAME" ]]; then
+  echo "ERROR: Either MV_ID or MV_NAME must be set, exiting..."
+  exit 1
+fi
+
+# Define base URL and content type header for API calls
+TYPE_HEADER="Content-Type: application/json"
+BASE_URL="https://${RUBRIK}/api/"
+
+# Authenticate via RSC Service Account
+echo "Authenticating to Rubrik cluster: ${RUBRIK}"
+SVC_JSON='{"serviceAccountId": "'"${CLIENT_ID}"'", "secret": "'"${CLIENT_SECRET}"'"}'
+SVC_RESULT=$(curl -k1s -X POST -H "${TYPE_HEADER}" -d "${SVC_JSON}" "${BASE_URL}v1/service_account/session")
+
+TOKEN=$(echo "$SVC_RESULT" | sed -e 's/[{}]/''/g' | sed 's/"//g' | awk -v RS=',' -F: '$1=="token"{print $2}')
+
+if [[ -z "$TOKEN" ]]; then
+  echo "ERROR: Failed to authenticate - could not obtain token"
+  echo "API response: ${SVC_RESULT}"
+  exit 1
+fi
+
+echo "Successfully authenticated"
+echo ""
+
+AUTH_HEADER="Authorization:bearer ${TOKEN}"
+
+# Resolve MV_ID if only MV_NAME is provided
+if [[ -n "$MV_ID" ]]; then
+  echo "Using provided MV_ID: ${MV_ID}"
+else
+  echo "Looking up MV by name: ${MV_NAME}"
+  MV_LOOKUP=$(curl -k1s -X GET -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${BASE_URL}internal/managed_volume?name=${MV_NAME}")
+
+  MV_ID=$(echo "$MV_LOOKUP" | sed -e 's/.*"id":"//' | sed -e 's/".*//')
+
+  if [[ -z "$MV_ID" || "$MV_ID" == *"{"* ]]; then
+    echo "ERROR: Could not find Managed Volume with name: ${MV_NAME}"
+    echo "API response: ${MV_LOOKUP}"
+    exit 1
+  fi
+
+  echo "Found MV_ID: ${MV_ID}"
+fi
+
+echo ""
+
+# Set the API endpoint based on the operation
+if [[ "$OPERATION" == "open" ]]; then
+  API_ENDPOINT="${BASE_URL}internal/managed_volume/${MV_ID}/begin_snapshot"
+  echo "Opening Managed Volume (begin_snapshot)"
+else
+  API_ENDPOINT="${BASE_URL}internal/managed_volume/${MV_ID}/end_snapshot"
+  echo "Closing Managed Volume (end_snapshot)"
+fi
+
+echo "API endpoint: ${API_ENDPOINT}"
+echo ""
+
+# Execute the open or close API call
+RESULT=$(curl -k1s -X POST -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${API_ENDPOINT}")
+
+# Check response for errors
+if echo "$RESULT" | grep -qi "error\|exception\|fault"; then
+  echo "ERROR: API call failed"
+  echo "Response: ${RESULT}"
+  exit 1
+fi
+
+echo "Response: ${RESULT}"
+echo ""
+echo "Successfully completed ${OPERATION} operation on Managed Volume"
+exit 0
