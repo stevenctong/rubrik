@@ -18,8 +18,9 @@
 # to look up the ID via the internal API.
 #
 # Usage:
-#   ./rubrik_mv_open_close.sh open    # open MV (begin_snapshot)
-#   ./rubrik_mv_open_close.sh close   # close MV (end_snapshot)
+#   ./rubrik_mv_open_close.sh open             # open MV (begin_snapshot)
+#   ./rubrik_mv_open_close.sh close            # close MV (end_snapshot)
+#   ./rubrik_mv_open_close.sh open --no-log    # open without logging to file
 #
 # Setup: Creating an RSC Service Account
 # 1. Log in to Rubrik Security Cloud (RSC)
@@ -52,38 +53,60 @@ MV_NAME=""
 SCRIPTDIR="."
 LAUNCHTIME=$(date +%Y-%m-%d_%H%M%S)
 LOG_RETENTION_DAYS=60
-LOGDIR="${SCRIPTDIR}/logs"
-LOGFILE="${LOGDIR}/mv_open_close-${LAUNCHTIME}.log"
-mkdir -p "${LOGDIR}"
-touch "${LOGFILE}"
-
-DELETED_LOGS=$(find "${LOGDIR}" -name "mv_open_close-*.log" -type f -mtime +${LOG_RETENTION_DAYS} -print -delete 2>/dev/null)
-if [[ -n "$DELETED_LOGS" ]]; then
-  echo "Cleaned up log files older than ${LOG_RETENTION_DAYS} days:"
-  echo "$DELETED_LOGS"
-  echo ""
-fi
 
 ### Derived variables - END ###
 
-# Validate CLI argument
-OPERATION="$1"
-if [[ "$OPERATION" != "open" && "$OPERATION" != "close" ]]; then
-  echo "Usage: $0 <open|close>"
+# Parse CLI arguments (--no-log flag and open/close operation)
+NO_LOG=false
+OPERATION=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-log) NO_LOG=true ;;
+    open|close) OPERATION="$arg" ;;
+    *) echo "Unknown argument: $arg"; exit 1 ;;
+  esac
+done
+
+if [[ -z "$OPERATION" ]]; then
+  echo "Usage: $0 [--no-log] <open|close>"
   echo ""
-  echo "  open   - Open the MV into read-write state (begin_snapshot)"
-  echo "  close  - Close the MV into read-only state and take snapshot (end_snapshot)"
+  echo "  open      - Open the MV into read-write state (begin_snapshot)"
+  echo "  close     - Close the MV into read-only state and take snapshot (end_snapshot)"
+  echo "  --no-log  - Suppress logging to file (output to stdout only)"
   exit 1
 fi
 
-# Redirect all output to both stdout and the log file
-exec &> >(tee -a "${LOGFILE}")
+# Set up logging unless --no-log is specified
+if [[ "$NO_LOG" == false ]]; then
+  LOGDIR="${SCRIPTDIR}/logs"
+  LOGFILE="${LOGDIR}/mv_open_close-${LAUNCHTIME}.log"
+  mkdir -p "${LOGDIR}"
+  touch "${LOGFILE}"
+
+  DELETED_LOGS=$(find "${LOGDIR}" -name "mv_open_close-*.log" -type f -mtime +${LOG_RETENTION_DAYS} -print -delete 2>/dev/null)
+  if [[ -n "$DELETED_LOGS" ]]; then
+    echo "Cleaned up log files older than ${LOG_RETENTION_DAYS} days:"
+    echo "$DELETED_LOGS"
+    echo ""
+  fi
+
+  # Redirect all output to both stdout and the log file
+  exec &> >(tee -a "${LOGFILE}")
+fi
 
 echo "Starting rubrik_mv_open_close.sh on $(hostname)"
 echo "Current date: $(date)"
 echo "Operation: ${OPERATION}"
-echo "Log file: ${LOGFILE}"
+if [[ "$NO_LOG" == false ]]; then
+  echo "Log file: ${LOGFILE}"
+fi
 echo ""
+
+# Check that curl is available
+if ! command -v curl &>/dev/null; then
+  echo "ERROR: curl is not installed, exiting..."
+  exit 1
+fi
 
 # Validate required variables
 if [[ -z "$RUBRIK" ]]; then
@@ -108,13 +131,22 @@ BASE_URL="https://${RUBRIK}/api/"
 # Authenticate via RSC Service Account
 echo "Authenticating to Rubrik cluster: ${RUBRIK}"
 SVC_JSON='{"serviceAccountId": "'"${CLIENT_ID}"'", "secret": "'"${CLIENT_SECRET}"'"}'
-SVC_RESULT=$(curl -k1s -X POST -H "${TYPE_HEADER}" -d "${SVC_JSON}" "${BASE_URL}v1/service_account/session")
+SVC_RESULT=$(curl -k1s -X POST -w '\n%{http_code}' -H "${TYPE_HEADER}" -d "${SVC_JSON}" "${BASE_URL}v1/service_account/session")
 
-TOKEN=$(echo "$SVC_RESULT" | sed -e 's/[{}]/''/g' | sed 's/"//g' | awk -v RS=',' -F: '$1=="token"{print $2}')
+SVC_HTTP_CODE=$(echo "$SVC_RESULT" | tail -1)
+SVC_BODY=$(echo "$SVC_RESULT" | sed '$d')
+
+if [[ "$SVC_HTTP_CODE" -lt 200 || "$SVC_HTTP_CODE" -ge 300 ]]; then
+  echo "ERROR: Authentication failed with HTTP status ${SVC_HTTP_CODE}"
+  echo "API response: ${SVC_BODY}"
+  exit 1
+fi
+
+TOKEN=$(echo "$SVC_BODY" | sed -e 's/[{}]/''/g' | sed 's/"//g' | awk -v RS=',' -F: '$1=="token"{print $2}')
 
 if [[ -z "$TOKEN" ]]; then
-  echo "ERROR: Failed to authenticate - could not obtain token"
-  echo "API response: ${SVC_RESULT}"
+  echo "ERROR: Failed to parse token from authentication response"
+  echo "API response: ${SVC_BODY}"
   exit 1
 fi
 
@@ -128,13 +160,22 @@ if [[ -n "$MV_ID" ]]; then
   echo "Using provided MV_ID: ${MV_ID}"
 else
   echo "Looking up MV by name: ${MV_NAME}"
-  MV_LOOKUP=$(curl -k1s -X GET -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${BASE_URL}internal/managed_volume?name=${MV_NAME}")
+  MV_RESULT=$(curl -k1s -X GET -w '\n%{http_code}' -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${BASE_URL}internal/managed_volume?name=${MV_NAME}")
 
-  MV_ID=$(echo "$MV_LOOKUP" | sed -e 's/.*"id":"//' | sed -e 's/".*//')
+  MV_HTTP_CODE=$(echo "$MV_RESULT" | tail -1)
+  MV_BODY=$(echo "$MV_RESULT" | sed '$d')
+
+  if [[ "$MV_HTTP_CODE" -lt 200 || "$MV_HTTP_CODE" -ge 300 ]]; then
+    echo "ERROR: MV lookup failed with HTTP status ${MV_HTTP_CODE}"
+    echo "API response: ${MV_BODY}"
+    exit 1
+  fi
+
+  MV_ID=$(echo "$MV_BODY" | sed -e 's/.*"id":"//' | sed -e 's/".*//')
 
   if [[ -z "$MV_ID" || "$MV_ID" == *"{"* ]]; then
     echo "ERROR: Could not find Managed Volume with name: ${MV_NAME}"
-    echo "API response: ${MV_LOOKUP}"
+    echo "API response: ${MV_BODY}"
     exit 1
   fi
 
@@ -156,16 +197,18 @@ echo "API endpoint: ${API_ENDPOINT}"
 echo ""
 
 # Execute the open or close API call
-RESULT=$(curl -k1s -X POST -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${API_ENDPOINT}")
+OP_RESULT=$(curl -k1s -X POST -w '\n%{http_code}' -H "${AUTH_HEADER}" -H "${TYPE_HEADER}" "${API_ENDPOINT}")
 
-# Check response for errors
-if echo "$RESULT" | grep -qi "error\|exception\|fault"; then
-  echo "ERROR: API call failed"
-  echo "Response: ${RESULT}"
+OP_HTTP_CODE=$(echo "$OP_RESULT" | tail -1)
+OP_BODY=$(echo "$OP_RESULT" | sed '$d')
+
+if [[ "$OP_HTTP_CODE" -lt 200 || "$OP_HTTP_CODE" -ge 300 ]]; then
+  echo "ERROR: ${OPERATION} failed with HTTP status ${OP_HTTP_CODE}"
+  echo "Response: ${OP_BODY}"
   exit 1
 fi
 
-echo "Response: ${RESULT}"
+echo "Response: ${OP_BODY}"
 echo ""
 echo "Successfully completed ${OPERATION} operation on Managed Volume"
 exit 0
