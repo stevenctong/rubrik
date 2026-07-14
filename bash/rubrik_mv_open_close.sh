@@ -24,8 +24,9 @@
 #
 # Setup: Creating an RSC Service Account
 # 1. Log in to Rubrik Security Cloud (RSC)
-# 2. Create a role to be used with the Service Account with the following permissions:
-#    - Managed Volumes > Take On Demand Snapshot
+# 2. Create a Custom Role to be used with the Service Account with the following permissions:
+#    - Data Management Permissions > Managed Volumes > Take On Demand Snapshot
+#    - System Configuration > Federated Access > Enable Cluster Access
 # 3. Create a Service Account and assign the role
 # 4. Download the JSON file - it contains the client_id and client_secret
 #    that go into the CLIENT_ID and CLIENT_SECRET variables below
