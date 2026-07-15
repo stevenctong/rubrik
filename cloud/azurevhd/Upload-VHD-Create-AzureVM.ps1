@@ -1,173 +1,368 @@
 <#
 .SYNOPSIS
-This script uploads a vhd to Azure and creates a VM from it.
+This script uploads a VHD or VHDX to Azure and creates a managed disk from it.
+For OS disks, it also creates a new VM. For data disks, it attaches to an existing VM.
 
 .DESCRIPTION
-This script uploads a vhd to Azure and creates a VM from it.
+This script uploads a VHD or VHDX to Azure and creates a managed disk from it.
 
-If the vhd is MBR it will create a Gen 1 Managed Disk.
-If the vhd is GPT it will create a Gen 2 Managed Disk.
+For OS disks (-diskType OS): creates a new VM with the uploaded disk as the boot disk.
+Supports both Gen 1 (MBR) and Gen 2 (GPT) managed disks via -hyperVGeneration.
+
+For data disks (-diskType Data): uploads and creates the managed disk, then attaches
+it to an existing VM specified by -attachToVM.
+
+For VHD files, the script uploads to a Storage Account as a page blob and creates
+a managed disk via Import.
+
+For VHDX files, the script uses the Azure direct upload method: creates an empty
+managed disk configured for upload, gets a write SAS URI, uploads via AzCopy,
+then revokes the SAS. VHDX uploads are restricted to Premium SSD v2 or Ultra Disk
+SKUs and require -LogicalSectorSize 4096.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/28/25
+Updated: 7/15/26
+
+References:
+- Azure VHD/VHDX upload: https://learn.microsoft.com/en-us/azure/virtual-machines/windows/disks-upload-vhd-to-managed-disk-powershell
 
 Requirements:
 - Azure VM agent on the source VM: for easier troubleshooting in Azure - https://github.com/Azure/WindowsVMAgent
+- For VHDX uploads: AzCopy v10 - https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10
 
 Azure PowerShell Notes:
 Get all Azure resource SKUs: $sku = Get-AzComputeResourceSku -location <region>
 
-Notes on using the vhd in Azure:
-To use the vhd in Azure, you upload it as a page blob to a Storage Account.
-You can either create a Managed Disk directly from the vhd or a specialized or general
-image to re-use it. A specialized image keeps the same copy of data while a generalized
-image uses 'sysprep' to build a clean OS copy.
+Notes on using the VHD/VHDX in Azure:
+There are two upload methods:
+1. Page blob upload: Upload VHD to a Storage Account, then create a Managed Disk via Import.
+2. Direct upload: Create an empty Managed Disk, upload via AzCopy using a SAS URI.
+You can either create a Managed Disk directly or a specialized or general image to
+re-use it. A specialized image keeps the same copy of data while a generalized image
+uses 'sysprep' to build a clean OS copy.
 
-This script creates a Managed Disk directly from the vhd and uses that to create
-a VM with that Managed Disk as the boot disk.
+This script creates a Managed Disk directly from the VHD/VHDX and either creates
+a new VM (OS disk) or attaches to an existing VM (data disk).
 
 Some additional options for consideration:
 - Size of VM
 - Additional Managed Disk options - tier of disk, performance for v2 / Ultra, encryption
 
+.PARAMETER vmName
+Azure VM name. For OS disks, VM resource names (disk, NIC) are derived from this.
+For data disks, used as the disk name prefix.
+
+.PARAMETER sourceVHD
+Path to the source VHD or VHDX file to upload.
+
+.PARAMETER diskType
+Whether the disk is an OS boot disk or a data disk. Valid values: 'OS', 'Data'.
+Defaults to 'OS'. Data disks require -attachToVM.
+
+.PARAMETER attachToVM
+Name of the existing Azure VM to attach a data disk to. Required when -diskType is 'Data'.
+The VM must be in the same resource group specified in the VARIABLES section.
+
+.PARAMETER osType
+OS type of the disk (OS disks only). Valid values: 'Windows', 'Linux'. Defaults to 'Windows'.
+
+.PARAMETER hyperVGeneration
+Hyper-V generation for the managed disk (OS disks only). Use 'V1' for MBR, 'V2' for GPT.
+Defaults to 'V1'.
+
+.PARAMETER vmSize
+Azure VM size SKU (OS disks only). Defaults to 'Standard_E2_v5'.
+
+.PARAMETER skuName
+Managed disk SKU type. Defaults to 'StandardSSD_LRS'.
+Options: Standard_LRS, Premium_LRS, Premium_ZRS, StandardSSD_LRS, StandardSSD_ZRS, PremiumV2_LRS, UltraSSD_LRS
+Note: VHDX uploads require PremiumV2_LRS or UltraSSD_LRS.
+
+.PARAMETER azcopyPath
+Path to the AzCopy executable. Required for VHDX uploads or -alwaysUseAzCopy. Defaults to 'azcopy' (assumes on PATH).
+Download AzCopy v10: https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10
+
+.PARAMETER alwaysUseAzCopy
+Switch to use the direct upload (AzCopy) path even for VHD files instead of the page blob
+upload path. Useful for testing the direct upload path before consolidating.
+
 .EXAMPLE
-./Upload-VHD-Create-AzureVM.ps1 -vmName <VM Name> -sourceVHD <filename of VHD>.ps1
-  Uploads and creates an Azure VM from the source VHD file.
+./Upload-VHD-Create-AzureVM.ps1 -vmName <VM Name> -sourceVHD <path to VHD file>
+  [-osType Windows|Linux] [-hyperVGeneration V1|V2]
+  [-vmSize <VM size>] [-skuName <disk SKU>]
+
+.EXAMPLE
+./Upload-VHD-Create-AzureVM.ps1 -vmName <VM Name> -sourceVHD <path to VHDX file>
+  -skuName PremiumV2_LRS [-osType Windows|Linux] [-hyperVGeneration V1|V2]
+  [-vmSize <VM size>] [-azcopyPath <path to azcopy>]
+
+.EXAMPLE
+./Upload-VHD-Create-AzureVM.ps1 -vmName <disk name prefix> -sourceVHD <path to VHD/VHDX>
+  -diskType Data -attachToVM <existing VM name> [-skuName <disk SKU>]
 
 #>
 
+[CmdletBinding()]
 param (
-  [CmdletBinding()]
   # Azure VM Name - VM resource names will be derived from this
   [Parameter(Mandatory=$true)]
   [string]$vmName = '',
-  # Source VHD file to upload
+  # Source VHD or VHDX file to upload
   [Parameter(Mandatory=$true)]
-  [string]$sourceVHD = ''
+  [string]$sourceVHD = '',
+  # Disk type: OS (create new VM) or Data (attach to existing VM)
+  [Parameter(Mandatory=$false)]
+  [ValidateSet('OS', 'Data')]
+  [string]$diskType = 'OS',
+  # Existing VM name to attach data disk to (required for -diskType Data)
+  [Parameter(Mandatory=$false)]
+  [string]$attachToVM = '',
+  # OS type: Windows or Linux (OS disks only)
+  [Parameter(Mandatory=$false)]
+  [ValidateSet('Windows', 'Linux')]
+  [string]$osType = 'Windows',
+  # Hyper-V generation: V1 for MBR, V2 for GPT
+  [Parameter(Mandatory=$false)]
+  [ValidateSet('V1', 'V2')]
+  [string]$hyperVGeneration = 'V1',
+  # Azure VM size
+  [Parameter(Mandatory=$false)]
+  [string]$vmSize = 'Standard_E2_v5',
+  # Managed disk SKU type
+  [Parameter(Mandatory=$false)]
+  [string]$skuName = 'StandardSSD_LRS',
+  # Path to AzCopy executable (required for VHDX uploads or -alwaysUseAzCopy)
+  [Parameter(Mandatory=$false)]
+  [string]$azcopyPath = 'azcopy',
+  # Use the direct upload (AzCopy) path even for VHD files instead of page blob upload
+  [Parameter(Mandatory=$false)]
+  [switch]$alwaysUseAzCopy = $false
 )
 
-$date = Get-Date
+### VARIABLES - BEGIN ###
 
 # Azure Subscription to login to
 $subscription = 'RR-PRD'
 
-## Variables for uploading the .VHD to a target Storage Account as a page blob
+# Resource group and region
 $resourceGroup = "rr-tong-lighthouse"
-$storageAccountName = "rrtonglighthouse150"
-$storageContainerName = "vhds"
 $location = "eastus2"
 
-# Managed Disk sku type
-# Options: Standard_LRS, Premium_LRS, Premium_ZRS,
-# StandardSSD_LRS, StandardSSD_ZRS, PremiumV2_LRS, UltraSSD_LRS
-$skuName = "StandardSSD_LRS"
+## Storage Account variables (VHD page blob upload path only)
+$storageAccountName = "rrtonglighthouse150"
+$storageContainerName = "vhds"
 
-# VM disk sku type
-$vmSize = "Standard_E2_v5"
-
-# Networking details
+# Networking details (OS disk VM creation only)
 $vnetRG = "rg-rr2-eastus2-networking"
 $vnetName = "vnet-rr2-eastus2"
 $subnetName = "main1"
 $nsgName = "rr-tong-nsg"
 
+### VARIABLES - END ###
+
+## Validation
+if (-not (Test-Path $sourceVHD)) {
+  Write-Host "ERROR: Source file not found: $sourceVHD" -foregroundcolor red
+  exit 1
+}
+
+if ($diskType -eq 'Data' -and [string]::IsNullOrEmpty($attachToVM)) {
+  Write-Host "ERROR: -attachToVM is required when -diskType is 'Data'." -foregroundcolor red
+  Write-Host "Specify the name of an existing VM to attach the data disk to." -foregroundcolor red
+  exit 1
+}
+
 ## Derived Variables
-
-# $storageBlobName is the name of the blob file that will be uploaded from the vhd
-$filename = Split-Path -Path $sourceVHD -Leaf
-$storageBlobName = $filename
-
-# Managed Disk name
+# Disk name uses vmName as prefix - change the suffix if uploading multiple disks
 $diskName = $vmName + "-disk-01"
+if ($diskType -eq 'OS') {
+  $nicName = $vmName + "-nic-01"
+}
 
-# NIC name
-$nicName = $vmName + "-nic-01"
+# Detect VHD vs VHDX based on file extension
+$isVHDX = $sourceVHD -match '\.vhdx$'
+$useDirectUpload = $isVHDX -or $alwaysUseAzCopy
 
-
-## Variables for testing
-
-# $vmName = 'tong-lh-vm-01'
-# $sourceVHD = "e:\rubrik-c-drive.vhd"
-# $storageBlobName = "rubrik-c-drive.vhd"
-# $diskName = "tong-lh-c-drive-01"
-# $nicName = "tong-lh-vm-01-nic-01"
-
+if ($isVHDX) {
+  # Validate that the SKU supports VHDX uploads
+  if ($skuName -notin @('PremiumV2_LRS', 'UltraSSD_LRS')) {
+    Write-Host "ERROR: VHDX uploads are only supported on PremiumV2_LRS or UltraSSD_LRS SKUs." -foregroundcolor red
+    Write-Host "Current SKU: $skuName" -foregroundcolor red
+    Write-Host "Use -skuName PremiumV2_LRS or -skuName UltraSSD_LRS" -foregroundcolor red
+    exit 1
+  }
+  Write-Host "Detected VHDX file - will use direct upload method" -foregroundcolor green
+  Write-Host "  SKU: $skuName, LogicalSectorSize: 4096" -foregroundcolor green
+} elseif ($alwaysUseAzCopy) {
+  Write-Host "Detected VHD file - will use direct upload method (-alwaysUseAzCopy)" -foregroundcolor green
+} else {
+  Write-Host "Detected VHD file - will use page blob upload method" -foregroundcolor green
+}
 
 # Login to Azure PowerShell
+Write-Host "Logging in to Azure subscription: $subscription" -foregroundcolor green
 Connect-AzAccount -subscription $subscription
 Get-AzContext
 
-### Upload the VHD to the Azure Storage Account as a page blob
+if ($useDirectUpload) {
+  ### Direct Upload Path (VHDX always, VHD when -alwaysUseAzCopy)
+  $vhdSizeBytes = (Get-Item $sourceVHD).Length
+  Write-Host "File size: $([math]::Round($vhdSizeBytes / 1GB, 2)) GB" -foregroundcolor green
 
-# Get Storage Account context where the VHD will be uploaded to
-$storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroup -Name $storageAccountName
-$ctx = $storageAccount.Context
+  # Create an empty managed disk configured for direct upload
+  Write-Host "Creating managed disk for upload: $diskName (SKU: $skuName, Type: $diskType)" -foregroundcolor green
+  $diskConfigParams = @{
+    SkuName           = $skuName
+    Location          = $location
+    CreateOption      = 'Upload'
+    UploadSizeInBytes = $vhdSizeBytes
+  }
+  if ($isVHDX) {
+    $diskConfigParams['LogicalSectorSize'] = 4096
+  }
+  if ($diskType -eq 'OS') {
+    $diskConfigParams['HyperVGeneration'] = $hyperVGeneration
+    $diskConfigParams['OsType'] = $osType
+  }
+  $diskConfig = New-AzDiskConfig @diskConfigParams
 
-# Upload the VHD as a page blob (mandatory blob type for images & disks)
-Set-AzStorageBlobContent `
-    -File $sourceVHD `
-    -Container $storageContainerName `
-    -Blob $storageBlobName `
-    -Context $ctx `
-    -BlobType Page
+  $managedDisk = New-AzDisk `
+      -ResourceGroupName $resourceGroup `
+      -DiskName $diskName `
+      -Disk $diskConfig
 
-### Create a Managed Disk from the uploaded VHD
+  # Generate a writable SAS URI (valid for 24 hours)
+  Write-Host "Generating writable SAS for disk upload" -foregroundcolor green
+  $diskSas = Grant-AzDiskAccess `
+      -ResourceGroupName $resourceGroup `
+      -DiskName $diskName `
+      -DurationInSecond 86400 `
+      -Access 'Write'
 
-# Uri of the VHD based on where it was uploaded
-$vhdUri = "https://$storageAccountName.blob.core.windows.net/$storageContainerName/$storageBlobName"
+  # Upload using AzCopy
+  Write-Host "Uploading via AzCopy: $sourceVHD" -foregroundcolor green
+  & $azcopyPath copy $sourceVHD $diskSas.AccessSAS --blob-type PageBlob
 
-# Create a Managed Disk Config based on the uploaded vhd
-# Note: additional options are available for creation of Managed Disk
-# Eg. if using v2 / Ultra SSDs, disk IOPs and MBps
-$diskConfig = New-AzDiskConfig `
-    -SkuName $skuName `
-    -Location $location `
-    -CreateOption Import `
-    -SourceUri $vhdUri `
-    -StorageAccountId $storageAccount.Id
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "ERROR: AzCopy upload failed with exit code $LASTEXITCODE" -foregroundcolor red
+    Write-Host "Revoking SAS access on failed upload" -foregroundcolor yellow
+    Revoke-AzDiskAccess -ResourceGroupName $resourceGroup -DiskName $diskName
+    exit 1
+  }
 
-# Create the Managed Disk using the Managed Disk Config
-$managedDisk = New-AzDisk `
-    -ResourceGroupName $resourceGroup `
-    -DiskName $diskName `
-    -Disk $diskConfig
+  # Revoke the SAS to finalize the disk
+  Write-Host "Upload complete - revoking SAS access to finalize disk" -foregroundcolor green
+  Revoke-AzDiskAccess -ResourceGroupName $resourceGroup -DiskName $diskName
+
+} else {
+  ### VHD Page Blob Upload Path
+  $storageBlobName = Split-Path -Path $sourceVHD -Leaf
+  Write-Host "Uploading VHD to storage account: $storageAccountName/$storageContainerName/$storageBlobName" -foregroundcolor green
+
+  # Get Storage Account context where the VHD will be uploaded to
+  $storageAccount = Get-AzStorageAccount -ResourceGroupName $resourceGroup -Name $storageAccountName
+  $ctx = $storageAccount.Context
+
+  # Upload the VHD as a page blob (mandatory blob type for images & disks)
+  Set-AzStorageBlobContent `
+      -File $sourceVHD `
+      -Container $storageContainerName `
+      -Blob $storageBlobName `
+      -Context $ctx `
+      -BlobType Page
+
+  ### Create a Managed Disk from the uploaded VHD
+  $vhdUri = "https://$storageAccountName.blob.core.windows.net/$storageContainerName/$storageBlobName"
+
+  Write-Host "Creating managed disk: $diskName (SKU: $skuName, Type: $diskType)" -foregroundcolor green
+  $diskConfigParams = @{
+    SkuName          = $skuName
+    Location         = $location
+    CreateOption     = 'Import'
+    SourceUri        = $vhdUri
+    StorageAccountId = $storageAccount.Id
+  }
+  if ($diskType -eq 'OS') {
+    $diskConfigParams['HyperVGeneration'] = $hyperVGeneration
+    $diskConfigParams['OsType'] = $osType
+  }
+  $diskConfig = New-AzDiskConfig @diskConfigParams
+
+  $managedDisk = New-AzDisk `
+      -ResourceGroupName $resourceGroup `
+      -DiskName $diskName `
+      -Disk $diskConfig
+}
 
 # Check on the created Managed Disk
 $disk = Get-AzDisk -ResourceGroupName $resourceGroup -DiskName $diskName
-$disk | Select-Object Name, @{n='SkuName';e={$_.Sku.Name}}, DiskSizeGB, ProvisioningState, DiskState, OsType, Location, @{n='SourceUri';e={$disk.CreationData.SourceUri}}
+$disk | Select-Object Name, @{n='SkuName';e={$_.Sku.Name}}, DiskSizeGB, ProvisioningState, DiskState, OsType, Location
 
-### Create a VM from the Managed Disk
+if ($diskType -eq 'OS') {
+  ### Create a new VM from the Managed Disk (OS disk path)
+  Write-Host "Creating VM: $vmName (Size: $vmSize)" -foregroundcolor green
 
-# Get the VNET, Subnet, and NSG details of where to create the VM NIC
-$vnet = Get-AzVirtualNetwork -Name $vnetName -ResourceGroupName $vnetRG
-$subnet = $vnet | Select-Object -ExpandProperty Subnets | Where-Object Name -eq $subnetName
-$nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $resourceGroup -Name $nsgName
+  # Get the VNET, Subnet, and NSG details of where to create the VM NIC
+  $vnet = Get-AzVirtualNetwork -Name $vnetName -ResourceGroupName $vnetRG
+  $subnet = $vnet | Select-Object -ExpandProperty Subnets | Where-Object Name -eq $subnetName
+  $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $resourceGroup -Name $nsgName
 
-# Create a new NIC
-$nic = New-AzNetworkInterface -Name $nicName `
-  -ResourceGroupName $resourceGroup `
-  -Location $location `
-  -SubnetId $subnet.Id `
-  -NetworkSecurityGroupId $nsg.Id `
-  -EnableAcceleratedNetworking
+  # Create a new NIC
+  $nic = New-AzNetworkInterface -Name $nicName `
+    -ResourceGroupName $resourceGroup `
+    -Location $location `
+    -SubnetId $subnet.Id `
+    -NetworkSecurityGroupId $nsg.Id `
+    -EnableAcceleratedNetworking
 
-# Create a VM Config and attach the Managed Disk and NIC to it
-$vmConfig = New-AzVMConfig -VMName $vmName -VMSize $vmSize
-$vmConfig = Set-AzVMOSDisk -VM $vmConfig `
-  -ManagedDiskId $disk.Id `
-  -Windows `
-  -CreateOption Attach
-$vmConfig = Add-AzVMNetworkInterface -VM $vmConfig `
-  -Id $nic.Id
+  # Create a VM Config and attach the Managed Disk and NIC to it
+  $vmConfig = New-AzVMConfig -VMName $vmName -VMSize $vmSize
+  if ($osType -eq 'Windows') {
+    $vmConfig = Set-AzVMOSDisk -VM $vmConfig `
+      -ManagedDiskId $disk.Id `
+      -Windows `
+      -CreateOption Attach
+  } else {
+    $vmConfig = Set-AzVMOSDisk -VM $vmConfig `
+      -ManagedDiskId $disk.Id `
+      -Linux `
+      -CreateOption Attach
+  }
+  $vmConfig = Add-AzVMNetworkInterface -VM $vmConfig `
+    -Id $nic.Id
 
-# Create the VM using the VM Config as a background job
-$vmJob = New-AzVM -ResourceGroupName $resourceGroup `
-  -Location $location `
-  -VM $vmConfig `
-  -Verbose `
-  -AsJob
+  # Create the VM using the VM Config as a background job
+  $vmJob = New-AzVM -ResourceGroupName $resourceGroup `
+    -Location $location `
+    -VM $vmConfig `
+    -Verbose `
+    -AsJob
 
-# Check on the Job Status
-Get-Job -Id $vmJob.id | Select *
+  # Check on the Job Status
+  Get-Job -Id $vmJob.id | Select *
+
+} else {
+  ### Attach as a data disk to an existing VM (data disk path)
+  Write-Host "Attaching data disk: $diskName to VM: $attachToVM" -foregroundcolor green
+
+  $vm = Get-AzVM -ResourceGroupName $resourceGroup -Name $attachToVM
+
+  # Auto-assign the next available LUN
+  $existingLuns = $vm.StorageProfile.DataDisks | ForEach-Object { $_.Lun }
+  if ($existingLuns) {
+    $nextLun = ($existingLuns | Measure-Object -Maximum).Maximum + 1
+  } else {
+    $nextLun = 0
+  }
+
+  $vm = Add-AzVMDataDisk -VM $vm `
+    -ManagedDiskId $disk.Id `
+    -Lun $nextLun `
+    -CreateOption Attach
+
+  Write-Host "Updating VM with new data disk at LUN $nextLun" -foregroundcolor green
+  Update-AzVM -ResourceGroupName $resourceGroup -VM $vm
+}
