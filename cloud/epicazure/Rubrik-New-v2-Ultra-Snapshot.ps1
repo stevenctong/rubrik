@@ -53,22 +53,34 @@ PRE-REQUISITES:
 2. Mount points created on the Proxy VM - we will use dev-mapper to mount
 3. Proxy VM is built with option to "Support Premium SSDs" and also placed
    in a specific Availability Zone that supports v2 / Ultra disks
-4. Azure authentication - the script will run from the Proxy VM. The Proxy VM
-   should have Managed Identity enabled and a role attached with the following
-   permissions:
+4. Azure authentication - the script runs from the Proxy VM using a
+   Managed Identity (MI) with a Custom Role. Setup steps:
 
-  "actions": [
-    "Microsoft.Compute/snapshots/read",
-    "Microsoft.Compute/snapshots/write",
-    "Microsoft.Compute/snapshots/delete",
-    "Microsoft.Compute/virtualMachines/attachDetachDataDisks/action",
-    "Microsoft.Compute/disks/read",
-    "Microsoft.Compute/disks/write",
-    "Microsoft.Compute/disks/delete",
-    "Microsoft.Compute/disks/beginGetAccess/action",
-    "Microsoft.Compute/virtualMachines/read",
-    "Microsoft.Compute/virtualMachines/write"
-  ]
+   a. Create a User-assigned Managed Identity and attach it to the Proxy VM:
+      - Go to Managed Identities -> Create a new User-assigned MI
+      - Go to the Proxy VM -> Identity -> User assigned -> Add the MI
+
+   b. Create a Custom Role with the following permissions:
+
+      "actions": [
+        "Microsoft.Compute/snapshots/read",
+        "Microsoft.Compute/snapshots/write",
+        "Microsoft.Compute/snapshots/delete",
+        "Microsoft.Compute/virtualMachines/attachDetachDataDisks/action",
+        "Microsoft.Compute/disks/read",
+        "Microsoft.Compute/disks/write",
+        "Microsoft.Compute/disks/delete",
+        "Microsoft.Compute/disks/beginGetAccess/action",
+        "Microsoft.Compute/virtualMachines/read",
+        "Microsoft.Compute/virtualMachines/write"
+      ]
+
+   c. Assign the Custom Role to the MI on each Resource Group that the
+      script needs access to (source RG for snapshots, target RG for
+      Proxy VM and cloned disks):
+      - Go to the Resource Group -> Access control (IAM) -> Add role
+        assignment -> Select the Custom Role -> For Members, choose
+        'Managed identity' and select the MI
 
  .PARAMETER configFile
  Path to the PSD1 config file containing all instance-specific variables.
@@ -87,6 +99,14 @@ param (
   [string]$configFile
 )
 
+$requiredModules = @('Az.Accounts', 'Az.Compute')
+$missingModules = $requiredModules | Where-Object { -not (Get-Module -ListAvailable -Name $_) }
+if ($missingModules) {
+  foreach ($mod in $missingModules) {
+    Write-Error "Required module '$mod' is not installed. Install it with: Install-Module -Name $mod -Repository PSGallery -Scope AllUsers"
+  }
+  exit 1
+}
 Import-Module Az.Accounts
 Import-Module Az.Compute
 
