@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Author: Steven Tong (Rubrik)
-# Date Updated: 7/12/26
+# Date Updated: 7/13/26
 #
 # Description:
 # Refreshes Epic IRIS ODB volumes on a Proxy VM by creating a Pure Storage
@@ -70,22 +70,25 @@ INSTANCE_NAME="epic_instance"
 
 # Whether or not to execute the Epic IRIS freeze / thaw for testing
 EXECUTE_EPIC="false"
+# Set to "false" to dry-run the script without executing Pure commands
+# Useful for validating volume prefix replacements and script flow
+EXECUTE_PURE="false"
 
 # Pure array hostname and username
 PURE_ARRAY="sjc-rcf-pure04.stor.rubrik.com"
 PURE_USER="perf-admin"
 
 # Pure - Name of the Protection Group that the IRIS volumes belong to
-SOURCE_PG_GROUP="Epic-PGPROD"
+SOURCE_PG_GROUP="pg-epic"
 # Pure - This suffix will be appended to the PG Snap along with YYYY-MM-DD-HHMM
 #  <SOURCE_PG_GROUP>.<SOURCE_SNAP_SUFFIX>-YYYY-MM-DD-HHMM
 SOURCE_SNAP_SUFFIX="rubriksnap"
 # Pure - Source IRIS volumes naming prefix (volumes are discovered from the PG)
 # The script maps source to target by replacing SOURCE_VOL_PREFIX with TARGET_VOL_PREFIX
-SOURCE_VOL_PREFIX="RNO-Stor-Tier1-EpicODB-PRD/RNO_Stor_Tier1_EpicODB_PRD_PRD1_"
+SOURCE_VOL_PREFIX="iris-sourcevol"
 
 # Pure - Target IRIS volumes naming prefix on the Proxy VM
-TARGET_VOL_PREFIX="RNO-Stor-Tier1-EpicODB-PRD-BAKPRX/RNO-Stor-Tier1-EpicODB-PRD-BAKPRX-"
+TARGET_VOL_PREFIX="iris-tgtvol-"
 
 # The mount point details for the backup proxy
 # The base of the mount points on the file system
@@ -170,6 +173,9 @@ echo "Starting Pure IRIS ODB PG snap refresh script on $(hostname)"
 echo "Current date is: $(date)"
 echo "Currently running shell: ${CURRENT_SHELL}"
 echo "Log file: ${LOGFILE}"
+if [ "$EXECUTE_PURE" != "true" ]; then
+  echo "*** DRY-RUN MODE: Pure commands will not be executed ***"
+fi
 echo ""
 
 # Check if there is an existing lock file, if so then exit
@@ -213,7 +219,7 @@ echo "Getting volume information for PG: ${SOURCE_PG_GROUP}"
 echo "Running Pure CLI: purepgroup list ${SOURCE_PG_GROUP} --nvp"
 echo ""
 
-PGOUTPUT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup list ${SOURCE_PG_GROUP} --nvp")
+PGOUTPUT=$(/usr/bin/ssh -n ${PURE_USER}@${PURE_ARRAY} "purepgroup list ${SOURCE_PG_GROUP} --nvp")
 
 if [[ -z "${PGOUTPUT}" ]]; then
   echo "PG invalid or did not find any LUNs for PG: ${SOURCE_PG_GROUP}, exiting..."
@@ -228,7 +234,7 @@ echo ""
 echo "Checking for existing PG snaps to destroy."
 echo "Running Pure CLI: purepgroup list ${SOURCE_PG_GROUP} --snap --notitle"
 echo ""
-PGSNAPLIST=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup list ${SOURCE_PG_GROUP} --snap --notitle")
+PGSNAPLIST=$(/usr/bin/ssh -n ${PURE_USER}@${PURE_ARRAY} "purepgroup list ${SOURCE_PG_GROUP} --snap --notitle")
 RUBRIKSNAPS=$(echo "$PGSNAPLIST" | grep "$SOURCE_SNAP_SUFFIX")
 
 if [[ -z "$RUBRIKSNAPS" ]]; then
@@ -242,13 +248,17 @@ else
   for SNAP in $RUBRIKSNAPS; do
     SNAPNAME=$(echo "$SNAP" | awk '{print $1}')
     echo "Running Pure CLI: purepgroup destroy ${SNAPNAME}"
-    PGSNAPDESTROYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup destroy ${SNAPNAME}" 2>&1)
-    if ! echo "$PGSNAPDESTROYRESULT" | grep -q "Name"; then
-      echo "Failed destroying PG snapshot: ${SNAPNAME}"
+    if [ "$EXECUTE_PURE" = "true" ]; then
+      PGSNAPDESTROYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup destroy ${SNAPNAME}" 2>&1)
+      if ! echo "$PGSNAPDESTROYRESULT" | grep -q "Name"; then
+        echo "Failed destroying PG snapshot: ${SNAPNAME}"
+      else
+        echo "Successfully destroyed PG snapshot, SafeMode will handle eradication"
+        echo ${PGSNAPDESTROYRESULT}
+        echo ""
+      fi
     else
-      echo "Successfully destroyed PG snapshot, SafeMode will handle eradication"
-      echo ${PGSNAPDESTROYRESULT}
-      echo ""
+      echo "[DRY-RUN] Skipping: purepgroup destroy ${SNAPNAME}"
     fi
   done
   IFS=$' \t\n'
@@ -261,11 +271,15 @@ echo "PG snapshot suffix will be: ${PG_SNAP_SUFFIX}"
 echo ""
 
 echo "Running Pure CLI: purepgroup snap --suffix ${PG_SNAP_SUFFIX} ${SOURCE_PG_GROUP}"
-PGSNAPRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup snap --suffix ${PG_SNAP_SUFFIX} ${SOURCE_PG_GROUP}" 2>&1)
-
-if ! echo "$PGSNAPRESULT" | grep -q "Created"; then
-  echo "Failed creating PG snapshot: ${PGSNAPRESULT}, exiting..."
-  exit_failed
+if [ "$EXECUTE_PURE" = "true" ]; then
+  PGSNAPRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purepgroup snap --suffix ${PG_SNAP_SUFFIX} ${SOURCE_PG_GROUP}" 2>&1)
+  if ! echo "$PGSNAPRESULT" | grep -q "Created"; then
+    echo "Failed creating PG snapshot: ${PGSNAPRESULT}, exiting..."
+    exit_failed
+  fi
+else
+  echo "[DRY-RUN] Skipping: purepgroup snap --suffix ${PG_SNAP_SUFFIX} ${SOURCE_PG_GROUP}"
+  PGSNAPRESULT=""
 fi
 
 echo ${PGSNAPRESULT}
@@ -286,20 +300,28 @@ echo "Target volume prefix: ${TARGET_VOL_PREFIX}"
 echo "For each source volume, the source prefix will be replaced with target prefix"
 echo ""
 
-IFS=','
-for SOURCE_VOL in $PGVOLUMES; do
+echo "$PGVOLUMES" | tr ',' '\n' | while read -r SOURCE_VOL; do
   TARGET_VOL=$(echo "$SOURCE_VOL" | sed "s|^$SOURCE_VOL_PREFIX|$TARGET_VOL_PREFIX|")
-  echo "Copying source volume: $SOURCE_VOL to target volume: $TARGET_VOL"
-  echo "Running Pure CLI: purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force"
-  COPYRESULT=$(/usr/bin/ssh ${PURE_USER}@${PURE_ARRAY} "purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force" 2>&1)
-  if ! echo "$COPYRESULT" | grep -q "Created"; then
-    echo "Failed copy volume: ${COPYRESULT}, exiting..."
+  if [ "$SOURCE_VOL" = "$TARGET_VOL" ]; then
+    echo "ERROR: Source volume '$SOURCE_VOL' does not match SOURCE_VOL_PREFIX '$SOURCE_VOL_PREFIX'"
+    echo "Target volume was not renamed and would overwrite the source: ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} -> ${TARGET_VOL}"
+    echo "Aborting to prevent overwriting source volumes."
     exit_failed
   fi
-  echo "$COPYRESULT"
+  echo "Copying source volume: $SOURCE_VOL to target volume: $TARGET_VOL"
+  echo "Running Pure CLI: purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force"
+  if [ "$EXECUTE_PURE" = "true" ]; then
+    COPYRESULT=$(/usr/bin/ssh -n ${PURE_USER}@${PURE_ARRAY} "purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force" 2>&1)
+    if ! echo "$COPYRESULT" | grep -q "Created"; then
+      echo "Failed copy volume: ${COPYRESULT}, exiting..."
+      exit_failed
+    fi
+    echo "$COPYRESULT"
+  else
+    echo "[DRY-RUN] Skipping: purevol copy --overwrite ${SOURCE_PG_GROUP}.${PG_SNAP_SUFFIX}.${SOURCE_VOL} ${TARGET_VOL} --force"
+  fi
   echo ""
 done
-IFS=$' \t\n'
 
 echo "Mounting file systems"
 echo ""
