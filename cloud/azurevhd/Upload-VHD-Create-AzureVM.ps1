@@ -89,6 +89,12 @@ Download AzCopy v10: https://learn.microsoft.com/en-us/azure/storage/common/stor
 Switch to use the direct upload (AzCopy) path even for VHD files instead of the page blob
 upload path. Useful for testing the direct upload path before consolidating.
 
+.PARAMETER configFile
+Path to a PSD1 config file containing Azure environment variables (subscription,
+resource group, storage account, networking, etc.). If provided, config values
+override the hardcoded defaults in the VARIABLES section. See upload_config.psd1
+for an example. Command-line parameters (vmName, sourceVHD, etc.) are not affected.
+
 .EXAMPLE
 ./Upload-VHD-Create-AzureVM.ps1 -vmName <VM Name> -sourceVHD <path to VHD file>
   [-osType Windows|Linux] [-hyperVGeneration V1|V2]
@@ -102,6 +108,10 @@ upload path. Useful for testing the direct upload path before consolidating.
 .EXAMPLE
 ./Upload-VHD-Create-AzureVM.ps1 -vmName <disk name prefix> -sourceVHD <path to VHD/VHDX>
   -diskType Data -attachToVM <existing VM name> [-skuName <disk SKU>]
+
+.EXAMPLE
+./Upload-VHD-Create-AzureVM.ps1 -configFile './upload_config.psd1'
+  -vmName <VM Name> -sourceVHD <path to VHD file>
 
 #>
 
@@ -139,27 +149,36 @@ param (
   [string]$azcopyPath = 'azcopy',
   # Use the direct upload (AzCopy) path even for VHD files instead of page blob upload
   [Parameter(Mandatory=$false)]
-  [switch]$alwaysUseAzCopy = $false
+  [switch]$alwaysUseAzCopy = $false,
+  # Path to PSD1 config file for Azure environment variables
+  [Parameter(Mandatory=$false)]
+  [string]$configFile = ''
 )
 
 ### VARIABLES - BEGIN ###
 
-# Azure Subscription to login to
-$subscription = 'RR-PRD'
-
-# Resource group and region
-$resourceGroup = "rr-tong-lighthouse"
-$location = "eastus2"
-
-## Storage Account variables (VHD page blob upload path only)
-$storageAccountName = "rrtonglighthouse150"
-$storageContainerName = "vhds"
-
-# Networking details (OS disk VM creation only)
-$vnetRG = "rg-rr2-eastus2-networking"
-$vnetName = "vnet-rr2-eastus2"
-$subnetName = "main1"
-$nsgName = "rr-tong-nsg"
+if ($configFile -ne '') {
+  if (-not (Test-Path $configFile)) {
+    Write-Host "ERROR: Config file not found: $configFile" -foregroundcolor red
+    exit 1
+  }
+  Write-Host "Loading config from: $configFile" -foregroundcolor green
+  $configData = Import-PowerShellDataFile -Path $configFile
+  foreach ($key in $configData.Keys) {
+    Set-Variable -Name $key -Value $configData[$key]
+  }
+} else {
+  # Default values - edit these or use a PSD1 config file instead
+  $subscription = 'RR-PRD'
+  $resourceGroup = "rr-tong-lighthouse"
+  $location = "eastus2"
+  $storageAccountName = "rrtonglighthouse150"
+  $storageContainerName = "vhds"
+  $vnetRG = "rg-rr2-eastus2-networking"
+  $vnetName = "vnet-rr2-eastus2"
+  $subnetName = "main1"
+  $nsgName = "rr-tong-nsg"
+}
 
 ### VARIABLES - END ###
 
