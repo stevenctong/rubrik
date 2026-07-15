@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-This script converts a VMDK to a VHD (or VHDX for disks larger than 2 TB) using qemu-img.
+This script converts a VMDK to a VHD or VHDX using qemu-img.
 
 .DESCRIPTION
-This script converts a VMDK to a VHD (or VHDX for disks larger than 2 TB) using qemu-img.
+This script converts a VMDK to a VHD or VHDX using qemu-img.
 The VHD format has a hard 2 TB size limit. For VMDKs exceeding 2 TB, the script
-automatically converts to VHDX format and warns about Azure upload requirements.
+automatically converts to VHDX format. Use -forceVHDX to always convert to VHDX
+regardless of disk size (useful for Azure Premium SSD v2 or Ultra Disk targets).
 
 For the VMDK, there should be two files: a '.vmdk' and '-flat.vmdk'.
 '.vmdk' is the descriptor file while '-flat.vmdk' contains the data.
@@ -63,15 +64,25 @@ It's easiest to perform these checks on a local Windows host w/Hyper-V role inst
 Path to the VMDK descriptor file (not the -flat.vmdk data file).
 
 .PARAMETER targetVHD
-Path and filename for the output VHD (or VHDX for disks larger than 2 TB).
+Path and filename for the output VHD or VHDX. If -forceVHDX is set or the disk
+exceeds 2 TB, a .vhd extension is automatically updated to .vhdx.
 
 .PARAMETER qemuPath
 Path to the qemu-img.exe tool. Defaults to 'C:\Program Files\qemu\qemu-img.exe'.
+
+.PARAMETER forceVHDX
+Switch to always convert to VHDX format regardless of disk size. Useful when
+targeting Azure Premium SSD v2 or Ultra Disk SKUs which support VHDX natively.
 
 .EXAMPLE
 ./Convert-VMDK-To-VHD.ps1 -sourceVMDK <source vmdk descriptor file>
   -targetVHD <target vhd filename> [-qemuPath <path to qemu-img.exe>]
 For disks larger than 2 TB, the script converts to VHDX and updates the target extension.
+
+.EXAMPLE
+./Convert-VMDK-To-VHD.ps1 -sourceVMDK <source vmdk descriptor file>
+  -targetVHD <target vhdx filename> -forceVHDX
+Always converts to VHDX regardless of disk size.
 
 #>
 
@@ -85,7 +96,10 @@ param (
   [string]$targetVHD = '',
   # Path to qemu-img.exe
   [Parameter(Mandatory=$false)]
-  [string]$qemuPath = 'C:\Program Files\qemu\qemu-img.exe'
+  [string]$qemuPath = 'C:\Program Files\qemu\qemu-img.exe',
+  # Force conversion to VHDX regardless of disk size
+  [Parameter(Mandatory=$false)]
+  [switch]$forceVHDX = $false
 )
 
 Write-Host "Source VMDK: $sourceVMDK" -foregroundcolor green
@@ -194,22 +208,27 @@ if ($virtualSizeBytes -eq 0) {
 # VHD format has a hard 2 TB limit, use VHDX for larger disks
 $twoTBThreshold = [long]2 * 1024 * 1024 * 1024 * 1024
 $isLargeDisk = $virtualSizeBytes -gt $twoTBThreshold
+$useVHDX = $isLargeDisk -or $forceVHDX
 
-if ($isLargeDisk) {
-  Write-Host ""
-  Write-Host "======================================================================" -foregroundcolor yellow
-  Write-Host "WARNING: Disk size exceeds 2 TB ($([math]::Round($virtualSizeBytes / 1TB, 2)) TB)" -foregroundcolor yellow
-  Write-Host "The VHD format has a hard 2 TB size limit." -foregroundcolor yellow
-  Write-Host "Converting to VHDX format instead." -foregroundcolor yellow
-  Write-Host "" -foregroundcolor yellow
-  Write-Host "Azure VHDX upload requirements:" -foregroundcolor yellow
-  Write-Host "  - VHDX uploads only supported on Premium SSD v2 or Ultra Disk SKUs" -foregroundcolor yellow
-  Write-Host "  - Must use AzCopy for upload (Add-AzVHD does not support these SKUs)" -foregroundcolor yellow
-  Write-Host "  - Target managed disk must use -LogicalSectorSize 4096" -foregroundcolor yellow
-  Write-Host "  - For OS disks, the source partition must be GPT (Gen 2)" -foregroundcolor yellow
-  Write-Host "  - Azure expands the VHDX to the next 256 MiB alignment on upload" -foregroundcolor yellow
-  Write-Host "======================================================================" -foregroundcolor yellow
-  Write-Host ""
+if ($useVHDX) {
+  if ($isLargeDisk) {
+    Write-Host ""
+    Write-Host "======================================================================" -foregroundcolor yellow
+    Write-Host "WARNING: Disk size exceeds 2 TB ($([math]::Round($virtualSizeBytes / 1TB, 2)) TB)" -foregroundcolor yellow
+    Write-Host "The VHD format has a hard 2 TB size limit." -foregroundcolor yellow
+    Write-Host "Converting to VHDX format instead." -foregroundcolor yellow
+    Write-Host "" -foregroundcolor yellow
+    Write-Host "Azure VHDX upload requirements:" -foregroundcolor yellow
+    Write-Host "  - VHDX uploads only supported on Premium SSD v2 or Ultra Disk SKUs" -foregroundcolor yellow
+    Write-Host "  - Must use AzCopy for upload (Add-AzVHD does not support these SKUs)" -foregroundcolor yellow
+    Write-Host "  - Target managed disk must use -LogicalSectorSize 4096" -foregroundcolor yellow
+    Write-Host "  - For OS disks, the source partition must be GPT (Gen 2)" -foregroundcolor yellow
+    Write-Host "  - Azure expands the VHDX to the next 256 MiB alignment on upload" -foregroundcolor yellow
+    Write-Host "======================================================================" -foregroundcolor yellow
+    Write-Host ""
+  } else {
+    Write-Host "Force VHDX enabled - converting to VHDX format" -foregroundcolor green
+  }
 
   # Update target extension to .vhdx if user specified .vhd
   if ($targetVHD -match '\.vhd$') {
@@ -220,7 +239,7 @@ if ($isLargeDisk) {
 Write-Host "Target: $targetVHD" -foregroundcolor green
 
 # Convert vmdk using qemu-img
-if ($isLargeDisk) {
+if ($useVHDX) {
   Write-Host "Converting the vmdk to vhdx using qemu-img" -foregroundcolor green
   & $qemuPath convert -f "vmdk" -O "vhdx" -o "subformat=fixed" $sourceVMDK $targetVHD
 } else {
@@ -241,7 +260,7 @@ Get-Item $targetVHD | Select-Object Attributes
 
 # For VHD only: ensure alignment to 1 MB and resize if needed
 # VHDX does not need this - Azure aligns VHDX to 256 MiB on upload
-if (-not $isLargeDisk) {
+if (-not $useVHDX) {
   Write-Host "Checking converted vhd disk alignment" -foregroundcolor green
   $currentSize = (Get-Item $targetVHD).Length
 
