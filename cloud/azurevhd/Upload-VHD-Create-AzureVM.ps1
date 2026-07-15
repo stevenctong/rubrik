@@ -128,28 +128,25 @@ param (
   [string]$sourceVHD = '',
   # Disk type: OS (create new VM) or Data (attach to existing VM)
   [Parameter(Mandatory=$false)]
-  [ValidateSet('OS', 'Data')]
-  [string]$diskType = 'OS',
+  [string]$diskType = '',
   # Existing VM name to attach data disk to (required for -diskType Data)
   [Parameter(Mandatory=$false)]
   [string]$attachToVM = '',
   # OS type: Windows or Linux (OS disks only)
   [Parameter(Mandatory=$false)]
-  [ValidateSet('Windows', 'Linux')]
-  [string]$osType = 'Windows',
+  [string]$osType = '',
   # Hyper-V generation: V1 for MBR, V2 for GPT
   [Parameter(Mandatory=$false)]
-  [ValidateSet('V1', 'V2')]
-  [string]$hyperVGeneration = 'V1',
+  [string]$hyperVGeneration = '',
   # Azure VM size
   [Parameter(Mandatory=$false)]
-  [string]$vmSize = 'Standard_E2_v5',
+  [string]$vmSize = '',
   # Managed disk SKU type
   [Parameter(Mandatory=$false)]
-  [string]$skuName = 'StandardSSD_LRS',
+  [string]$skuName = '',
   # Path to AzCopy executable (required for VHDX uploads or -alwaysUseAzCopy)
   [Parameter(Mandatory=$false)]
-  [string]$azcopyPath = 'azcopy',
+  [string]$azcopyPath = '',
   # Use the direct upload (AzCopy) path even for VHD files instead of page blob upload
   [Parameter(Mandatory=$false)]
   [switch]$alwaysUseAzCopy = $false
@@ -170,56 +167,70 @@ if ($configFile -ne '') {
       Set-Variable -Name $key -Value $configData[$key]
     }
   }
-} else {
-  # Default values - edit these or use a PSD1 config file instead
-  $subscription = 'RR-PRD'
-  $resourceGroup = "rr-tong-lighthouse"
-  $location = "eastus2"
-  $storageAccountName = "rrtonglighthouse150"
-  $storageContainerName = "vhds"
-  $vnetRG = "rg-rr2-eastus2-networking"
-  $vnetName = "vnet-rr2-eastus2"
-  $subnetName = "main1"
-  $nsgName = "rr-tong-nsg"
-}
-
-# Validate required values (can come from config or command line)
-if ([string]::IsNullOrEmpty($vmName)) {
-  Write-Host "ERROR: -vmName is required (via parameter or config file)." -foregroundcolor red
-  exit 1
-}
-if ([string]::IsNullOrEmpty($sourceVHD)) {
-  Write-Host "ERROR: -sourceVHD is required (via parameter or config file)." -foregroundcolor red
-  exit 1
 }
 
 ### VARIABLES - END ###
 
 ## Validation
+$validationErrors = @()
+
+# Always required
+if ([string]::IsNullOrEmpty($vmName)) { $validationErrors += "vmName is required" }
+if ([string]::IsNullOrEmpty($sourceVHD)) { $validationErrors += "sourceVHD is required" }
+if ([string]::IsNullOrEmpty($subscription)) { $validationErrors += "subscription is required" }
+if ([string]::IsNullOrEmpty($resourceGroup)) { $validationErrors += "resourceGroup is required" }
+if ([string]::IsNullOrEmpty($location)) { $validationErrors += "location is required" }
+if ([string]::IsNullOrEmpty($diskType)) { $validationErrors += "diskType is required" }
+if ([string]::IsNullOrEmpty($skuName)) { $validationErrors += "skuName is required" }
+
+if ($validationErrors.Count -gt 0) {
+  Write-Host "ERROR: Missing required values (set via -configFile or command-line parameters):" -foregroundcolor red
+  $validationErrors | ForEach-Object { Write-Host "  - $_" -foregroundcolor red }
+  exit 1
+}
+
+# Validate sourceVHD file exists
 if (-not (Test-Path $sourceVHD)) {
   Write-Host "ERROR: Source file not found: $sourceVHD" -foregroundcolor red
   exit 1
-}
-
-if ($diskType -eq 'Data' -and [string]::IsNullOrEmpty($attachToVM)) {
-  Write-Host "ERROR: -attachToVM is required when -diskType is 'Data'." -foregroundcolor red
-  Write-Host "Specify the name of an existing VM to attach the data disk to." -foregroundcolor red
-  exit 1
-}
-
-## Derived Variables
-# Disk name uses vmName as prefix - change the suffix if uploading multiple disks
-$diskName = $vmName + "-disk-01"
-if ($diskType -eq 'OS') {
-  $nicName = $vmName + "-nic-01"
 }
 
 # Detect VHD vs VHDX based on file extension
 $isVHDX = $sourceVHD -match '\.vhdx$'
 $useDirectUpload = $isVHDX -or $alwaysUseAzCopy
 
+# Conditional validation based on disk type and upload method
+$conditionalErrors = @()
+
+if ($diskType -eq 'OS') {
+  if ([string]::IsNullOrEmpty($osType)) { $conditionalErrors += "osType is required for OS disks" }
+  if ([string]::IsNullOrEmpty($hyperVGeneration)) { $conditionalErrors += "hyperVGeneration is required for OS disks" }
+  if ([string]::IsNullOrEmpty($vmSize)) { $conditionalErrors += "vmSize is required for OS disks" }
+  if ([string]::IsNullOrEmpty($vnetRG)) { $conditionalErrors += "vnetRG is required for OS disks" }
+  if ([string]::IsNullOrEmpty($vnetName)) { $conditionalErrors += "vnetName is required for OS disks" }
+  if ([string]::IsNullOrEmpty($subnetName)) { $conditionalErrors += "subnetName is required for OS disks" }
+  if ([string]::IsNullOrEmpty($nsgName)) { $conditionalErrors += "nsgName is required for OS disks" }
+} elseif ($diskType -eq 'Data') {
+  if ([string]::IsNullOrEmpty($attachToVM)) { $conditionalErrors += "attachToVM is required for data disks" }
+} else {
+  $conditionalErrors += "diskType must be 'OS' or 'Data' (got: '$diskType')"
+}
+
+if ($useDirectUpload) {
+  if ([string]::IsNullOrEmpty($azcopyPath)) { $conditionalErrors += "azcopyPath is required for direct upload (VHDX or -alwaysUseAzCopy)" }
+} else {
+  if ([string]::IsNullOrEmpty($storageAccountName)) { $conditionalErrors += "storageAccountName is required for VHD page blob upload" }
+  if ([string]::IsNullOrEmpty($storageContainerName)) { $conditionalErrors += "storageContainerName is required for VHD page blob upload" }
+}
+
+if ($conditionalErrors.Count -gt 0) {
+  Write-Host "ERROR: Missing required values (set via -configFile or command-line parameters):" -foregroundcolor red
+  $conditionalErrors | ForEach-Object { Write-Host "  - $_" -foregroundcolor red }
+  exit 1
+}
+
+# VHDX SKU validation
 if ($isVHDX) {
-  # Validate that the SKU supports VHDX uploads
   if ($skuName -notin @('PremiumV2_LRS', 'UltraSSD_LRS')) {
     Write-Host "ERROR: VHDX uploads are only supported on PremiumV2_LRS or UltraSSD_LRS SKUs." -foregroundcolor red
     Write-Host "Current SKU: $skuName" -foregroundcolor red
@@ -232,6 +243,13 @@ if ($isVHDX) {
   Write-Host "Detected VHD file - will use direct upload method (-alwaysUseAzCopy)" -foregroundcolor green
 } else {
   Write-Host "Detected VHD file - will use page blob upload method" -foregroundcolor green
+}
+
+## Derived Variables
+# Disk name uses vmName as prefix - change the suffix if uploading multiple disks
+$diskName = $vmName + "-disk-01"
+if ($diskType -eq 'OS') {
+  $nicName = $vmName + "-nic-01"
 }
 
 # Login to Azure PowerShell
