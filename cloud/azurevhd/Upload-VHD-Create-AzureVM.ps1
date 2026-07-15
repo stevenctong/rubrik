@@ -51,6 +51,12 @@ Some additional options for consideration:
 - Size of VM
 - Additional Managed Disk options - tier of disk, performance for v2 / Ultra, encryption
 
+.PARAMETER configFile
+Path to a PSD1 config file containing Azure environment variables (subscription,
+resource group, storage account, networking, etc.). If provided, config values
+override the hardcoded defaults in the VARIABLES section. See upload_config.psd1
+for an example. Command-line parameters (vmName, sourceVHD, etc.) are not affected.
+
 .PARAMETER vmName
 Azure VM name. For OS disks, VM resource names (disk, NIC) are derived from this.
 For data disks, used as the disk name prefix.
@@ -89,12 +95,6 @@ Download AzCopy v10: https://learn.microsoft.com/en-us/azure/storage/common/stor
 Switch to use the direct upload (AzCopy) path even for VHD files instead of the page blob
 upload path. Useful for testing the direct upload path before consolidating.
 
-.PARAMETER configFile
-Path to a PSD1 config file containing Azure environment variables (subscription,
-resource group, storage account, networking, etc.). If provided, config values
-override the hardcoded defaults in the VARIABLES section. See upload_config.psd1
-for an example. Command-line parameters (vmName, sourceVHD, etc.) are not affected.
-
 .EXAMPLE
 ./Upload-VHD-Create-AzureVM.ps1 -vmName <VM Name> -sourceVHD <path to VHD file>
   [-osType Windows|Linux] [-hyperVGeneration V1|V2]
@@ -117,11 +117,14 @@ for an example. Command-line parameters (vmName, sourceVHD, etc.) are not affect
 
 [CmdletBinding()]
 param (
+  # Path to PSD1 config file for Azure environment variables
+  [Parameter(Mandatory=$false)]
+  [string]$configFile = '',
   # Azure VM Name - VM resource names will be derived from this
-  [Parameter(Mandatory=$true)]
+  [Parameter(Mandatory=$false)]
   [string]$vmName = '',
   # Source VHD or VHDX file to upload
-  [Parameter(Mandatory=$true)]
+  [Parameter(Mandatory=$false)]
   [string]$sourceVHD = '',
   # Disk type: OS (create new VM) or Data (attach to existing VM)
   [Parameter(Mandatory=$false)]
@@ -149,10 +152,7 @@ param (
   [string]$azcopyPath = 'azcopy',
   # Use the direct upload (AzCopy) path even for VHD files instead of page blob upload
   [Parameter(Mandatory=$false)]
-  [switch]$alwaysUseAzCopy = $false,
-  # Path to PSD1 config file for Azure environment variables
-  [Parameter(Mandatory=$false)]
-  [string]$configFile = ''
+  [switch]$alwaysUseAzCopy = $false
 )
 
 ### VARIABLES - BEGIN ###
@@ -164,8 +164,11 @@ if ($configFile -ne '') {
   }
   Write-Host "Loading config from: $configFile" -foregroundcolor green
   $configData = Import-PowerShellDataFile -Path $configFile
+  # Load config values, but command-line params take precedence
   foreach ($key in $configData.Keys) {
-    Set-Variable -Name $key -Value $configData[$key]
+    if (-not $PSBoundParameters.ContainsKey($key)) {
+      Set-Variable -Name $key -Value $configData[$key]
+    }
   }
 } else {
   # Default values - edit these or use a PSD1 config file instead
@@ -178,6 +181,16 @@ if ($configFile -ne '') {
   $vnetName = "vnet-rr2-eastus2"
   $subnetName = "main1"
   $nsgName = "rr-tong-nsg"
+}
+
+# Validate required values (can come from config or command line)
+if ([string]::IsNullOrEmpty($vmName)) {
+  Write-Host "ERROR: -vmName is required (via parameter or config file)." -foregroundcolor red
+  exit 1
+}
+if ([string]::IsNullOrEmpty($sourceVHD)) {
+  Write-Host "ERROR: -sourceVHD is required (via parameter or config file)." -foregroundcolor red
+  exit 1
 }
 
 ### VARIABLES - END ###
