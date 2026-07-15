@@ -199,6 +199,12 @@ if (-not (Test-Path $sourceVHD)) {
 $isVHDX = $sourceVHD -match '\.vhdx$'
 $useDirectUpload = $isVHDX -or $alwaysUseAzCopy
 
+# VHDX requires GPT partitioning which is Azure Gen 2
+if ($isVHDX -and $diskType -eq 'OS' -and $hyperVGeneration -ne 'V2') {
+  Write-Host "VHDX detected - overriding hyperVGeneration to 'V2' (VHDX requires GPT/Gen 2)" -foregroundcolor yellow
+  $hyperVGeneration = 'V2'
+}
+
 # Conditional validation based on disk type and upload method
 $conditionalErrors = @()
 
