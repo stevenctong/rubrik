@@ -899,8 +899,8 @@ if ($executeProxyMountCommands) {
     $devPath = $DEVMAPPER_LIST[$mount]
     Write-Host ""
     Write-Host "Cycling LVM for VG: $vg_name, LV: $lv_name" -foregroundcolor green
-    # Deactivate then reactivate LVM so the kernel picks up the new underlying disk
-    lvchange -an /dev/$vg_name/$lv_name 2>$null
+    # Scan for new PVs on the freshly attached disk, then reactivate VG
+    pvscan --cache 2>$null
     vgchange -an $vg_name 2>$null
     vgchange -ay $vg_name
     if ($LASTEXITCODE -ne 0) {
@@ -908,12 +908,6 @@ if ($executeProxyMountCommands) {
       exit 61
     }
     Write-Host "VG $vg_name activated" -foregroundcolor green
-    lvchange -ay /dev/$vg_name/$lv_name
-    if ($LASTEXITCODE -ne 0) {
-      Write-Error "Failed to activate LV /dev/$vg_name/$lv_name (exit code: $LASTEXITCODE), exiting..."
-      exit 62
-    }
-    Write-Host "LV /dev/$vg_name/$lv_name activated" -foregroundcolor green
     Write-Host "Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
     if ($LASTEXITCODE -ne 0) {
