@@ -9,7 +9,7 @@ in Azure for v2 / Ultra SSDs.
 
 This script works with a PSD1 config file (see rubrik_az_config.psd1).
 
-# TODO: Add support for Azure Instant Snapshots (eliminates background copy wait)
+Supports Azure Instant Access Snapshots for Ultra / v2 disks via useInstantSnapshots config flag.
 
 The script supports creating the snapshots from a Prod VM in one subscription
 and creating the clone of the disks to a Proxy VM in another subscription.
@@ -23,18 +23,23 @@ The script performs the following tasks:
 1. SSH to PROD VM - Freeze IRIS ODB
    ** ssh <user>@<iris_host> 'sudo <instafreeze>'
    ** Also sends command via sleep to automatically 'instathaw' after x minutes
-2. Azure - Create v2/Ultra SSD snapshot
+2. Azure - Create v2/Ultra SSD incremental snapshot
 3. SSH to PROD VM - Thaw IRIS ODB
    ** ssh <user>@<iris_host> 'sudo <instathaw>'
-4. Azure - Check and waits for the snapshot background copy to complete
-5. Azure - Creates new Managed Disks from the snapshots for the Proxy VM
-6. Azure - Check and waits for the Managed Disk background copy to complete
+4. Azure - Wait for snapshot to be ready
+   ** Instant access: waits for InstantAccess state (seconds)
+   ** Standard: waits for background copy to reach 100% (minutes)
+5. Azure - Create new Managed Disks from the snapshots for the Proxy VM
+6. Azure - Wait for Managed Disk to be ready
+   ** Instant access: skipped, disk is immediately usable (reads served from snapshot)
+   ** Standard: waits for background copy to reach 100%
 7. Proxy VM - Prep the VM for the refreshed Managed Disks
+   ** Checks if mounted/active before unmounting (skips if not present)
    ** unmount <mount_points>
    ** vgchange -an <volume_groups>
-8. Azure - Find Managed Disks with 'rubrik' on the Proxy VM and detaches & deletes them
-9. Azure - Mounts the newly cloned Managed Disk onto the Proxy VM
-10. Proxy VM - Re-Mount the refreshed Managed Disk
+8. Azure - Find Managed Disks matching source disk names on the Proxy VM, detach them
+9. Azure - Attach the newly cloned Managed Disks onto the Proxy VM
+10. Proxy VM - Re-Mount the refreshed Managed Disks
    ** vgchange -ay <volume_groups>
    ** mount <using dev mapper>
 11. Rubrik backup begins
@@ -46,7 +51,7 @@ but appended with a 'suffix' and datestamped.
 Written by Steven Tong for usage with Rubrik
 GitHub: stevenctong
 Date: 8/30/24
-Updated: 7/12/26
+Updated: 7/15/26
 
 PRE-REQUISITES:
 1. IRIS PROD VM has the Proxy VM keys as 'authorized_keys' for SSH commands
@@ -71,8 +76,7 @@ PRE-REQUISITES:
         "Microsoft.Compute/disks/write",
         "Microsoft.Compute/disks/delete",
         "Microsoft.Compute/disks/beginGetAccess/action",
-        "Microsoft.Compute/virtualMachines/read",
-        "Microsoft.Compute/virtualMachines/write"
+        "Microsoft.Compute/virtualMachines/read"
       ]
 
    c. Assign the Custom Role to the MI on each Resource Group that the
@@ -140,6 +144,10 @@ if ($irisName) {
   $logPath = $logDir + '/' + $logFilename + '-' + $dateString + '.log'
 }
 
+if (-Not (Test-Path $logDir)) {
+  New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
 Start-Transcript -path $logPath -append
 
 Write-Host ""
@@ -157,6 +165,10 @@ Write-Host "  Epic commands: $executeEpicCommands"
 Write-Host "  Connect to Azure: $executeConnectToAzure"
 Write-Host "  Azure cleanup: $executeAzureCleanup"
 Write-Host "  Azure snapshot: $executeAzureSnapshot"
+Write-Host "  Instant access snapshots: $useInstantSnapshots"
+if ($useInstantSnapshots) {
+  Write-Host "  Instant access duration: $instantAccessDurationMins minutes"
+}
 Write-Host "  Managed Disk clone: $executeManagedDiskClone"
 Write-Host "  Proxy disk unmount: $executeProxyDiskUnmountCommands"
 Write-Host "  Azure disk detach: $executeAzureDiskDetach"
@@ -182,7 +194,8 @@ if ($irisName) {
   $EPIC_FREEZE_CMD = $EPIC_FREEZE
   $EPIC_THAW_CMD = $EPIC_THAW
 }
-$EPIC_AUTOTHAW_CMD = "nohup sh -c '(sleep 5m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
+# Auto-thaw fires after 8 min as a safety net in case the script fails before sending thaw
+$EPIC_AUTOTHAW_CMD = "nohup sh -c '(sleep 8m && ${EPIC_THAW_CMD}) > /dev/null 2>&1 &'"
 
 # Email subject derived from config + irisName + date
 if ($irisName) {
@@ -232,12 +245,16 @@ function Remove-ExpiredAzureResources {
         $resourceDate = [datetime]::ParseExact("$dateStamp $time", 'yyyy-MM-dd HH:mm', $null)
         if ($resourceDate -lt $CutoffDate) {
           Write-Host "Deleting $ResourceType older than $RetentionDays days: $($resource.Name)"
-          if ($ResourceType -eq 'snapshot') {
-            $result = Remove-AzSnapshot -ResourceGroupName $ResourceGroup -SnapshotName $resource.Name -Force
-          } else {
-            $result = Remove-AzDisk -ResourceGroupName $ResourceGroup -DiskName $resource.Name -Force
+          try {
+            if ($ResourceType -eq 'snapshot') {
+              $result = Remove-AzSnapshot -ResourceGroupName $ResourceGroup -SnapshotName $resource.Name -Force -ErrorAction Stop
+            } else {
+              $result = Remove-AzDisk -ResourceGroupName $ResourceGroup -DiskName $resource.Name -Force -ErrorAction Stop
+            }
+            Write-Host "$ResourceType deletion result: $($result.Status)"
+          } catch {
+            Write-Host "WARNING: Failed to delete $ResourceType $($resource.Name) - $($_.Exception.Message)" -foregroundcolor red
           }
-          Write-Host "$ResourceType deletion result: $($result.Status)"
         }
       }
     }
@@ -252,31 +269,112 @@ function Send-EpicThawCommand {
   }
 }
 
+# Calls the attachDetachDataDisks REST API to attach/detach disks from a VM.
+# Uses Invoke-AzRestMethod instead of Update-AzVM to avoid requiring NIC join permissions.
+function Invoke-AttachDetachDataDisks {
+  param(
+    [string]$SubscriptionId,
+    [string]$ResourceGroup,
+    [string]$VMName,
+    [hashtable]$Body,
+    [int]$MaxRetries = 4,
+    [string]$Operation = 'attach/detach'
+  )
+  $apiPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$VMName/attachDetachDataDisks?api-version=2024-03-01"
+  $jsonBody = $Body | ConvertTo-Json -Depth 5
+  $result = $null
+  $retryCount = 0
+  while ($null -eq $result) {
+    if ($retryCount -ge $MaxRetries) {
+      return @{ Success = $false; Error = "Max retries ($MaxRetries) exceeded for $Operation" }
+    }
+    $retryCount++
+    if ($retryCount -gt 1) {
+      $randomInterval = Get-Random -Minimum 20 -Maximum 60
+      Write-Host "  Retry $retryCount/$MaxRetries - waiting ${randomInterval}s before next attempt..."
+      Start-Sleep -Seconds $randomInterval
+    }
+    try {
+      Write-Host "  Calling attachDetachDataDisks REST API (attempt $retryCount/$MaxRetries)..."
+      $response = Invoke-AzRestMethod -Method POST -Path $apiPath -Payload $jsonBody -ErrorAction Stop
+      if ($response.StatusCode -eq 200) {
+        Write-Host "  API returned 200 - operation completed synchronously" -foregroundcolor green
+        $result = $response
+      } elseif ($response.StatusCode -eq 202) {
+        Write-Host "  API returned 202 - operation accepted, polling for completion..."
+        $locationUrl = ($response.Headers | Where-Object { $_.Key -eq 'Location' }).Value
+        if (-not $locationUrl) {
+          $locationUrl = ($response.Headers | Where-Object { $_.Key -eq 'Azure-AsyncOperation' }).Value
+        }
+        if ($locationUrl) {
+          $pollCount = 0
+          $pollMax = 60
+          while ($pollCount -lt $pollMax) {
+            $pollCount++
+            Start-Sleep -Seconds 10
+            $pollResponse = Invoke-AzRestMethod -Method GET -Uri $locationUrl -ErrorAction Stop
+            if ($pollResponse.StatusCode -eq 200) {
+              $pollBody = $pollResponse.Content | ConvertFrom-Json -ErrorAction SilentlyContinue
+              if ($pollBody.status -eq 'InProgress' -or $pollBody.status -eq 'Running') {
+                if ($pollCount % 3 -eq 0) {
+                  Write-Host "  Still in progress... ($($pollCount * 10)s elapsed)"
+                }
+                continue
+              }
+              Write-Host "  Async operation completed" -foregroundcolor green
+              $result = $pollResponse
+              break
+            } elseif ($pollResponse.StatusCode -eq 204) {
+              Write-Host "  Async operation completed (204)" -foregroundcolor green
+              $result = $pollResponse
+              break
+            } else {
+              Write-Host "  Poll returned status $($pollResponse.StatusCode), continuing..."
+            }
+          }
+          if ($null -eq $result) {
+            Write-Error "  Polling timed out after $($pollMax * 10)s for $Operation"
+          }
+        } else {
+          Write-Host "  No Location/AsyncOperation header in 202 response, treating as success" -foregroundcolor yellow
+          $result = $response
+        }
+      } else {
+        $errorContent = $response.Content | ConvertFrom-Json -ErrorAction SilentlyContinue
+        $errorMsg = if ($errorContent.error.message) { $errorContent.error.message } else { $response.Content }
+        Write-Error "  API returned $($response.StatusCode): $errorMsg"
+      }
+    } catch {
+      Write-Error "  Error during $Operation - $($_.Exception.Message)"
+    }
+  }
+  if ($null -ne $result) {
+    return @{ Success = $true; Response = $result }
+  }
+  return @{ Success = $false; Error = "Failed after $MaxRetries retries" }
+}
+
 #### Login to Azure and initialization of some variables ####
 
 $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
 $emailBody = "${currentTime}: Starting Azure snapshot script $irisName `n"
 
 if ($executeConnectToAzure) {
-  Connect-AzAccount -Identity
-  # Connect-AzAccount
-  Set-AzContext -subscription $sourceSubscriptionId
-  # Holds source disk to target disk name mapping
+  $azLogin = Connect-AzAccount -Identity
+  Write-Host "Logged in as: $($azLogin.Context.Account.Id), Tenant: $($azLogin.Context.Tenant.Id)" -foregroundcolor green
+  $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+  Write-Host "Subscription context set to: $($azCtx.Subscription.Name) ($sourceSubscriptionId)" -foregroundcolor green
+  # Name mappings and info caches used across steps
   $sourceDiskToTargetDisk = @{}
-  # Holds the source disk to snapshot name mapping
   $sourceDiskToSnapshot = @{}
-  # Holds source disk info
   $sourceDiskInfo = @{}
-  # Hold source disk snapshot info
   $sourceSnapshotInfo = @{}
-  # Create the source disk to target disk and snapshot name mapping
   foreach ($disk in $sourceDisks) {
-    # Snapshot name with suffix and date appended
     $sourceDiskToSnapshot.$disk = "${disk}-${sourceSnapshotSuffix}-${dateString}"
-    # Target disk name with suffix and date appended
     $sourceDiskToTargetDisk.$disk = "${disk}-${targetDiskSuffix}-${dateString}"
   }
   $diskCount = $sourceDisks.count
+  Write-Host ""
   Write-Host "Date: $date" -foregroundcolor green
   Write-Host "Source Subscription ID: $sourceSubscriptionId" -foregroundcolor green
   Write-Host "Source Resource Group: $sourceResourceGroup" -foregroundcolor green
@@ -299,9 +397,11 @@ if ($executeConnectToAzure) {
 #### Cleanup older snapshots and cloned Managed Disks ####
 
 if ($executeAzureCleanup) {
+  $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Cleaning up older snapshots and cloned disks `n"
-  Set-AzContext -subscription $sourceSubscriptionId
+  $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+  Write-Host "Subscription context: $($azCtx.Subscription.Name) ($sourceSubscriptionId)"
 
   $snapCutoff = $date.AddDays(-$snapDaysToKeep)
   Write-Host "Looking for and cleaning up any snapshots older than: $snapCutoff" -foregroundcolor green
@@ -312,15 +412,20 @@ if ($executeAzureCleanup) {
 
   $diskCutoff = $date.AddDays(-$clonedDisksDaysToKeep)
   Write-Host "Looking for and cleaning up Managed Disk clones older than: $diskCutoff" -foregroundcolor green
-  Write-Host "Switching subscription context to target subscription."
-  Set-AzContext -subscription $targetSubscriptionId
+  if ($sourceSubscriptionId -ne $targetSubscriptionId) {
+    $azCtx = Set-AzContext -subscription $targetSubscriptionId
+    Write-Host "Switched subscription context to: $($azCtx.Subscription.Name) ($targetSubscriptionId)"
+  }
   $azDisks = Get-AzDisk -ResourceGroup $targetResourceGroup
   Remove-ExpiredAzureResources -ResourceGroup $targetResourceGroup -Resources $azDisks `
     -NameSuffix $targetDiskSuffix -CutoffDate $diskCutoff -RetentionDays $clonedDisksDaysToKeep `
     -ResourceType 'disk' -SourceDisks $sourceDisks
 
-  Write-Host "Switching subscription context to source subscription."
-  Set-AzContext -subscription $sourceSubscriptionId
+  if ($sourceSubscriptionId -ne $targetSubscriptionId) {
+    $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+    Write-Host "Switched subscription context to: $($azCtx.Subscription.Name) ($sourceSubscriptionId)"
+  }
+  Write-Host "Cleanup completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
 }  # if ($executeAzureCleanup)
 
 #### Create snapshot of each source disk ####
@@ -340,107 +445,144 @@ if ($executeEpicCommands) {
 }
 
 if ($executeAzureSnapshot) {
+  $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Creating snapshots `n"
+  $snapshotMode = if ($useInstantSnapshots) { "instant access" } else { "standard" }
+  $emailBody += "${currentTime}: Creating snapshots ($snapshotMode) `n"
   # Create a snapshot for each disk
+  $snapshotType = if ($useInstantSnapshots) { "instant access incremental" } else { "incremental" }
   foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
-    # $sourceDiskToSnapshot contains the Source Disk Name to Snapshot Name mapping
     $diskName = $snapshot.name
     $snapshotName = $snapshot.value
-    Write-Host "Creating snapshot for disk: $diskName, snapshot name: $snapshotName..."
-    # Get the disk info that you need to backup by creating an incremental snapshot
-    $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup
-    # Add the disk info to the source disk info hashtable
+    Write-Host ""
+    Write-Host "Creating $snapshotType snapshot for disk: $diskName" -foregroundcolor green
+    Write-Host "  Snapshot name: $snapshotName"
+    if ($useInstantSnapshots) {
+      Write-Host "  Instant access duration: $instantAccessDurationMins minutes"
+    }
+    $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+    if (-not $diskInfo) {
+      Write-Error "Source disk not found: $diskName in RG $sourceResourceGroup"
+      Send-EpicThawCommand
+      exit 10
+    }
     $sourceDiskInfo.$diskName = $diskInfo
-    # Create an incremental snapshot by setting the SourceUri property with the value of the Id property of the disk
-    $snapshotConfig = New-AzSnapshotConfig -SourceUri $diskInfo.Id -Location $diskInfo.Location -CreateOption Copy -Incremental
-    # Create the new incremental snapshot
+    # Snapshot config clones the source disk's location and zone
+    $snapshotConfigParams = @{
+      SourceUri = $diskInfo.Id
+      Location = $diskInfo.Location
+      CreateOption = "Copy"
+      Incremental = $true
+    }
+    if ($useInstantSnapshots) {
+      $snapshotConfigParams.InstantAccessDurationMinutes = $instantAccessDurationMins
+    }
+    $snapshotConfig = New-AzSnapshotConfig @snapshotConfigParams -ErrorAction Stop
     try {
       $result = New-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName -Snapshot $snapshotConfig -ErrorAction Stop
     } catch {
-      $Error[0]
+      Write-Error "Failed to create snapshot $snapshotName - $($_.Exception.Message)"
       Send-EpicThawCommand
-      Write-Error "Exiting script..."
       exit 10
     }
-    # Check if each snapshot taken was successful or newestSnapshot
     $snapshotState = $result.ProvisioningState
     if ($snapshotState.contains('Succeeded')) {
-      Write-Host "Snapshot result: $($result.ProvisioningState)" -foregroundcolor green
+      Write-Host "Snapshot created successfully (ProvisioningState: $snapshotState)" -foregroundcolor green
     } else {
-      Write-Error "Error taking snapshot: $snapshotState"
-      $result
+      Write-Error "Snapshot failed for $snapshotName - ProvisioningState: $snapshotState"
       Send-EpicThawCommand
-      Write-Error "Exiting script..."
       exit 11
     }
-  } # foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator())
+  } # foreach snapshot
 
-  # If all snapshots successful, send IRIS thaw command
   Send-EpicThawCommand
 
   Write-Host ""
-  Write-Host "Waiting for $diskCount incremental snapshots to finish background copy" -foregroundcolor green
+  # Instant access snapshots reach usable state in seconds, standard need minutes for background copy
+  $snapPollSecs = if ($useInstantSnapshots) { 10 } else { $statusCheckSecs }
+  if ($useInstantSnapshots) {
+    Write-Host "Waiting for $diskCount snapshot(s) to reach InstantAccess state (polling every ${snapPollSecs}s)..." -foregroundcolor green
+    Write-Host "  Instant access snapshots are usable immediately once in InstantAccess state"
+  } else {
+    Write-Host "Waiting for $diskCount snapshot(s) to finish background copy (polling every ${snapPollSecs}s)..." -foregroundcolor green
+    Write-Host "  Standard incremental snapshots require background copy to complete before disk creation"
+  }
   Write-Host ""
 
-  # Hash table of snapshots that have completed their background copy
+  # Poll until all snapshots are ready (instant: InstantAccess state, standard: 100% copy)
   $snapshotComplete = @{}
   $pollIteration = 0
-  $maxPollIterations = 120
+  $maxPollIterations = if ($useInstantSnapshots) { 60 } else { 120 }
 
-  # For each incremental snapshot, check and wait until the background copy completes
   while ($snapshotComplete.count -lt $diskCount) {
     if ($pollIteration -ge $maxPollIterations) {
-      Write-Error "Snapshot background copy timed out after $([math]::Round($pollIteration * $statusCheckSecs / 60)) minutes, exiting..."
+      Write-Error "Snapshot timed out after $([math]::Round($pollIteration * $snapPollSecs / 60)) minutes, exiting..."
       exit 12
     }
     $pollIteration++
-    $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-    # Check the status of each snapshot operation
+    $currentTime = Get-Date -format "yyyy-MM-dd HH:mm:ss"
     foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
-      # $sourceDiskToSnapshot contains the Source Disk Name to Snapshot Name mapping
+      if ($snapshotComplete.ContainsKey($snapshot)) { continue }
       $snapshotName = $snapshot.value
       $snapshotInfo = Get-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName
       $sourceSnapshotInfo.$snapshotName = $snapshotInfo
-      if ($snapshotInfo.CompletionPercent -lt 100) {
-        Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), completion: $($snapshotInfo.CompletionPercent), waiting another $statusCheckSecs secs..."
+      if ($useInstantSnapshots) {
+        $accessState = $snapshotInfo.SnapshotAccessState
+        if ($accessState -in @('InstantAccess', 'AvailableWithInstantAccess')) {
+          Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), state: $accessState" -foregroundcolor green
+          $snapshotComplete.$snapshot = $true
+        } else {
+          Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), state: $accessState, waiting another ${snapPollSecs}s..."
+        }
       } else {
-        Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), completion: $($snapshotInfo.CompletionPercent)" -foregroundcolor green
-        $snapshotComplete.$snapshot = $true
+        if ($snapshotInfo.CompletionPercent -lt 100) {
+          Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), completion: $($snapshotInfo.CompletionPercent), waiting another ${snapPollSecs}s..."
+        } else {
+          Write-Host "${currentTime}: Snapshot: $($snapshotInfo.name), completion: $($snapshotInfo.CompletionPercent)" -foregroundcolor green
+          $snapshotComplete.$snapshot = $true
+        }
       }
     }
     if ($snapshotComplete.count -lt $diskCount) {
-      Start-Sleep $statusCheckSecs
+      Start-Sleep $snapPollSecs
     }
   }
-  Write-Host "All $diskCount snapshots have finished background copy" -foregroundcolor green
+  $stepElapsed = [math]::Round(((Get-Date) - $stepStart).TotalSeconds)
+  if ($useInstantSnapshots) {
+    Write-Host "All $diskCount snapshots are in InstantAccess state (${stepElapsed}s)" -foregroundcolor green
+  } else {
+    Write-Host "All $diskCount snapshots have finished background copy (${stepElapsed}s)" -foregroundcolor green
+  }
 } # if ($executeAzureSnapshot)
 
-# If execute snapshot is skipped, and we want to use an existing snapshot
-# to clone the Managed Disk, grab the Disk and Snapshot Info.
-# $dateString needs to be set to target an existing snapshot.
+# When snapshot step is skipped, look up existing disk and snapshot info.
+# Set $dateString at the top of the script to target a specific snapshot.
 if ( $executeManagedDiskClone -and ($executeAzureSnapshot -eq $false) ) {
   foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
-    # Get disk info for each disk
     $diskName = $snapshot.name
-    $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup
+    $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+    if (-not $diskInfo) {
+      Write-Error "Source disk not found: $diskName in RG $sourceResourceGroup"
+      exit 10
+    }
     $sourceDiskInfo.$diskName = $diskInfo
-    # Get snapshot info for each disk
     $snapshotName = $snapshot.value
-    $snapshotInfo = Get-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName
+    $snapshotInfo = Get-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName -ErrorAction Stop
+    if (-not $snapshotInfo) {
+      Write-Error "Snapshot not found: $snapshotName in RG $sourceResourceGroup (is dateString correct?)"
+      exit 12
+    }
     $sourceSnapshotInfo.$snapshotName = $snapshotInfo
   }
 }
 
 #### Switch Subscription Context ####
-# If the Proxy VM is in a different subscription, the rest of Azure commands will
-# performed in the target subscription
+# All remaining Azure commands target the Proxy VM's subscription
 if ($executeConnectToAzure) {
   if ($sourceSubscriptionId -ne $targetSubscriptionId) {
     Write-Host ""
-    Write-Host "Target subscription is different, switching to: $targetSubscriptionId"
-    $result = Set-AzContext -Subscription $targetSubscriptionId
-    Write-Host "Context set: $($result.name)"
+    $azCtx = Set-AzContext -Subscription $targetSubscriptionId
+    Write-Host "Switched subscription context to target: $($azCtx.Subscription.Name) ($targetSubscriptionId)"
   }
 }
 
@@ -449,24 +591,24 @@ if ($executeConnectToAzure) {
 # https://learn.microsoft.com/en-us/powershell/module/az.compute/new-azdiskconfig
 
 if ($executeManagedDiskClone) {
+  $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots `n"
+  $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots ($snapshotMode) `n"
   Write-Host ""
-  Write-Host "Starting Managed Disk creation from snapshots..."
-  # $disk contains the name of the source disk being worked on
+  if ($useInstantSnapshots) {
+    Write-Host "Creating Managed Disks from instant access snapshots (disks are usable immediately after creation)..." -foregroundcolor green
+  } else {
+    Write-Host "Creating Managed Disks from incremental snapshots (background copy required before use)..." -foregroundcolor green
+  }
   foreach ($disk in $sourceDisks) {
-    # Get the target disk name from the mapping
     $targetDiskName = $sourceDiskToTargetDisk[$disk]
-    # Get the disk info for the source disk - cloned disk matches: size, sku, zone, and location
     $diskInfo = $sourceDiskInfo[$disk]
-    # Get the snapshot name from the mapping
-    $snapshotName = $sourceDisktoSnapshot[$disk]
-    # Get the snapshot info for the snapshot that was taken - get snapshot Uri
+    $snapshotName = $sourceDiskToSnapshot[$disk]
     $snapshotInfo = $sourceSnapshotInfo[$snapshotName]
     Write-Host ""
-    Write-Host "Building disk config for source disk: $disk"
-    Write-Host "Using source snapshot: $snapshotName"
-    Write-Host "Target disk name: $targetDiskName"
+    Write-Host "Building disk config for source disk: $disk" -foregroundcolor green
+    Write-Host "  Source snapshot: $snapshotName"
+    Write-Host "  Target disk name: $targetDiskName"
     $diskConfigParameters = @{
       CreateOption = "Copy"
       SourceResourceId = $snapshotInfo.Id
@@ -479,16 +621,13 @@ if ($executeManagedDiskClone) {
       DiskMBpsReadWrite = $diskMBpsReadWrite
       DiskMBpsReadOnly = $diskMBpsReadOnly
     }
-    $diskConfigParameters | Format-table
-    # Create a Managed Disk config from the parameters above
+    Write-Host "  SKU: $($diskInfo.sku.name), Size: $($diskInfo.DiskSizeGB)GB, Zone: $($diskInfo.zones[0]), Location: $($diskInfo.location)"
+    Write-Host "  IOPS R/W: $diskIOPSReadWrite, IOPS RO: $diskIOPSReadOnly, MBps R/W: $diskMBpsReadWrite, MBps RO: $diskMBpsReadOnly"
     $diskConfig = New-AzDiskConfig @diskConfigParameters -ErrorAction Stop
-    # Script will now create new Managed Disks from the snapshots
-    # There is error handling to check if 'diskMBpsReadWrite' or 'diskMBpsReadOnly'
-    # is set out of range and attempt to set it to its max value
-    # Regex to check 'diskMBpsReadWrite' or 'diskMBpsReadOnly' config error and grab largest supported value
+    # If MBps is out of range for the disk size, Azure returns the valid max in the error message.
+    # Retry loop catches that error, extracts the max, adjusts the config, and retries.
     $regex = "disk\.(diskMBpsReadWrite|diskMBpsReadOnly).*between\s+(?:\d+\s+and\s+)?(\d+)"
     $retry = $true
-    # Failsafe if the error message changes, then exit script if retries too high
     $retryCount = 0
     while ($retry -eq $true -and $retryCount -lt 4) {
       $retry = $false
@@ -498,19 +637,17 @@ if ($executeManagedDiskClone) {
         exit 20
       }
       try {
-        # Create a new Managed Disk from the Snapshot
         Write-Host ""
         Write-Host "Creating new Managed Disk: $targetDiskName" -foregroundcolor green
         $result = New-AzDisk -Disk $diskConfig -ResourceGroupName $targetResourceGroup -DiskName $targetDiskName -ErrorAction Stop
       } catch {
-        $Error[0]
-        # If the error matched on 'diskMBps__' setting
-        if ($Error[0] -match $regex) {
+        $errMsg = $_.Exception.Message
+        Write-Error "Error creating Managed Disk $targetDiskName - $errMsg"
+        if ($errMsg -match $regex) {
           Write-Host "Found an issue with: $($Matches[1]), setting it to max value of: $($Matches[2])" -foregroundcolor yellow
           $diskConfigParameters.$($Matches[1]) = [int]$Matches[2]
           Write-Host "Retrying creating new Managed Disk: $targetDiskName..." -foregroundcolor yellow
-          $diskConfigParameters | Format-table
-          $diskConfig = New-AzDiskConfig @diskConfigParameters
+          $diskConfig = New-AzDiskConfig @diskConfigParameters -ErrorAction Stop
           $retry = $true
         } else {
           Write-Error "Unhandled error creating Managed Disk: $targetDiskName, exiting..."
@@ -518,186 +655,257 @@ if ($executeManagedDiskClone) {
         }
       }
     }
-    Write-Host "Managed Disk creation result: $($result.ProvisioningState)"
-  } # foreach ($disk in $sourceDisks) to create the disk from snapshot
+    Write-Host "Managed Disk created (ProvisioningState: $($result.ProvisioningState))" -foregroundcolor green
+  } # foreach source disk
 
-  Write-Host ""
-  Write-Host "Waiting until snapshot clone to Managed Disk background copy completes" -foregroundcolor green
-  Write-Host ""
+  if ($useInstantSnapshots) {
+    # With instant access snapshots, the disk is backed by the instant access snapshot data.
+    # Reads to any region are served directly from the snapshot, so the disk is usable
+    # immediately after ProvisioningState = Succeeded. No need to wait for background copy.
+    Write-Host ""
+    Write-Host "All $diskCount Managed Disk(s) created from instant access snapshots" -foregroundcolor green
+    Write-Host "  Skipping background copy wait - disks are immediately usable (reads served from instant access snapshot)" -foregroundcolor green
+  } else {
+    Write-Host ""
+    $diskPollSecs = $statusCheckSecs
+    Write-Host "Waiting for $diskCount Managed Disk(s) to finish background copy (polling every ${diskPollSecs}s)..." -foregroundcolor green
+    Write-Host "  Standard incremental snapshots require the background copy to complete before the disk can be attached"
+    Write-Host ""
 
-  # Hash table of Managed Disks that have completed their background copy
-  $diskComplete = @{}
-  $pollIteration = 0
-  $maxPollIterations = 120
+    # Poll until all cloned disks finish background copy (standard snapshots only)
+    $diskComplete = @{}
+    $pollIteration = 0
+    $maxPollIterations = 120
 
-  # For each Managed Disk copy, check and wait until the background copy completes
-  while ($diskComplete.count -lt $diskCount) {
-    if ($pollIteration -ge $maxPollIterations) {
-      Write-Error "Managed Disk background copy timed out after $([math]::Round($pollIteration * $statusCheckSecs / 60)) minutes, exiting..."
-      exit 21
-    }
-    $pollIteration++
-    $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-    # Check the status of each Managed Disk operation
-    foreach ($disk in $sourceDisks) {
-      $targetDiskName = $sourceDiskToTargetDisk[$disk]
-      $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup
-      if ($diskInfo.CompletionPercent -lt 100) {
-        Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent), waiting another $statusCheckSecs secs..."
-      } else {
-        Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent)" -foregroundcolor green
-        $diskComplete.$disk = $true
+    while ($diskComplete.count -lt $diskCount) {
+      if ($pollIteration -ge $maxPollIterations) {
+        Write-Error "Managed Disk background copy timed out after $([math]::Round($pollIteration * $diskPollSecs / 60)) minutes, exiting..."
+        exit 21
       }
-    }
-    if ($diskComplete.count -lt $diskCount) {
-      Start-Sleep $statusCheckSecs
-    }
-  } # while ($diskComplete.count -lt $diskCount) to check disk copy status
-  Write-Host "All $diskCount Managed Disks have finished background copy" -foregroundcolor green
+      $pollIteration++
+      $currentTime = Get-Date -format "yyyy-MM-dd HH:mm:ss"
+      foreach ($disk in $sourceDisks) {
+        if ($diskComplete.ContainsKey($disk)) { continue }
+        $targetDiskName = $sourceDiskToTargetDisk[$disk]
+        $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup
+        if ($diskInfo.CompletionPercent -lt 100) {
+          Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent), waiting another ${diskPollSecs}s..."
+        } else {
+          Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent)" -foregroundcolor green
+          $diskComplete.$disk = $true
+        }
+      }
+      if ($diskComplete.count -lt $diskCount) {
+        Start-Sleep $diskPollSecs
+      }
+    } # while disk copy polling
+    Write-Host "All $diskCount Managed Disk(s) have finished background copy" -foregroundcolor green
+  }
+  Write-Host "Managed Disk clone step completed in $([math]::Round(((Get-Date) - $stepStart).TotalMinutes, 1)) minutes" -foregroundcolor green
 } # if ($executeManagedDiskClone)
 
 
 #### Detach Managed Disk from the Proxy VM ####
-# https://learn.microsoft.com/en-us/azure/virtual-machines/windows/detach-disk
+# Uses the attachDetachDataDisks REST API (only requires attachDetachDataDisks/action permission)
+# https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/attach-detach-data-disks
 
-# Unmount the file systems from the proxy VM and deactivate VGs
+# Unmount file systems and deactivate VGs before detaching disks
 if ($executeProxyDiskUnmountCommands) {
   Write-Host ""
-  Write-Host "On Proxy VM, attempting to unmount file systems" -foregroundcolor green
+  Write-Host "On Proxy VM, unmounting file systems before disk detach" -foregroundcolor green
   foreach ($mountPoint in $MOUNT_LIST) {
-    Write-Host "Attempting to unmount ${MOUNT_BASE}${mountPoint}..."
-    umount ${MOUNT_BASE}${mountPoint}
+    $fullPath = "${MOUNT_BASE}${mountPoint}"
+    $isMounted = findmnt $fullPath 2>$null
+    if ($isMounted) {
+      Write-Host "Unmounting $fullPath..."
+      umount $fullPath
+      if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to unmount $fullPath (exit code: $LASTEXITCODE), exiting..."
+        exit 35
+      }
+      Write-Host "Successfully unmounted $fullPath" -foregroundcolor green
+    } else {
+      Write-Host "$fullPath is not currently mounted, skipping" -foregroundcolor yellow
+    }
   }
   Write-Host "Deactivating volume groups before disk detach" -foregroundcolor green
   foreach ($vg_name in $VG_LIST) {
-    Write-Host "Deactivating VG: $vg_name..."
-    vgchange -an $vg_name
+    $vgExists = vgs $vg_name 2>$null
+    if ($vgExists) {
+      Write-Host "Deactivating VG: $vg_name..."
+      vgchange -an $vg_name
+      if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to deactivate VG $vg_name (exit code: $LASTEXITCODE), exiting..."
+        exit 36
+      }
+      Write-Host "Successfully deactivated VG: $vg_name" -foregroundcolor green
+    } else {
+      Write-Host "VG $vg_name is not active or does not exist, skipping" -foregroundcolor yellow
+    }
   }
 }
 
 if ($executeAzureDiskDetach) {
+  $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Detaching disks from Proxy VM `n"
   Write-Host ""
   Write-Host "Detaching existing data disks from the Proxy VM" -foregroundcolor green
+  Write-Host "  Proxy VM: $proxyVM (RG: $targetResourceGroup)"
 
   # Find and detach any pre-existing Managed Disks whose names match the source disks
   $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
+  Write-Host "  Current data disks on VM: $($vm.StorageProfile.DataDisks.Count)"
+  # Build regex pattern from source disk names to find matching attached disks
   $diskPattern = ($sourceDisks | ForEach-Object { [regex]::Escape($_) }) -join '|'
   $disksToDetach = @($vm.StorageProfile.DataDisks |
     Where-Object { $_.Name -match $diskPattern } |
     ForEach-Object { $_.Name })
-  Write-Host "Found $($disksToDetach.Count) disk(s) to detach: $($disksToDetach -join ', ')"
-  # Detach all the disks that were matched
-  foreach ($diskDetach in $disksToDetach) {
-    # Detach the disk from the VM
-    Write-Host "Attempting to detach disk: $diskDetach..."
-    $resultUpdate = $null
-    $retryCount = 0
-    while ($null -eq $resultUpdate) {
-      if ($retryCount -gt 4) {
-        Write-Host "Too many retries trying to detach disk: $diskDetach, exiting..."
-        exit 40
-      }
-      $retryCount++
-      try {
-        # Random interval avoids Azure API throttling on concurrent VM updates
-        $randomInterval = Get-Random -Minimum 20 -Maximum 60
-        Start-Sleep -Seconds $randomInterval
-        $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
-        $resultRemove = Remove-AzVMDataDisk -VM $vm -Name $diskDetach -ErrorAction Stop
-        $resultUpdate = Update-AzVM -VM $vm -ResourceGroupName $targetResourceGroup -ErrorAction Stop
-      } catch {
-        Write-Error "Error detaching disk: $diskDetach, trying again in 30 seconds..."
-        Start-Sleep 30
+  if ($disksToDetach.Count -eq 0) {
+    Write-Host "  No matching disks found to detach (pattern: $($sourceDisks -join ', '))" -foregroundcolor yellow
+  } else {
+    Write-Host "  Found $($disksToDetach.Count) disk(s) to detach: $($disksToDetach -join ', ')"
+  }
+  # Detach all matched disks in a single REST API call
+  if ($disksToDetach.Count -gt 0) {
+    $detachList = @()
+    foreach ($diskDetach in $disksToDetach) {
+      $diskEntry = $vm.StorageProfile.DataDisks | Where-Object { $_.Name -eq $diskDetach }
+      if ($diskEntry.ManagedDisk.Id) {
+        $detachList += @{ diskId = $diskEntry.ManagedDisk.Id }
+        Write-Host "  Will detach: $diskDetach (LUN $($diskEntry.Lun))"
+      } else {
+        Write-Host "  Could not resolve resource ID for disk: $diskDetach, skipping" -foregroundcolor yellow
       }
     }
-    Write-Host "Successfully detached disk: $diskDetach" -foregroundcolor green
+    if ($detachList.Count -gt 0) {
+      $detachBody = @{ dataDisksToDetach = $detachList }
+      Write-Host "Detaching $($detachList.Count) disk(s) via attachDetachDataDisks API..."
+      $detachResult = Invoke-AttachDetachDataDisks `
+        -SubscriptionId $targetSubscriptionId `
+        -ResourceGroup $targetResourceGroup `
+        -VMName $proxyVM `
+        -Body $detachBody `
+        -MaxRetries 4 `
+        -Operation 'detach'
+      if (-not $detachResult.Success) {
+        Write-Error "Failed to detach disks: $($detachResult.Error)"
+        exit 40
+      }
+      Write-Host "Successfully detached $($detachList.Count) disk(s)" -foregroundcolor green
+    }
   }
+  Write-Host "Detach completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
 } # if ($executeAzureDiskDetach)
 
 
 #### Attach Managed Disk to proxy VM ####
-# https://learn.microsoft.com/en-us/azure/virtual-machines/windows/attach-disk-ps
+# Uses the attachDetachDataDisks REST API (only requires attachDetachDataDisks/action permission)
+# https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/attach-detach-data-disks
 
 if ($executeAzureDiskAttach) {
+  $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Attaching cloned disks to Proxy VM `n"
   Write-Host ""
   Write-Host "Attaching new Managed Disks to the Proxy VM" -foregroundcolor green
-  $lunNum = 0
-  # For each source disk, will then get the target disk name to attach
+  Write-Host "  Proxy VM: $proxyVM (RG: $targetResourceGroup)"
+  Write-Host "  Disks to attach: $($sourceDisks.Count)"
+
+  # Get all currently used LUNs upfront to assign free slots locally
+  $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
+  $usedLuns = [System.Collections.ArrayList]@($vm.StorageProfile.DataDisks.Lun)
+  Write-Host "  Current data disks on VM: $($vm.StorageProfile.DataDisks.Count), used LUNs: $($usedLuns -join ', ')"
+
+  # Build the attach list with disk IDs and LUN assignments
+  $attachList = @()
   foreach ($disk in $sourceDisks) {
     $targetDiskName = $sourceDiskToTargetDisk[$disk]
+    # Prefer LUN from disk name if present, otherwise start at 0
     if ($targetDiskName -match 'lun([0-9]+)') {
       [int]$lunNum = $matches[1]
-      Write-Host "Found LUN: $lunNum"
+    } else {
+      $lunNum = 0
     }
-    $randomInterval = Get-Random -Minimum 20 -Maximum 60
-    Start-Sleep -Seconds $randomInterval
-    $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
-    # Check if the LUN is being used, and if it is, increment the LUN number
-    while ($vm.StorageProfile.DataDisks.lun -contains $lunNum) {
-      Write-Host "LUN conflict, incrementing by one..."
-      $lunNum++
-      $randomInterval = Get-Random -Minimum 20 -Maximum 60
-      Start-Sleep -Seconds $randomInterval
-      $vm = Get-AzVM -ResourceGroupName $targetResourceGroup -Name $proxyVM
-    }
-    Write-Host "Attaching disk to Proxy VM: $targetDiskName..."
-    $resultUpdate = $null
-    $retryCount = 0
-    while ($null -eq $resultUpdate) {
-      if ($retryCount -gt 4) {
-        Write-Host "Too many retries trying to attach disk: $targetDiskName, exiting..."
-        exit 50
-      }
-      $retryCount++
-      try {
-        # Random interval avoids Azure API throttling on concurrent VM updates
-        $randomInterval = Get-Random -Minimum 20 -Maximum 60
-        Start-Sleep -Seconds $randomInterval
-        $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup -ErrorAction Stop
-        $resultAdd = Add-AzVMDataDisk -CreateOption Attach -Lun $lunNum -VM $vm -ManagedDiskId $diskInfo.Id -ErrorAction Stop
-        $resultUpdate = Update-AzVM -VM $vm -ResourceGroupName $targetResourceGroup -ErrorAction Stop
-      } catch {
-        Write-Error "Error attaching disk: $targetDiskName, trying again in 30 seconds..."
-        Start-Sleep 30
-      }
-    }
-    Write-Host "Successfully attached disk: $targetDiskName at LUN: $lunNum" -foregroundcolor green
-    [int]$lunNum++
+    # Find the next free LUN slot
+    while ($usedLuns -contains $lunNum) { $lunNum++ }
+    # Track locally so subsequent disks won't collide
+    $usedLuns.Add($lunNum) | Out-Null
+
+    Write-Host "  Looking up disk resource: $targetDiskName (RG: $targetResourceGroup)..."
+    $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup -ErrorAction Stop
+    Write-Host "  Disk found: $($diskInfo.Name), ProvisioningState: $($diskInfo.ProvisioningState), DiskState: $($diskInfo.DiskState)"
+    $attachList += @{ diskId = $diskInfo.Id; lun = $lunNum }
+    Write-Host "  Will attach: $targetDiskName at LUN $lunNum"
   }
+
+  # Attach all disks in a single REST API call
+  if ($attachList.Count -gt 0) {
+    $attachBody = @{ dataDisksToAttach = $attachList }
+    Write-Host ""
+    Write-Host "Attaching $($attachList.Count) disk(s) via attachDetachDataDisks API..." -foregroundcolor green
+    $attachResult = Invoke-AttachDetachDataDisks `
+      -SubscriptionId $targetSubscriptionId `
+      -ResourceGroup $targetResourceGroup `
+      -VMName $proxyVM `
+      -Body $attachBody `
+      -MaxRetries 4 `
+      -Operation 'attach'
+    if (-not $attachResult.Success) {
+      Write-Error "Failed to attach disks: $($attachResult.Error)"
+      exit 50
+    }
+    Write-Host "Successfully attached $($attachList.Count) disk(s)" -foregroundcolor green
+  }
+  Write-Host "Attach completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
 } # if ($executeAzureDiskAttach)
 
-# Enable each VG and mount the mount points
+# Reactivate VGs and mount the refreshed disks on the Proxy VM
 if ($executeProxyMountCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
   Write-Host ""
-  Write-Host "On Proxy VM, re-mounting the file systems" -foregroundcolor green
+  Write-Host "On Proxy VM, activating VGs and mounting file systems" -foregroundcolor green
   $mountCount = $MOUNT_LIST.count
   for ($mount = 0; $mount -lt $mountCount; $mount++) {
-    Write-Host "Attempting to vary VG on: $($VG_LIST[$mount])..."
     $vg_name = $VG_LIST[$mount]
     $lv_name = $LV_LIST[$mount]
-    # Deactivate then reactivate LVM so the kernel picks up the new underlying disk
-    lvchange -an /dev/$vg_name/$lv_name
-    vgchange -an $vg_name
-    vgchange -ay $vg_name
-    lvchange -ay /dev/$vg_name/$lv_name
     $path = $MOUNT_LIST[$mount]
     $devPath = $DEVMAPPER_LIST[$mount]
+    Write-Host ""
+    Write-Host "Cycling LVM for VG: $vg_name, LV: $lv_name" -foregroundcolor green
+    # Deactivate then reactivate LVM so the kernel picks up the new underlying disk
+    lvchange -an /dev/$vg_name/$lv_name 2>$null
+    vgchange -an $vg_name 2>$null
+    vgchange -ay $vg_name
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "Failed to activate VG $vg_name (exit code: $LASTEXITCODE), exiting..."
+      exit 61
+    }
+    Write-Host "VG $vg_name activated" -foregroundcolor green
+    lvchange -ay /dev/$vg_name/$lv_name
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "Failed to activate LV /dev/$vg_name/$lv_name (exit code: $LASTEXITCODE), exiting..."
+      exit 62
+    }
+    Write-Host "LV /dev/$vg_name/$lv_name activated" -foregroundcolor green
     Write-Host "Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "Failed to mount $devPath to ${MOUNT_BASE}${path} (exit code: $LASTEXITCODE), exiting..."
+      exit 63
+    }
+    Write-Host "Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
   }
+  Write-Host ""
+  # Verify all expected mount points are present via df
+  Write-Host "Verifying all mount points..." -foregroundcolor green
+  $dfOutput = df -h
   foreach ($mountPoint in $MOUNT_LIST) {
-    Write-Host ""
-    Write-Host "Verifying mount point: ${MOUNT_BASE}${mountPoint}" -foregroundcolor green
     $fullMountPath = "${MOUNT_BASE}${mountPoint}"
-    $output = df -h
-    if ($output -like "*$fullMountPath*") {
-      $output -like "*$fullMountPath*"
+    $matchLine = $dfOutput | Where-Object { $_ -like "*$fullMountPath*" }
+    if ($matchLine) {
+      Write-Host $matchLine -foregroundcolor green
     } else {
       Write-Error "$fullMountPath was not mounted, exiting..."
       exit 60
@@ -707,18 +915,20 @@ if ($executeProxyMountCommands) {
 
 $endTime = Get-Date
 $elapsed = $endTime - $date
+$elapsedMins = [math]::Round($elapsed.TotalMinutes, 1)
 Write-Host ""
-Write-Host "Script completed successfully in $([math]::Round($elapsed.TotalMinutes, 1)) minutes" -foregroundcolor green
+Write-Host "Script completed successfully in $elapsedMins minutes" -foregroundcolor green
 
 Stop-Transcript
 
-# Read the content of the transcript log file
+# Build email body with summary header and full transcript
+$snapshotModeLabel = if ($useInstantSnapshots) { "Instant Access" } else { "Standard" }
+$emailBody += "Completed in $elapsedMins minutes | Snapshot mode: $snapshotModeLabel | Disks: $($sourceDisks.count) `n`n"
 $emailBody += Get-Content -Path $logPath -Raw
 $emailBodyHtml = "<pre>$emailBody</pre>"
 
 if ($sendMail) {
-  # Create and send the email
-  Send-MailMessage -From $emailFrom -To $emailTo -Subject $emailSubject -Body $emailBodyHtml -SmtpServer $smtpServer -BodyAsHtml $true
+  Send-MailMessage -From $emailFrom -To $emailTo -Subject "$emailSubject ($snapshotModeLabel)" -Body $emailBodyHtml -SmtpServer $smtpServer -BodyAsHtml $true
 }
 
 exit 0
