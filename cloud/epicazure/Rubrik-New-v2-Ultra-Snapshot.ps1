@@ -467,12 +467,22 @@ if ($executeAzureSnapshot) {
       exit 10
     }
     $sourceDiskInfo.$diskName = $diskInfo
-    # Snapshot config clones the source disk's location and zone
+    # Snapshot config clones the source disk's location, zone, and tags
     $snapshotConfigParams = @{
       SourceUri = $diskInfo.Id
       Location = $diskInfo.Location
       CreateOption = "Copy"
       Incremental = $true
+    }
+    if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
+      Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
+      foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
+        Write-Host "    $($tag.Key) = $($tag.Value)"
+      }
+      $snapshotConfigParams.Tag = $diskInfo.Tags
+      Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to snapshot: $snapshotName"
+    } else {
+      Write-Host "  Source disk has no tags" -foregroundcolor yellow
     }
     if ($useInstantSnapshots) {
       $snapshotConfigParams.InstantAccessDurationMinutes = $instantAccessDurationMins
@@ -620,6 +630,16 @@ if ($executeManagedDiskClone) {
       DiskIOPSReadOnly = $diskIOPSReadOnly
       DiskMBpsReadWrite = $diskMBpsReadWrite
       DiskMBpsReadOnly = $diskMBpsReadOnly
+    }
+    if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
+      Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
+      foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
+        Write-Host "    $($tag.Key) = $($tag.Value)"
+      }
+      $diskConfigParameters.Tag = $diskInfo.Tags
+      Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to cloned disk: $targetDiskName"
+    } else {
+      Write-Host "  Source disk has no tags" -foregroundcolor yellow
     }
     Write-Host "  SKU: $($diskInfo.sku.name), Size: $($diskInfo.DiskSizeGB)GB, Zone: $($diskInfo.zones[0]), Location: $($diskInfo.location)"
     Write-Host "  IOPS R/W: $diskIOPSReadWrite, IOPS RO: $diskIOPSReadOnly, MBps R/W: $diskMBpsReadWrite, MBps RO: $diskMBpsReadOnly"
