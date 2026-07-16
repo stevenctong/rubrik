@@ -216,9 +216,9 @@ if ($irisName) {
 }
 
 # Dev-Mapper paths derived from VG and LV lists
-$DEVMAPPER_LIST = for ($i = 0; $i -lt $VG_LIST.count; $i++) {
+$DEVMAPPER_LIST = @(for ($i = 0; $i -lt $VG_LIST.count; $i++) {
   "/dev/mapper/$($VG_LIST[$i])-$($LV_LIST[$i])"
-}
+})
 
 ##### END - VARIABLES #####
 
