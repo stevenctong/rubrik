@@ -174,6 +174,7 @@ Write-Host "  Proxy disk unmount: $executeProxyDiskUnmountCommands"
 Write-Host "  Azure disk detach: $executeAzureDiskDetach"
 Write-Host "  Azure disk attach: $executeAzureDiskAttach"
 Write-Host "  Proxy mount: $executeProxyMountCommands"
+Write-Host "  Copy tags from source disk: $copyTagsFromSource"
 Write-Host ""
 
 # Delete log files older than 60 days
@@ -474,15 +475,17 @@ if ($executeAzureSnapshot) {
       CreateOption = "Copy"
       Incremental = $true
     }
-    if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
-      Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
-      foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
-        Write-Host "    $($tag.Key) = $($tag.Value)"
+    if ($copyTagsFromSource) {
+      if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
+        Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
+        foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
+          Write-Host "    $($tag.Key) = $($tag.Value)"
+        }
+        $snapshotConfigParams.Tag = $diskInfo.Tags
+        Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to snapshot: $snapshotName"
+      } else {
+        Write-Host "  Source disk has no tags" -foregroundcolor yellow
       }
-      $snapshotConfigParams.Tag = $diskInfo.Tags
-      Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to snapshot: $snapshotName"
-    } else {
-      Write-Host "  Source disk has no tags" -foregroundcolor yellow
     }
     if ($useInstantSnapshots) {
       $snapshotConfigParams.InstantAccessDurationMinutes = $instantAccessDurationMins
@@ -631,15 +634,17 @@ if ($executeManagedDiskClone) {
       DiskMBpsReadWrite = $diskMBpsReadWrite
       DiskMBpsReadOnly = $diskMBpsReadOnly
     }
-    if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
-      Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
-      foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
-        Write-Host "    $($tag.Key) = $($tag.Value)"
+    if ($copyTagsFromSource) {
+      if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
+        Write-Host "  Source disk has $($diskInfo.Tags.Count) tag(s):"
+        foreach ($tag in $diskInfo.Tags.GetEnumerator()) {
+          Write-Host "    $($tag.Key) = $($tag.Value)"
+        }
+        $diskConfigParameters.Tag = $diskInfo.Tags
+        Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to cloned disk: $targetDiskName"
+      } else {
+        Write-Host "  Source disk has no tags" -foregroundcolor yellow
       }
-      $diskConfigParameters.Tag = $diskInfo.Tags
-      Write-Host "  Applying $($diskInfo.Tags.Count) tag(s) to cloned disk: $targetDiskName"
-    } else {
-      Write-Host "  Source disk has no tags" -foregroundcolor yellow
     }
     Write-Host "  SKU: $($diskInfo.sku.name), Size: $($diskInfo.DiskSizeGB)GB, Zone: $($diskInfo.zones[0]), Location: $($diskInfo.location)"
     Write-Host "  IOPS R/W: $diskIOPSReadWrite, IOPS RO: $diskIOPSReadOnly, MBps R/W: $diskMBpsReadWrite, MBps RO: $diskMBpsReadOnly"

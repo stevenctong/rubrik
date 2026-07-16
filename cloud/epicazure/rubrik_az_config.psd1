@@ -83,6 +83,12 @@
     DiskIOPSReadWrite = 10000
     DiskIOPSReadOnly = 10000
 
+    ### Tags ###
+    # Copy tags from source managed disk to snapshots and cloned disks.
+    # Enable this if Azure policies require mandatory tags on resources.
+
+    copyTagsFromSource = $false
+
     ### Instant Access Snapshots ###
     # Enables instant access snapshots for Ultra / v2 disks.
     # Snapshots are immediately usable and Managed Disks created from them can be attached
