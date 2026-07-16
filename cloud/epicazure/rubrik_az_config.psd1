@@ -73,6 +73,39 @@
     executeAzureDiskAttach = $true
     executeProxyMountCommands = $true
 
+    ### Disk Performance ###
+    # Performance config for v2 / Ultra cloned Managed Disks.
+    # Acceptable values depend on the size of the Managed Disk.
+    # Script has error handling if out of bounds to set to the max discovered value.
+
+    DiskMBpsReadWrite = 800
+    DiskMBpsReadOnly = 800
+    DiskIOPSReadWrite = 10000
+    DiskIOPSReadOnly = 10000
+
+    ### Instant Access Snapshots ###
+    # Enables instant access snapshots for Ultra / v2 disks.
+    # Snapshots are immediately usable and Managed Disks created from them can be attached
+    # without waiting for background copy (reads served from snapshot tier).
+    # See: https://learn.microsoft.com/en-us/azure/virtual-machines/disks-instant-access-snapshots
+
+    # Set to $true to enable instant access snapshots
+    useInstantSnapshots = $false
+    # Duration in minutes the snapshot stays in InstantAccess state (60-300)
+    instantAccessDurationMins = 60
+
+    ### Status Check ###
+
+    # Seconds between polling checks for snapshot and disk copy background completion
+    statusCheckSecs = 120
+
+    ### Logging ###
+
+    # Directory for log files (created if it does not exist)
+    logDir = './logs'
+    # Log filename prefix (irisName and date are appended automatically)
+    logFilename = 'rubrik_azure_snap_script'
+
     ### Email ###
     # Sends script log output as an HTML email on completion
 
@@ -86,26 +119,4 @@
     SMTPServer = ''
     # Email subject line prefix (irisName and date are appended automatically)
     emailSubject = 'Rubrik Azure Script'
-
-    ### Disk Performance ###
-    # Performance config for v2 / Ultra cloned Managed Disks.
-    # Acceptable values depend on the size of the Managed Disk.
-    # Script has error handling if out of bounds to set to the max discovered value.
-
-    DiskMBpsReadWrite = 800
-    DiskMBpsReadOnly = 800
-    DiskIOPSReadWrite = 10000
-    DiskIOPSReadOnly = 10000
-
-    ### Status Check ###
-
-    # Seconds between polling checks for snapshot and disk copy background completion
-    statusCheckSecs = 120
-
-    ### Logging ###
-
-    # Directory for log files (created if it does not exist)
-    logDir = './logs'
-    # Log filename prefix (irisName and date are appended automatically)
-    logFilename = 'rubrik_azure_snap_script'
 }
