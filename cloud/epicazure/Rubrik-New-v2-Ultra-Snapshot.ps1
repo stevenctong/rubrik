@@ -360,9 +360,9 @@ $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
 $emailBody = "${currentTime}: Starting Azure snapshot script $irisName `n"
 
 if ($executeConnectToAzure) {
-  $azLogin = Connect-AzAccount -Identity
+  $azLogin = Connect-AzAccount -Identity -ErrorAction Stop
   Write-Host "Logged in as: $($azLogin.Context.Account.Id), Tenant: $($azLogin.Context.Tenant.Id)" -foregroundcolor green
-  $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+  $azCtx = Set-AzContext -subscription $sourceSubscriptionId -ErrorAction Stop
   Write-Host "Subscription context set to: $($azCtx.Subscription.Name) ($sourceSubscriptionId)" -foregroundcolor green
   # Name mappings and info caches used across steps
   $sourceDiskToTargetDisk = @{}
@@ -400,12 +400,12 @@ if ($executeAzureCleanup) {
   $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Cleaning up older snapshots and cloned disks `n"
-  $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+  $azCtx = Set-AzContext -subscription $sourceSubscriptionId -ErrorAction Stop
   Write-Host "Subscription context: $($azCtx.Subscription.Name) ($sourceSubscriptionId)"
 
   $snapCutoff = $date.AddDays(-$snapDaysToKeep)
   Write-Host "Looking for and cleaning up any snapshots older than: $snapCutoff" -foregroundcolor green
-  $azSnapshots = Get-AzSnapshot -ResourceGroup $sourceResourceGroup
+  $azSnapshots = Get-AzSnapshot -ResourceGroup $sourceResourceGroup -ErrorAction Stop
   Remove-ExpiredAzureResources -ResourceGroup $sourceResourceGroup -Resources $azSnapshots `
     -NameSuffix $sourceSnapshotSuffix -CutoffDate $snapCutoff -RetentionDays $snapDaysToKeep `
     -ResourceType 'snapshot' -SourceDisks $sourceDisks
@@ -413,16 +413,16 @@ if ($executeAzureCleanup) {
   $diskCutoff = $date.AddDays(-$clonedDisksDaysToKeep)
   Write-Host "Looking for and cleaning up Managed Disk clones older than: $diskCutoff" -foregroundcolor green
   if ($sourceSubscriptionId -ne $targetSubscriptionId) {
-    $azCtx = Set-AzContext -subscription $targetSubscriptionId
+    $azCtx = Set-AzContext -subscription $targetSubscriptionId -ErrorAction Stop
     Write-Host "Switched subscription context to: $($azCtx.Subscription.Name) ($targetSubscriptionId)"
   }
-  $azDisks = Get-AzDisk -ResourceGroup $targetResourceGroup
+  $azDisks = Get-AzDisk -ResourceGroup $targetResourceGroup -ErrorAction Stop
   Remove-ExpiredAzureResources -ResourceGroup $targetResourceGroup -Resources $azDisks `
     -NameSuffix $targetDiskSuffix -CutoffDate $diskCutoff -RetentionDays $clonedDisksDaysToKeep `
     -ResourceType 'disk' -SourceDisks $sourceDisks
 
   if ($sourceSubscriptionId -ne $targetSubscriptionId) {
-    $azCtx = Set-AzContext -subscription $sourceSubscriptionId
+    $azCtx = Set-AzContext -subscription $sourceSubscriptionId -ErrorAction Stop
     Write-Host "Switched subscription context to: $($azCtx.Subscription.Name) ($sourceSubscriptionId)"
   }
   Write-Host "Cleanup completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
@@ -581,7 +581,7 @@ if ( $executeManagedDiskClone -and ($executeAzureSnapshot -eq $false) ) {
 if ($executeConnectToAzure) {
   if ($sourceSubscriptionId -ne $targetSubscriptionId) {
     Write-Host ""
-    $azCtx = Set-AzContext -Subscription $targetSubscriptionId
+    $azCtx = Set-AzContext -Subscription $targetSubscriptionId -ErrorAction Stop
     Write-Host "Switched subscription context to target: $($azCtx.Subscription.Name) ($targetSubscriptionId)"
   }
 }
