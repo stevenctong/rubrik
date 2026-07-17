@@ -812,6 +812,16 @@ if ($executeAzureDiskDetach) {
       Write-Host "Successfully detached $($detachList.Count) disk(s)" -foregroundcolor green
     }
   }
+  # Clean up stale SCSI device nodes from detached disks
+  Write-Host ""
+  Write-Host "Rescanning SCSI hosts to clean up detached disk nodes..." -foregroundcolor green
+  bash -c 'for host in /sys/class/scsi_host/host*/scan; do echo "- - -" > "$host"; done'
+  Write-Host "Waiting for device nodes to settle..."
+  udevadm settle
+  Write-Host ""
+  Write-Host "Block devices after detach cleanup (lsblk):"
+  lsblk
+  Write-Host ""
   Write-Host "Detach completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
 } # if ($executeAzureDiskDetach)
 
