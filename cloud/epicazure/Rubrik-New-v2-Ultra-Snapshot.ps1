@@ -883,10 +883,9 @@ if ($executeProxyMountCommands) {
   $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
   Write-Host ""
   Write-Host "Scanning SCSI hosts for newly attached disks..." -foregroundcolor green
-  foreach ($scanPath in (Get-ChildItem /sys/class/scsi_host/host*/scan)) {
-    Write-Host "  Scanning $($scanPath.FullName)..."
-    "- - -" | Set-Content $scanPath.FullName
-  }
+  bash -c 'for host in /sys/class/scsi_host/host*/scan; do echo "- - -" > "$host"; done'
+  Write-Host "Waiting for device nodes to settle..."
+  udevadm settle
   Write-Host ""
   Write-Host "Block devices after SCSI scan (lsblk):"
   lsblk
@@ -913,6 +912,10 @@ if ($executeProxyMountCommands) {
       exit 61
     }
     Write-Host "  VG $vg_name activated" -foregroundcolor green
+    Write-Host ""
+    Write-Host "Block devices after VG activation (lsblk):"
+    lsblk
+    Write-Host ""
     Write-Host "  Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
     if ($LASTEXITCODE -ne 0) {
