@@ -903,8 +903,8 @@ if ($executeProxyMountCommands) {
   Write-Host "Scanning for new PVs and activating VGs" -foregroundcolor green
   Write-Host "Running pvscan --cache..."
   pvscan --cache 2>$null
-  Write-Host "Running vgscan..."
-  vgscan 2>$null
+  Write-Host "Running vgscan --mknodes..."
+  vgscan --mknodes 2>$null
   Write-Host ""
   $mountCount = $MOUNT_LIST.count
   for ($mount = 0; $mount -lt $mountCount; $mount++) {
@@ -912,6 +912,7 @@ if ($executeProxyMountCommands) {
     $lv_name = $LV_LIST[$mount]
     $path = $MOUNT_LIST[$mount]
     $devPath = $DEVMAPPER_LIST[$mount]
+    $dmName = "${vg_name}-${lv_name}"
     Write-Host "Cycling LVM for VG: $vg_name" -foregroundcolor green
     Write-Host "  vgchange -an $vg_name..."
     vgchange -an $vg_name 2>$null
@@ -922,10 +923,32 @@ if ($executeProxyMountCommands) {
       exit 61
     }
     Write-Host "  VG $vg_name activated" -foregroundcolor green
+    Write-Host "  Waiting for device nodes to settle..."
+    udevadm settle
     Write-Host ""
     Write-Host "Block devices after VG activation (lsblk):"
     lsblk
     Write-Host ""
+    # Check if the dev-mapper device is visible before mounting
+    $lsblkOutput = lsblk -l -o NAME 2>$null
+    if (-not ($lsblkOutput | Where-Object { $_ -match $dmName })) {
+      Write-Host "  WARNING: $dmName not visible in lsblk, waiting 30s and retrying VG activation..." -foregroundcolor yellow
+      Start-Sleep -Seconds 30
+      Write-Host "  Retrying vgchange -an $vg_name..."
+      vgchange -an $vg_name 2>$null
+      Write-Host "  Retrying vgchange -ay $vg_name..."
+      vgchange -ay $vg_name
+      udevadm settle
+      Write-Host ""
+      Write-Host "Block devices after retry (lsblk):"
+      lsblk
+      Write-Host ""
+      $lsblkOutput = lsblk -l -o NAME 2>$null
+      if (-not ($lsblkOutput | Where-Object { $_ -match $dmName })) {
+        Write-Error "$dmName still not visible after retry, exiting..."
+        exit 64
+      }
+    }
     Write-Host "  Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
     if ($LASTEXITCODE -ne 0) {
@@ -933,6 +956,9 @@ if ($executeProxyMountCommands) {
       exit 63
     }
     Write-Host "  Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
+    Write-Host ""
+    Write-Host "Block devices after mount (lsblk):"
+    lsblk
   }
   Write-Host ""
   Write-Host "Verifying all mount points (df -h):" -foregroundcolor green
