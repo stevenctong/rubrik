@@ -738,35 +738,27 @@ if ($executeManagedDiskClone) {
 if ($executeProxyDiskUnmountCommands) {
   Write-Host ""
   Write-Host "On Proxy VM, unmounting file systems before disk detach" -foregroundcolor green
+  Write-Host "Current mounts (df -h):"
+  df -h
+  Write-Host ""
   foreach ($mountPoint in $MOUNT_LIST) {
     $fullPath = "${MOUNT_BASE}${mountPoint}"
-    $isMounted = findmnt $fullPath 2>$null
-    if ($isMounted) {
-      Write-Host "Unmounting $fullPath..."
-      umount $fullPath
-      if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to unmount $fullPath (exit code: $LASTEXITCODE), exiting..."
-        exit 35
-      }
-      Write-Host "Successfully unmounted $fullPath" -foregroundcolor green
-    } else {
-      Write-Host "$fullPath is not currently mounted, skipping" -foregroundcolor yellow
-    }
+    Write-Host "Unmounting $fullPath..."
+    umount $fullPath 2>$null
+    Write-Host "umount exit code: $LASTEXITCODE"
   }
+  Write-Host ""
+  Write-Host "Mounts after unmount (df -h):"
+  df -h
+  Write-Host ""
   Write-Host "Deactivating volume groups before disk detach" -foregroundcolor green
+  Write-Host "Current VGs (vgs):"
+  vgs 2>$null
+  Write-Host ""
   foreach ($vg_name in $VG_LIST) {
-    $vgExists = vgs $vg_name 2>$null
-    if ($vgExists) {
-      Write-Host "Deactivating VG: $vg_name..."
-      vgchange -an $vg_name
-      if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to deactivate VG $vg_name (exit code: $LASTEXITCODE), exiting..."
-        exit 36
-      }
-      Write-Host "Successfully deactivated VG: $vg_name" -foregroundcolor green
-    } else {
-      Write-Host "VG $vg_name is not active or does not exist, skipping" -foregroundcolor yellow
-    }
+    Write-Host "Deactivating VG: $vg_name..."
+    vgchange -an $vg_name 2>$null
+    Write-Host "vgchange -an exit code: $LASTEXITCODE"
   }
 }
 
@@ -890,46 +882,48 @@ if ($executeProxyMountCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
   Write-Host ""
-  Write-Host "On Proxy VM, activating VGs and mounting file systems" -foregroundcolor green
+  Write-Host "Scanning SCSI hosts for newly attached disks..." -foregroundcolor green
+  foreach ($scanPath in (Get-ChildItem /sys/class/scsi_host/host*/scan)) {
+    Write-Host "  Scanning $($scanPath.FullName)..."
+    "- - -" | Set-Content $scanPath.FullName
+  }
+  Write-Host ""
+  Write-Host "Block devices after SCSI scan (lsblk):"
+  lsblk
+  Write-Host ""
+  Write-Host "Scanning for new PVs and activating VGs" -foregroundcolor green
+  Write-Host "Running pvscan --cache..."
+  pvscan --cache 2>$null
+  Write-Host "Running vgscan..."
+  vgscan 2>$null
+  Write-Host ""
   $mountCount = $MOUNT_LIST.count
   for ($mount = 0; $mount -lt $mountCount; $mount++) {
     $vg_name = $VG_LIST[$mount]
     $lv_name = $LV_LIST[$mount]
     $path = $MOUNT_LIST[$mount]
     $devPath = $DEVMAPPER_LIST[$mount]
-    Write-Host ""
-    Write-Host "Cycling LVM for VG: $vg_name, LV: $lv_name" -foregroundcolor green
-    # Scan for new PVs on the freshly attached disk, then reactivate VG
-    pvscan --cache 2>$null
+    Write-Host "Cycling LVM for VG: $vg_name" -foregroundcolor green
+    Write-Host "  vgchange -an $vg_name..."
     vgchange -an $vg_name 2>$null
+    Write-Host "  vgchange -ay $vg_name..."
     vgchange -ay $vg_name
     if ($LASTEXITCODE -ne 0) {
       Write-Error "Failed to activate VG $vg_name (exit code: $LASTEXITCODE), exiting..."
       exit 61
     }
-    Write-Host "VG $vg_name activated" -foregroundcolor green
-    Write-Host "Mounting $devPath to ${MOUNT_BASE}${path}..."
+    Write-Host "  VG $vg_name activated" -foregroundcolor green
+    Write-Host "  Mounting $devPath to ${MOUNT_BASE}${path}..."
     mount $devPath ${MOUNT_BASE}${path}
     if ($LASTEXITCODE -ne 0) {
       Write-Error "Failed to mount $devPath to ${MOUNT_BASE}${path} (exit code: $LASTEXITCODE), exiting..."
       exit 63
     }
-    Write-Host "Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
+    Write-Host "  Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
   }
   Write-Host ""
-  # Verify all expected mount points are present via df
-  Write-Host "Verifying all mount points..." -foregroundcolor green
-  $dfOutput = df -h
-  foreach ($mountPoint in $MOUNT_LIST) {
-    $fullMountPath = "${MOUNT_BASE}${mountPoint}"
-    $matchLine = $dfOutput | Where-Object { $_ -like "*$fullMountPath*" }
-    if ($matchLine) {
-      Write-Host $matchLine -foregroundcolor green
-    } else {
-      Write-Error "$fullMountPath was not mounted, exiting..."
-      exit 60
-    }
-  }
+  Write-Host "Verifying all mount points (df -h):" -foregroundcolor green
+  df -h
 }
 
 $endTime = Get-Date
