@@ -51,7 +51,7 @@ but appended with a 'suffix' and datestamped.
 Written by Steven Tong for usage with Rubrik
 GitHub: stevenctong
 Date: 8/30/24
-Updated: 7/16/26
+Updated: 7/20/26
 
 PRE-REQUISITES:
 1. IRIS PROD VM has the Proxy VM keys as 'authorized_keys' for SSH commands
@@ -738,6 +738,9 @@ if ($executeManagedDiskClone) {
 if ($executeProxyDiskUnmountCommands) {
   Write-Host ""
   Write-Host "On Proxy VM, unmounting file systems before disk detach" -foregroundcolor green
+  Write-Host "Block devices before unmount (lsblk):"
+  lsblk
+  Write-Host ""
   Write-Host "Current mounts (df -h):"
   df -h
   Write-Host ""
@@ -750,6 +753,9 @@ if ($executeProxyDiskUnmountCommands) {
   Write-Host ""
   Write-Host "Mounts after unmount (df -h):"
   df -h
+  Write-Host ""
+  Write-Host "Sleeping 60s after unmount..." -foregroundcolor yellow
+  Start-Sleep -Seconds 60
   Write-Host ""
   Write-Host "Deactivating volume groups before disk detach" -foregroundcolor green
   Write-Host "Current VGs (vgs):"
@@ -822,6 +828,9 @@ if ($executeAzureDiskDetach) {
   Write-Host "Block devices after detach cleanup (lsblk):"
   lsblk
   Write-Host ""
+  Write-Host "Sleeping 60s after detach..." -foregroundcolor yellow
+  Start-Sleep -Seconds 60
+  Write-Host ""
   Write-Host "Detach completed in $([math]::Round(((Get-Date) - $stepStart).TotalSeconds))s" -foregroundcolor green
 } # if ($executeAzureDiskDetach)
 
@@ -892,6 +901,9 @@ if ($executeProxyMountCommands) {
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $emailBody += "${currentTime}: Mounting file systems on Proxy VM `n"
   Write-Host ""
+  Write-Host "Sleeping 60s after disk attach..." -foregroundcolor yellow
+  Start-Sleep -Seconds 60
+  Write-Host ""
   Write-Host "Scanning SCSI hosts for newly attached disks..." -foregroundcolor green
   bash -c 'for host in /sys/class/scsi_host/host*/scan; do echo "- - -" > "$host"; done'
   Write-Host "Waiting for device nodes to settle..."
@@ -925,14 +937,30 @@ if ($executeProxyMountCommands) {
     Write-Host "  VG $vg_name activated" -foregroundcolor green
     Write-Host "  Waiting for device nodes to settle..."
     udevadm settle
+    Write-Host "  Sleeping 60s after VG activation..." -foregroundcolor yellow
+    Start-Sleep -Seconds 60
     Write-Host ""
     Write-Host "Block devices after VG activation (lsblk):"
     lsblk
     Write-Host ""
-    # Check if the dev-mapper device is visible before mounting
+    Write-Host "  Mounting $devPath to ${MOUNT_BASE}${path}..."
+    mount $devPath ${MOUNT_BASE}${path}
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "Failed to mount $devPath to ${MOUNT_BASE}${path} (exit code: $LASTEXITCODE), exiting..."
+      exit 63
+    }
+    Write-Host "  Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
+    Write-Host "  Sleeping 60s after mount..." -foregroundcolor yellow
+    Start-Sleep -Seconds 60
+    Write-Host ""
+    Write-Host "Block devices after mount (lsblk):"
+    lsblk
+    Write-Host ""
+    # Check if the dev-mapper device is still visible after mount
     $lsblkOutput = lsblk -l -o NAME 2>$null
     if (-not ($lsblkOutput | Where-Object { $_ -match $dmName })) {
-      Write-Host "  WARNING: $dmName not visible in lsblk, waiting 30s and retrying VG activation..." -foregroundcolor yellow
+      Write-Host "  WARNING: $dmName disappeared after mount, waiting 30s and retrying..." -foregroundcolor yellow
+      umount ${MOUNT_BASE}${path} 2>$null
       Start-Sleep -Seconds 30
       Write-Host "  Retrying vgchange -an $vg_name..."
       vgchange -an $vg_name 2>$null
@@ -943,22 +971,17 @@ if ($executeProxyMountCommands) {
       Write-Host "Block devices after retry (lsblk):"
       lsblk
       Write-Host ""
-      $lsblkOutput = lsblk -l -o NAME 2>$null
-      if (-not ($lsblkOutput | Where-Object { $_ -match $dmName })) {
-        Write-Error "$dmName still not visible after retry, exiting..."
+      Write-Host "  Retrying mount $devPath to ${MOUNT_BASE}${path}..."
+      mount $devPath ${MOUNT_BASE}${path}
+      if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to mount $devPath on retry (exit code: $LASTEXITCODE), exiting..."
         exit 64
       }
+      Write-Host "  Successfully mounted on retry" -foregroundcolor green
+      Write-Host ""
+      Write-Host "Block devices after retry mount (lsblk):"
+      lsblk
     }
-    Write-Host "  Mounting $devPath to ${MOUNT_BASE}${path}..."
-    mount $devPath ${MOUNT_BASE}${path}
-    if ($LASTEXITCODE -ne 0) {
-      Write-Error "Failed to mount $devPath to ${MOUNT_BASE}${path} (exit code: $LASTEXITCODE), exiting..."
-      exit 63
-    }
-    Write-Host "  Successfully mounted $devPath to ${MOUNT_BASE}${path}" -foregroundcolor green
-    Write-Host ""
-    Write-Host "Block devices after mount (lsblk):"
-    lsblk
   }
   Write-Host ""
   Write-Host "Verifying all mount points (df -h):" -foregroundcolor green
