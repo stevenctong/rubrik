@@ -191,11 +191,15 @@ fi
 
 if [ "$EXECUTE_EPIC" = "true" ]; then
   echo "Sending out commands to freeze IRIS ODB"
-  /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_FREEZE_CMD}
-  /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_AUTOTHAW_CMD}
+  EPIC_FREEZE_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_FREEZE_CMD} 2>&1)
+  echo "EPIC Freeze Result: ${EPIC_FREEZE_RESULT}"
+  EPIC_AUTOTHAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_AUTOTHAW_CMD} 2>&1)
+  echo "EPIC Auto-Thaw Result: ${EPIC_AUTOTHAW_RESULT}"
   # Comment out the JFS2 pieces if on RHEL
-  # /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_FREEZE_CMD}
-  # /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_AUTOTHAW_CMD}
+  # JFS_FREEZE_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_FREEZE_CMD} 2>&1)
+  # echo "JFS2 Freeze Result: ${JFS_FREEZE_RESULT}"
+  # JFS_AUTOTHAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_AUTOTHAW_CMD} 2>&1)
+  # echo "JFS2 Auto-Thaw Result: ${JFS_AUTOTHAW_RESULT}"
 fi
 
 # Un-mount the mount points. This will also ensure that if the script fails to
@@ -288,8 +292,10 @@ sleep 3
 
 if [ "$EXECUTE_EPIC" = "true" ]; then
   echo "Sending out commands to thaw IRIS ODB"
-  # /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_THAW_CMD}
-  /usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_THAW_CMD}
+  # JFS2_THAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${JFS2_THAW_CMD} 2>&1)
+  # echo "JFS2 Thaw Result: ${JFS2_THAW_RESULT}"
+  EPIC_THAW_RESULT=$(/usr/bin/ssh ${EPIC_ID}@${EPIC_SERVER} ${EPIC_THAW_CMD} 2>&1)
+  echo "EPIC Thaw Result: ${EPIC_THAW_RESULT}"
 fi
 
 echo "Copying source volumes to target volumes"
