@@ -21,6 +21,16 @@
     # Azure Managed Disk names to snapshot (must match exact disk resource names)
     sourceDisks = @('iris-data-lun01', 'iris-data-lun02')
 
+    # Use Azure VM Restore Points instead of individual disk snapshots.
+    # Recommended when 2+ source disks are configured for cross-disk write-order consistency.
+    # All source disks must belong to the same Azure VM.
+    # If not set, defaults to $false. Script will recommend enabling when 2+ disks detected.
+    useRestorePoints = $false
+
+    # Restore Point Collection suffix. Collection is named: <sourceVM>-<suffix>
+    # The collection is a persistent container that holds all restore points for the VM.
+    restorePointCollectionSuffix = 'rubrik-rpc'
+
     # Base directory where all mount points live under
     MOUNT_BASE = '/epic'
 
@@ -88,6 +98,21 @@
     # Enable this if Azure policies require mandatory tags on resources.
 
     copyTagsFromSource = $false
+
+    ### Restore Points ###
+    # Additional settings when useRestorePoints is enabled.
+    # Restore points use ApplicationConsistent mode (required for Premium SSD v2 / Ultra disks).
+    # CrashConsistent mode is not supported for these disk types.
+    # Requires the Azure VM Agent running in the guest OS.
+    # Azure throttle limit: max 3 restore points per VM per hour (HTTP 429).
+    #
+    # Instant Access for restore points (eliminates disk restore point replication wait)
+    # is in Preview and not yet available in all regions. Supported regions as of 7/26:
+    # West Central US, West US, North Central US, West US 2, South Central US.
+    # See: https://learn.microsoft.com/en-us/azure/virtual-machines/virtual-machines-create-restore-points
+
+    # Number of days to keep restore points (uses same cleanup pattern as snapshots)
+    restorePointDaysToKeep = 7
 
     ### Instant Access Snapshots ###
     # Enables instant access snapshots for Ultra / v2 disks.

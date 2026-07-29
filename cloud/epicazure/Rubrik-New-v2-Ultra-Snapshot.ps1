@@ -11,6 +11,15 @@ This script works with a PSD1 config file (see rubrik_az_config.psd1).
 
 Supports Azure Instant Access Snapshots for Ultra / v2 disks via useInstantSnapshots config flag.
 
+When useRestorePoints is enabled in the config, the script uses Azure VM Restore Points
+(ApplicationConsistent mode) for cross-disk consistency instead of individual disk snapshots.
+ApplicationConsistent is required for Premium SSD v2 and Ultra disks (CrashConsistent is not
+supported for these disk types). All source disks must belong to the same Azure VM. The script
+derives the source VM from the disks' ManagedBy property. When 2+ disks are configured without
+restore points enabled, the script outputs a recommendation to enable them.
+Note: ApplicationConsistent restore points require the Azure VM Agent running in the guest OS.
+Azure throttles restore point creation to 3 per VM per hour (HTTP 429).
+
 The script supports creating the snapshots from a Prod VM in one subscription
 and creating the clone of the disks to a Proxy VM in another subscription.
 
@@ -23,13 +32,17 @@ The script performs the following tasks:
 1. SSH to PROD VM - Freeze IRIS ODB
    ** ssh <user>@<iris_host> 'sudo <instafreeze>'
    ** Also sends command via sleep to automatically 'instathaw' after x minutes
-2. Azure - Create v2/Ultra SSD incremental snapshot
+2. Azure - Create snapshots
+   2a. (default) Create individual incremental snapshot per disk
+   2b. (useRestorePoints) Create ApplicationConsistent VM Restore Point for cross-disk consistency
 3. SSH to PROD VM - Thaw IRIS ODB
    ** ssh <user>@<iris_host> 'sudo <instathaw>'
-4. Azure - Wait for snapshot to be ready
+4. Azure - Wait for snapshot/restore point to be ready
    ** Instant access: waits for InstantAccess state (seconds)
    ** Standard: waits for background copy to reach 100% (minutes)
-5. Azure - Create new Managed Disks from the snapshots for the Proxy VM
+   ** Restore points: creation is synchronous, then polls each disk restore
+      point until completionPercent 100% and accessState Available
+5. Azure - Create new Managed Disks from the snapshots/disk restore points for the Proxy VM
 6. Azure - Wait for Managed Disk to be ready
    ** Instant access: skipped, disk is immediately usable (reads served from snapshot)
    ** Standard: waits for background copy to reach 100%
@@ -51,7 +64,7 @@ but appended with a 'suffix' and datestamped.
 Written by Steven Tong for usage with Rubrik
 GitHub: stevenctong
 Date: 8/30/24
-Updated: 7/20/26
+Updated: 7/29/26
 
 PRE-REQUISITES:
 1. IRIS PROD VM has the Proxy VM keys as 'authorized_keys' for SSH commands
@@ -68,16 +81,32 @@ PRE-REQUISITES:
    b. Create a Custom Role with the following permissions:
 
       "actions": [
-        "Microsoft.Compute/snapshots/read",
-        "Microsoft.Compute/snapshots/write",
-        "Microsoft.Compute/snapshots/delete",
-        "Microsoft.Compute/virtualMachines/attachDetachDataDisks/action",
-        "Microsoft.Compute/disks/read",
-        "Microsoft.Compute/disks/write",
-        "Microsoft.Compute/disks/delete",
-        "Microsoft.Compute/disks/beginGetAccess/action",
-        "Microsoft.Compute/virtualMachines/read"
+        "Microsoft.Compute/snapshots/read",                     // Contributor, Disk Snapshot Contributor
+        "Microsoft.Compute/snapshots/write",                    // Contributor, Disk Snapshot Contributor
+        "Microsoft.Compute/snapshots/delete",                   // Contributor, Disk Snapshot Contributor
+        "Microsoft.Compute/virtualMachines/attachDetachDataDisks/action",  // Contributor, Virtual Machine Contributor
+        "Microsoft.Compute/disks/read",                         // Contributor, Virtual Machine Contributor
+        "Microsoft.Compute/disks/write",                        // Contributor, Virtual Machine Contributor
+        "Microsoft.Compute/disks/delete",                       // Contributor, Virtual Machine Contributor
+        "Microsoft.Compute/disks/beginGetAccess/action",        // Contributor, Disk Snapshot Contributor
+        "Microsoft.Compute/virtualMachines/read"                // Contributor, Virtual Machine Contributor, Reader
       ]
+
+      // Additional permissions required when useRestorePoints is enabled:
+      "actions": [
+        "Microsoft.Compute/restorePointCollections/read",       // Contributor
+        "Microsoft.Compute/restorePointCollections/write",      // Contributor
+        "Microsoft.Compute/restorePointCollections/delete",     // Contributor
+        "Microsoft.Compute/restorePointCollections/restorePoints/read",    // Contributor
+        "Microsoft.Compute/restorePointCollections/restorePoints/write",   // Contributor
+        "Microsoft.Compute/restorePointCollections/restorePoints/delete",  // Contributor
+        "Microsoft.Compute/restorePointCollections/restorePoints/diskRestorePoints/read"  // Contributor
+      ]
+
+      Note: Virtual Machine Contributor does NOT include snapshot or restorePointCollection
+      permissions. Disk Snapshot Contributor does NOT include restorePointCollection permissions.
+      For a custom role, add all permissions above explicitly.
+      The Contributor built-in role covers all permissions listed.
 
    c. Assign the Custom Role to the MI on each Resource Group that the
       script needs access to (source RG for snapshots, target RG for
@@ -137,6 +166,17 @@ foreach ($key in $configData.Keys) {
   New-Variable -Name $key -Value $configData[$key] -Force
 }
 
+# Default optional restore point config values
+if (-not (Test-Path variable:useRestorePoints)) {
+  $useRestorePoints = $false
+}
+if (-not (Test-Path variable:restorePointCollectionSuffix)) {
+  $restorePointCollectionSuffix = 'rubrik-rpc'
+}
+if (-not (Test-Path variable:restorePointDaysToKeep)) {
+  $restorePointDaysToKeep = 7
+}
+
 # Log path derived from config values + date
 if ($irisName) {
   $logPath = $logDir + '/' + $logFilename + '-' + $irisName + '-' + $dateString + '.log'
@@ -175,7 +215,20 @@ Write-Host "  Azure disk detach: $executeAzureDiskDetach"
 Write-Host "  Azure disk attach: $executeAzureDiskAttach"
 Write-Host "  Proxy mount: $executeProxyMountCommands"
 Write-Host "  Copy tags from source disk: $copyTagsFromSource"
+Write-Host "  Use Restore Points: $useRestorePoints (source disks: $($sourceDisks.Count))"
+if ($useRestorePoints) {
+  Write-Host "  Restore Point consistency: ApplicationConsistent"
+  Write-Host "  Restore Point collection suffix: $restorePointCollectionSuffix"
+  Write-Host "  Restore Point days to keep: $restorePointDaysToKeep"
+}
 Write-Host ""
+
+if (-not $useRestorePoints -and $sourceDisks.Count -ge 2) {
+  Write-Host "  RECOMMENDATION: $($sourceDisks.Count) source disks detected. Consider setting" -foregroundcolor yellow
+  Write-Host "  useRestorePoints = `$true in the config file for cross-disk write-order" -foregroundcolor yellow
+  Write-Host "  consistency via Azure VM Restore Points." -foregroundcolor yellow
+  Write-Host ""
+}
 
 # Delete log files older than 60 days
 $logRetentionDays = 60
@@ -236,30 +289,55 @@ function Remove-ExpiredAzureResources {
     [string]$ResourceType,
     [array]$SourceDisks
   )
+  $deletedCount = 0
+  $keptCount = 0
+  $groupedResources = @{}
   foreach ($disk in $SourceDisks) {
     $matchName = "${disk}-${NameSuffix}"
     $matched = $Resources | Where-Object { $_.Name -match $matchName }
     foreach ($resource in $matched) {
-      if ($resource.Name -match '\d{4}-\d{2}-\d{2}_\d{4}') {
-        $dateStamp, $time = $matches[0] -split '_'
+      if ($resource.Name -match '(\d{4}-\d{2}-\d{2}_\d{4})') {
+        $dateKey = $matches[1]
+        $dateStamp, $time = $dateKey -split '_'
         $time = $time.Insert(2, ':')
         $resourceDate = [datetime]::ParseExact("$dateStamp $time", 'yyyy-MM-dd HH:mm', $null)
-        if ($resourceDate -lt $CutoffDate) {
-          Write-Host "Deleting $ResourceType older than $RetentionDays days: $($resource.Name)"
-          try {
-            if ($ResourceType -eq 'snapshot') {
-              $result = Remove-AzSnapshot -ResourceGroupName $ResourceGroup -SnapshotName $resource.Name -Force -ErrorAction Stop
-            } else {
-              $result = Remove-AzDisk -ResourceGroupName $ResourceGroup -DiskName $resource.Name -Force -ErrorAction Stop
-            }
-            Write-Host "$ResourceType deletion result: $($result.Status)"
-          } catch {
-            Write-Host "WARNING: Failed to delete $ResourceType $($resource.Name) - $($_.Exception.Message)" -foregroundcolor red
-          }
+        if (-not $groupedResources.ContainsKey($dateKey)) {
+          $groupedResources[$dateKey] = @{ Date = $resourceDate; Items = @() }
         }
+        $groupedResources[$dateKey].Items += @{ Name = $resource.Name; Date = $resourceDate }
       }
     }
   }
+  foreach ($dateKey in ($groupedResources.Keys | Sort-Object)) {
+    $group = $groupedResources[$dateKey]
+    $resourceDate = $group.Date
+    $expired = $resourceDate -lt $CutoffDate
+    if ($expired) {
+      Write-Host "  $dateKey (expired):" -foregroundcolor yellow
+    } else {
+      Write-Host "  $dateKey (keeping):" -foregroundcolor green
+    }
+    foreach ($item in $group.Items) {
+      if ($expired) {
+        Write-Host "    Deleting: $($item.Name)"
+        try {
+          if ($ResourceType -eq 'snapshot') {
+            $result = Remove-AzSnapshot -ResourceGroupName $ResourceGroup -SnapshotName $item.Name -Force -ErrorAction Stop
+          } else {
+            $result = Remove-AzDisk -ResourceGroupName $ResourceGroup -DiskName $item.Name -Force -ErrorAction Stop
+          }
+          Write-Host "    Deletion result: $($result.Status)"
+          $deletedCount++
+        } catch {
+          Write-Host "    WARNING: Failed to delete $($item.Name) - $($_.Exception.Message)" -foregroundcolor red
+        }
+      } else {
+        Write-Host "    $($item.Name)"
+        $keptCount++
+      }
+    }
+  }
+  Write-Host "${ResourceType} cleanup summary: $deletedCount deleted, $keptCount kept" -foregroundcolor green
 }
 
 # Sends the IRIS ODB thaw command via SSH if Epic commands are enabled
@@ -281,7 +359,7 @@ function Invoke-AttachDetachDataDisks {
     [int]$MaxRetries = 4,
     [string]$Operation = 'attach/detach'
   )
-  $apiPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$VMName/attachDetachDataDisks?api-version=2024-03-01"
+  $apiPath = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Compute/virtualMachines/$VMName/attachDetachDataDisks?api-version=2026-04-01"
   $jsonBody = $Body | ConvertTo-Json -Depth 5
   $result = $null
   $retryCount = 0
@@ -393,6 +471,112 @@ if ($executeConnectToAzure) {
     Write-Host ""
   }
   Write-Host ""
+
+  #### Restore Points - Source VM Validation ####
+  if ($useRestorePoints) {
+    $diskRestorePointMap = @{}
+    $sourceVMId = $null
+    foreach ($disk in $sourceDisks) {
+      $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+      if (-not $diskInfo.ManagedBy) {
+        Write-Error "Source disk '$disk' is not attached to any VM (ManagedBy is empty). All source disks must be attached to the same VM for Restore Points."
+        exit 5
+      }
+      if ($null -eq $sourceVMId) {
+        $sourceVMId = $diskInfo.ManagedBy
+      } elseif ($diskInfo.ManagedBy -ne $sourceVMId) {
+        Write-Error "Source disks belong to different VMs. Disk '$disk' is attached to '$($diskInfo.ManagedBy)' but expected '$sourceVMId'. All source disks must belong to the same VM."
+        exit 5
+      }
+    }
+
+    $sourceVMName = ($sourceVMId -split '/')[-1]
+    Write-Host "Source VM for Restore Points: $sourceVMName" -foregroundcolor green
+    Write-Host "  VM ARM ID: $sourceVMId"
+
+    $restorePointCollectionName = "${sourceVMName}-${restorePointCollectionSuffix}"
+    Write-Host "  Restore Point Collection: $restorePointCollectionName"
+
+    $sourceVMResourceGroup = ($sourceVMId -split '/')[4]
+    $vmInfo = Get-AzVM -ResourceGroupName $sourceVMResourceGroup -Name $sourceVMName -ErrorAction Stop
+    $vmSize = $vmInfo.HardwareProfile.VmSize
+    Write-Host "  VM Size: $vmSize"
+
+    # ApplicationConsistent restore points require the Azure VM Agent
+    $vmStatus = Get-AzVM -ResourceGroupName $sourceVMResourceGroup -Name $sourceVMName -Status -ErrorAction Stop
+    $agentStatus = ($vmStatus.VMAgent.Statuses | Where-Object { $_.Code -like "ProvisioningState/*" }).DisplayStatus
+    if ($agentStatus -eq 'Ready') {
+      Write-Host "  VM Agent status: $agentStatus" -foregroundcolor green
+    } else {
+      Write-Error "Azure VM Agent is not ready (status: '$agentStatus'). ApplicationConsistent restore points require the VM Agent to be running. Check that the agent is installed and the VM can reach 168.63.129.16 on ports 80 and 32526."
+      exit 8
+    }
+    $boostPattern = '(Dsv6|Ddsv6|Edsv6|Esv6|Dasv7|Dadsv7|Easv7|Eadsv7|Faldsv7|Falsv7)'
+    if ($vmSize -match $boostPattern) {
+      Write-Host ""
+      Write-Host "  NOTE: VM size '$vmSize' uses Azure Boost. ApplicationConsistent mode" -foregroundcolor yellow
+      Write-Host "  uses the Azure VM Agent to quiesce I/O before snapshotting, providing" -foregroundcolor yellow
+      Write-Host "  consistency across all disks regardless of VM SKU." -foregroundcolor yellow
+      Write-Host ""
+    }
+
+    $vmDataDisks = $vmInfo.StorageProfile.DataDisks
+    foreach ($disk in $sourceDisks) {
+      $vmDisk = $vmDataDisks | Where-Object { $_.Name -eq $disk }
+      if ($vmDisk -and $vmDisk.Caching -eq 'ReadWrite') {
+        Write-Host "  NOTE: Disk '$disk' has ReadWrite host caching. ApplicationConsistent mode" -foregroundcolor yellow
+        Write-Host "  handles this via VM Agent quiescence." -foregroundcolor yellow
+      }
+    }
+
+    $osDiskName = $vmInfo.StorageProfile.OsDisk.Name
+    Write-Host ""
+    Write-Host "  VM disk inventory:" -foregroundcolor green
+    Write-Host "    OS disk: $osDiskName (always included)"
+    $excludeDiskIds = @()
+    foreach ($dataDisk in $vmDataDisks) {
+      if ($sourceDisks -contains $dataDisk.Name) {
+        Write-Host "    Data disk: $($dataDisk.Name) (LUN $($dataDisk.Lun)) - INCLUDED"
+      } else {
+        Write-Host "    Data disk: $($dataDisk.Name) (LUN $($dataDisk.Lun)) - EXCLUDED"
+        $excludeDiskIds += $dataDisk.ManagedDisk.Id
+      }
+    }
+    Write-Host "  Total disks on VM: $(1 + $vmDataDisks.Count) (1 OS + $($vmDataDisks.Count) data)"
+    Write-Host "  Included in restore point: $(1 + $sourceDisks.Count) (1 OS + $($sourceDisks.Count) data)"
+    Write-Host "  Excluded from restore point: $($excludeDiskIds.Count)"
+
+    # Check Azure throttle limit: max 3 restore points per VM per hour
+    try {
+      $existingRpc = Get-AzRestorePointCollection -ResourceGroupName $sourceResourceGroup -Name $restorePointCollectionName -ErrorAction Stop
+      # Construct ARM path manually (Get-AzRestorePointCollection .Id is null)
+      $rpcArmId = "/subscriptions/$sourceSubscriptionId/resourceGroups/$sourceResourceGroup/providers/Microsoft.Compute/restorePointCollections/$restorePointCollectionName"
+      $rpListUri = "${rpcArmId}/restorePoints?api-version=2026-04-01"
+      $rpListResponse = Invoke-AzRestMethod -Path $rpListUri -Method GET
+      $existingRPs = ($rpListResponse.Content | ConvertFrom-Json).value
+      if ($existingRPs -and $existingRPs.Count -gt 0) {
+        $oneHourAgo = (Get-Date).AddHours(-1)
+        $recentRPs = foreach ($rp in $existingRPs) {
+          if ($rp.name -match '(\d{4}-\d{2}-\d{2}_\d{4})') {
+            $rpTime = [datetime]::ParseExact($matches[1], 'yyyy-MM-dd_HHmm', $null)
+            if ($rpTime -gt $oneHourAgo) {
+              [PSCustomObject]@{ Name = $rp.name; Date = $rpTime }
+            }
+          }
+        }
+        $recentCount = @($recentRPs).Count
+        if ($recentCount -ge 3) {
+          $oldest = @($recentRPs) | Sort-Object Date | Select-Object -First 1
+          $nextAllowed = $oldest.Date.AddHours(1)
+          Write-Error "Azure limits restore points to 3 per VM per hour (HTTP 429 throttle). $recentCount created in the last hour: $((@($recentRPs) | ForEach-Object { $_.Name }) -join ', '). Next allowed at approximately: $nextAllowed"
+          exit 7
+        }
+        Write-Host "  Restore points in last hour: $recentCount / 3" -foregroundcolor green
+      }
+    } catch {
+      Write-Host "  No existing Restore Point Collection found (will be created)" -foregroundcolor green
+    }
+  }
 }
 
 #### Cleanup older snapshots and cloned Managed Disks ####
@@ -404,13 +588,55 @@ if ($executeAzureCleanup) {
   $azCtx = Set-AzContext -subscription $sourceSubscriptionId -ErrorAction Stop
   Write-Host "Subscription context: $($azCtx.Subscription.Name) ($sourceSubscriptionId)"
 
-  $snapCutoff = $date.AddDays(-$snapDaysToKeep)
-  Write-Host "Looking for and cleaning up any snapshots older than: $snapCutoff" -foregroundcolor green
-  $azSnapshots = Get-AzSnapshot -ResourceGroup $sourceResourceGroup -ErrorAction Stop
-  Remove-ExpiredAzureResources -ResourceGroup $sourceResourceGroup -Resources $azSnapshots `
-    -NameSuffix $sourceSnapshotSuffix -CutoffDate $snapCutoff -RetentionDays $snapDaysToKeep `
-    -ResourceType 'snapshot' -SourceDisks $sourceDisks
+  if ($useRestorePoints) {
+    # Clean up old restore points (individual snapshots won't exist in restore point mode)
+    $rpCutoff = $date.AddDays(-$restorePointDaysToKeep)
+    Write-Host "Looking for and cleaning up restore points older than: $rpCutoff" -foregroundcolor green
 
+    try {
+      $rpc = Get-AzRestorePointCollection -ResourceGroupName $sourceResourceGroup -Name $restorePointCollectionName -ErrorAction Stop
+    } catch {
+      Write-Host "  Restore Point Collection '$restorePointCollectionName' not found, skipping cleanup"
+      $rpc = $null
+    }
+
+    if ($rpc) {
+      # Construct ARM path manually (Get-AzRestorePointCollection .Id is null)
+      $rpcArmId = "/subscriptions/$sourceSubscriptionId/resourceGroups/$sourceResourceGroup/providers/Microsoft.Compute/restorePointCollections/$restorePointCollectionName"
+      $rpListUri = "${rpcArmId}/restorePoints?api-version=2026-04-01"
+      $rpListResponse = Invoke-AzRestMethod -Path $rpListUri -Method GET
+      $rpList = ($rpListResponse.Content | ConvertFrom-Json).value
+
+      $rpDeletedCount = 0
+      $rpKeptCount = 0
+      foreach ($rp in $rpList) {
+        if ($rp.name -match '(\d{4}-\d{2}-\d{2}_\d{4})') {
+          $rpDate = [datetime]::ParseExact($matches[1], 'yyyy-MM-dd_HHmm', $null)
+          if ($rpDate -lt $rpCutoff) {
+            Write-Host "  Deleting restore point: $($rp.name) (created: $rpDate)"
+            Remove-AzRestorePoint -ResourceGroupName $sourceResourceGroup `
+              -RestorePointCollectionName $restorePointCollectionName `
+              -Name $rp.name -ErrorAction Stop
+            $rpDeletedCount++
+          } else {
+            Write-Host "  Keeping restore point: $($rp.name) (created: $rpDate)"
+            $rpKeptCount++
+          }
+        }
+      }
+      Write-Host "Restore point cleanup summary: $rpDeletedCount deleted, $rpKeptCount kept" -foregroundcolor green
+    }
+  } else {
+    # Clean up old individual snapshots (only when not using restore points)
+    $snapCutoff = $date.AddDays(-$snapDaysToKeep)
+    Write-Host "Looking for and cleaning up any snapshots older than: $snapCutoff" -foregroundcolor green
+    $azSnapshots = Get-AzSnapshot -ResourceGroup $sourceResourceGroup -ErrorAction Stop
+    Remove-ExpiredAzureResources -ResourceGroup $sourceResourceGroup -Resources $azSnapshots `
+      -NameSuffix $sourceSnapshotSuffix -CutoffDate $snapCutoff -RetentionDays $snapDaysToKeep `
+      -ResourceType 'snapshot' -SourceDisks $sourceDisks
+  }
+
+  # Clean up old cloned Managed Disks (always runs regardless of restore point mode)
   $diskCutoff = $date.AddDays(-$clonedDisksDaysToKeep)
   Write-Host "Looking for and cleaning up Managed Disk clones older than: $diskCutoff" -foregroundcolor green
   if ($sourceSubscriptionId -ne $targetSubscriptionId) {
@@ -445,12 +671,159 @@ if ($executeEpicCommands) {
   Write-Host "Auto-thaw result: $autothawResult"
 }
 
-if ($executeAzureSnapshot) {
+if ($executeAzureSnapshot -and $useRestorePoints) {
+  #### Create VM Restore Point (ApplicationConsistent, cross-disk consistency) ####
+  $stepStart = Get-Date
+  $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
+  $emailBody += "${currentTime}: Creating VM Restore Point (ApplicationConsistent) `n"
+
+  # Ensure Restore Point Collection exists
+  $rpc = $null
+  try {
+    $rpc = Get-AzRestorePointCollection -ResourceGroupName $sourceResourceGroup -Name $restorePointCollectionName -ErrorAction Stop
+    Write-Host "Using existing Restore Point Collection: $restorePointCollectionName" -foregroundcolor green
+    if ($rpc.Source.Id -ne $sourceVMId) {
+      Write-Error "Existing collection '$restorePointCollectionName' references VM '$($rpc.Source.Id)' but source disks belong to '$sourceVMId'"
+      exit 6
+    }
+  } catch {
+    Write-Host "Creating new Restore Point Collection: $restorePointCollectionName" -foregroundcolor green
+    $rpcParams = @{
+      ResourceGroupName = $sourceResourceGroup
+      Name              = $restorePointCollectionName
+      VmId              = $sourceVMId
+      Location          = (Get-AzDisk -DiskName $sourceDisks[0] -ResourceGroupName $sourceResourceGroup).Location
+    }
+    if ($copyTagsFromSource) {
+      $firstDiskInfo = Get-AzDisk -DiskName $sourceDisks[0] -ResourceGroupName $sourceResourceGroup
+      if ($firstDiskInfo.Tags -and $firstDiskInfo.Tags.Count -gt 0) {
+        $rpcParams.Tag = $firstDiskInfo.Tags
+        Write-Host "  Applying $($firstDiskInfo.Tags.Count) tag(s) to collection"
+      }
+    }
+    $rpc = New-AzRestorePointCollection @rpcParams -ErrorAction Stop
+    Write-Host "  Collection created successfully"
+  }
+
+  $restorePointName = "rubrik-rp-${dateString}"
+  Write-Host ""
+  Write-Host "Creating ApplicationConsistent Restore Point: $restorePointName" -foregroundcolor green
+  if ($excludeDiskIds.Count -gt 0) {
+    Write-Host "  Excluding $($excludeDiskIds.Count) disk(s) not in source config"
+  }
+
+  $rpParams = @{
+    ResourceGroupName          = $sourceResourceGroup
+    RestorePointCollectionName = $restorePointCollectionName
+    Name                       = $restorePointName
+  }
+  if ($excludeDiskIds.Count -gt 0) {
+    $rpParams.DisksToExclude = $excludeDiskIds
+  }
+
+  # New-AzRestorePoint is synchronous - blocks until Azure responds with success or error
+  Write-Host "Creating restore point (this call blocks until Azure completes)..." -foregroundcolor green
+
+  try {
+    $rpResult = New-AzRestorePoint @rpParams -ErrorAction Stop
+  } catch {
+    Send-EpicThawCommand
+    $errMsg = $_.Exception.Message
+    if ($errMsg -match '429' -or $errMsg -match 'throttle' -or $errMsg -match 'TooManyRequests' -or $errMsg -match 'RetryAfter') {
+      Write-Error "Azure throttle limit hit (HTTP 429): max 3 restore points per VM per hour. Wait and retry. Details: $errMsg"
+    } else {
+      Write-Error "Failed to create restore point: $errMsg"
+    }
+    exit 10
+  }
+
+  Send-EpicThawCommand
+  $currentTime = Get-Date -format "yyyy-MM-dd HH:mm:ss"
+  Write-Host "${currentTime}: Restore point '$restorePointName' created (ProvisioningState: $($rpResult.ProvisioningState))" -foregroundcolor green
+
+  # Extract disk restore point IDs for managed disk creation
+  $rpDetail = Get-AzRestorePoint -ResourceGroupName $sourceResourceGroup `
+    -RestorePointCollectionName $restorePointCollectionName `
+    -Name $restorePointName -InstanceView -ErrorAction Stop
+
+  foreach ($dataDisk in $rpDetail.SourceMetadata.StorageProfile.DataDisks) {
+    $diskName = $dataDisk.ManagedDisk.Id.Split('/')[-1]
+    if ($sourceDisks -contains $diskName) {
+      $diskRestorePointMap[$diskName] = $dataDisk.DiskRestorePoint.Id
+      Write-Host "  Disk restore point for '$diskName': $($dataDisk.DiskRestorePoint.Id)"
+    }
+  }
+
+  # Poll until disk restore points are ready for disk creation
+  $drpPollSecs = 60
+  Write-Host ""
+  Write-Host "Waiting for disk restore points to be ready (polling every ${drpPollSecs}s)..." -foregroundcolor green
+  $allDiskRPsReady = $false
+  $drpPollIteration = 0
+  $drpMaxPollIterations = 60
+  $drpStartTime = Get-Date
+
+  while (-not $allDiskRPsReady) {
+    if ($drpPollIteration -ge $drpMaxPollIterations) {
+      Write-Error "Disk restore points timed out after $([math]::Round($drpPollIteration * $drpPollSecs / 60)) minutes"
+      exit 12
+    }
+    $drpPollIteration++
+    $allReady = $true
+    $rpCheck = Get-AzRestorePoint -ResourceGroupName $sourceResourceGroup `
+      -RestorePointCollectionName $restorePointCollectionName `
+      -Name $restorePointName -InstanceView -ErrorAction Stop
+
+    $pendingDisks = @()
+    $readyDisks = @()
+    foreach ($dataDisk in $rpCheck.SourceMetadata.StorageProfile.DataDisks) {
+      $diskName = $dataDisk.ManagedDisk.Id.Split('/')[-1]
+      if ($sourceDisks -contains $diskName) {
+        $drpId = $dataDisk.DiskRestorePoint.Id
+        $drpUri = "${drpId}?api-version=2026-03-02"
+        $drpResponse = Invoke-AzRestMethod -Path $drpUri -Method GET
+        $drpJson = $drpResponse.Content | ConvertFrom-Json
+        $drpProps = $drpJson.properties
+        $completionPct = $drpProps.completionPercent
+        $accessState = $drpProps.snapshotAccessState
+        if ($completionPct -eq 100 -and $accessState -eq 'Available') {
+          $readyDisks += $diskName
+        } else {
+          $allReady = $false
+          $pendingDisks += @{ Name = $diskName; Pct = $completionPct; Access = $accessState }
+        }
+      }
+    }
+
+    $currentTime = Get-Date -format "yyyy-MM-dd HH:mm:ss"
+    $elapsed = [math]::Round(((Get-Date) - $drpStartTime).TotalSeconds)
+    if ($allReady) {
+      Write-Host "${currentTime}: All disk restore points ready ($($readyDisks.Count) disks, ${elapsed}s elapsed)" -foregroundcolor green
+      $allDiskRPsReady = $true
+    } else {
+      Write-Host "${currentTime}: Waiting for disk restore points (${elapsed}s elapsed, next poll in ${drpPollSecs}s)..."
+      foreach ($pd in $pendingDisks) {
+        Write-Host "  $($pd.Name): $($pd.Pct)% complete, access: $($pd.Access)"
+      }
+      Start-Sleep $drpPollSecs
+    }
+  }
+
+  foreach ($disk in $sourceDisks) {
+    $diskInfo = Get-AzDisk -DiskName $disk -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+    $sourceDiskInfo[$disk] = $diskInfo
+  }
+
+  $stepElapsed = [math]::Round(((Get-Date) - $stepStart).TotalSeconds)
+  Write-Host "Restore point creation completed in ${stepElapsed}s" -foregroundcolor green
+} # if ($executeAzureSnapshot -and $useRestorePoints)
+
+if ($executeAzureSnapshot -and -not $useRestorePoints) {
+  #### Create individual snapshot of each source disk ####
   $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
   $snapshotMode = if ($useInstantSnapshots) { "instant access" } else { "standard" }
   $emailBody += "${currentTime}: Creating snapshots ($snapshotMode) `n"
-  # Create a snapshot for each disk
   $snapshotType = if ($useInstantSnapshots) { "instant access incremental" } else { "incremental" }
   foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
     $diskName = $snapshot.name
@@ -468,7 +841,6 @@ if ($executeAzureSnapshot) {
       exit 10
     }
     $sourceDiskInfo.$diskName = $diskInfo
-    # Snapshot config clones the source disk's location, zone, and tags
     $snapshotConfigParams = @{
       SourceUri = $diskInfo.Id
       Location = $diskInfo.Location
@@ -511,7 +883,6 @@ if ($executeAzureSnapshot) {
   Send-EpicThawCommand
 
   Write-Host ""
-  # Instant access snapshots reach usable state in seconds, standard need minutes for background copy
   $snapPollSecs = if ($useInstantSnapshots) { 10 } else { $statusCheckSecs }
   if ($useInstantSnapshots) {
     Write-Host "Waiting for $diskCount snapshot(s) to reach InstantAccess state (polling every ${snapPollSecs}s)..." -foregroundcolor green
@@ -522,7 +893,6 @@ if ($executeAzureSnapshot) {
   }
   Write-Host ""
 
-  # Poll until all snapshots are ready (instant: InstantAccess state, standard: 100% copy)
   $snapshotComplete = @{}
   $pollIteration = 0
   $maxPollIterations = if ($useInstantSnapshots) { 60 } else { 120 }
@@ -566,26 +936,47 @@ if ($executeAzureSnapshot) {
   } else {
     Write-Host "All $diskCount snapshots have finished background copy (${stepElapsed}s)" -foregroundcolor green
   }
-} # if ($executeAzureSnapshot)
+} # if ($executeAzureSnapshot -and -not $useRestorePoints)
 
-# When snapshot step is skipped, look up existing disk and snapshot info.
+# When snapshot step is skipped, look up existing disk and snapshot/restore point info.
 # Set $dateString at the top of the script to target a specific snapshot.
 if ( $executeManagedDiskClone -and ($executeAzureSnapshot -eq $false) ) {
-  foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
-    $diskName = $snapshot.name
-    $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
-    if (-not $diskInfo) {
-      Write-Error "Source disk not found: $diskName in RG $sourceResourceGroup"
-      exit 10
-    }
-    $sourceDiskInfo.$diskName = $diskInfo
-    $snapshotName = $snapshot.value
-    $snapshotInfo = Get-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName -ErrorAction Stop
-    if (-not $snapshotInfo) {
-      Write-Error "Snapshot not found: $snapshotName in RG $sourceResourceGroup (is dateString correct?)"
+  if ($useRestorePoints) {
+    $restorePointName = "rubrik-rp-${dateString}"
+    Write-Host "Looking up existing restore point: $restorePointName" -foregroundcolor green
+    $rpDetail = Get-AzRestorePoint -ResourceGroupName $sourceResourceGroup `
+      -RestorePointCollectionName $restorePointCollectionName `
+      -Name $restorePointName -InstanceView -ErrorAction Stop
+    if (-not $rpDetail) {
+      Write-Error "Restore point not found: $restorePointName (is dateString correct?)"
       exit 12
     }
-    $sourceSnapshotInfo.$snapshotName = $snapshotInfo
+    foreach ($dataDisk in $rpDetail.SourceMetadata.StorageProfile.DataDisks) {
+      $diskName = $dataDisk.ManagedDisk.Id.Split('/')[-1]
+      if ($sourceDisks -contains $diskName) {
+        $diskRestorePointMap[$diskName] = $dataDisk.DiskRestorePoint.Id
+      }
+    }
+    foreach ($disk in $sourceDisks) {
+      $sourceDiskInfo[$disk] = Get-AzDisk -DiskName $disk -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+    }
+  } else {
+    foreach ($snapshot in $sourceDiskToSnapshot.getEnumerator()) {
+      $diskName = $snapshot.name
+      $diskInfo = Get-AzDisk -DiskName $diskName -ResourceGroupName $sourceResourceGroup -ErrorAction Stop
+      if (-not $diskInfo) {
+        Write-Error "Source disk not found: $diskName in RG $sourceResourceGroup"
+        exit 10
+      }
+      $sourceDiskInfo.$diskName = $diskInfo
+      $snapshotName = $snapshot.value
+      $snapshotInfo = Get-AzSnapshot -ResourceGroupName $sourceResourceGroup -SnapshotName $snapshotName -ErrorAction Stop
+      if (-not $snapshotInfo) {
+        Write-Error "Snapshot not found: $snapshotName in RG $sourceResourceGroup (is dateString correct?)"
+        exit 12
+      }
+      $sourceSnapshotInfo.$snapshotName = $snapshotInfo
+    }
   }
 }
 
@@ -599,40 +990,65 @@ if ($executeConnectToAzure) {
   }
 }
 
-#### Create a Managed Disk from the snapshot ####
+#### Create a Managed Disk from the snapshot or disk restore point ####
 # https://learn.microsoft.com/en-us/azure/virtual-machines/scripts/virtual-machines-powershell-sample-create-managed-disk-from-snapshot
 # https://learn.microsoft.com/en-us/powershell/module/az.compute/new-azdiskconfig
 
 if ($executeManagedDiskClone) {
   $stepStart = Get-Date
   $currentTime = Get-Date -format "yyyy-MM-dd HH:mm"
-  $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots ($snapshotMode) `n"
-  Write-Host ""
-  if ($useInstantSnapshots) {
-    Write-Host "Creating Managed Disks from instant access snapshots (disks are usable immediately after creation)..." -foregroundcolor green
+  if ($useRestorePoints) {
+    $emailBody += "${currentTime}: Creating cloned Managed Disks from disk restore points `n"
+    Write-Host ""
+    Write-Host "Creating Managed Disks from disk restore points (CreateOption: Restore)..." -foregroundcolor green
   } else {
-    Write-Host "Creating Managed Disks from incremental snapshots (background copy required before use)..." -foregroundcolor green
+    $snapshotMode = if ($useInstantSnapshots) { "instant access" } else { "standard" }
+    $emailBody += "${currentTime}: Creating cloned Managed Disks from snapshots ($snapshotMode) `n"
+    Write-Host ""
+    if ($useInstantSnapshots) {
+      Write-Host "Creating Managed Disks from instant access snapshots (disks are usable immediately after creation)..." -foregroundcolor green
+    } else {
+      Write-Host "Creating Managed Disks from incremental snapshots (background copy required before use)..." -foregroundcolor green
+    }
   }
   foreach ($disk in $sourceDisks) {
     $targetDiskName = $sourceDiskToTargetDisk[$disk]
     $diskInfo = $sourceDiskInfo[$disk]
-    $snapshotName = $sourceDiskToSnapshot[$disk]
-    $snapshotInfo = $sourceSnapshotInfo[$snapshotName]
     Write-Host ""
     Write-Host "Building disk config for source disk: $disk" -foregroundcolor green
-    Write-Host "  Source snapshot: $snapshotName"
     Write-Host "  Target disk name: $targetDiskName"
-    $diskConfigParameters = @{
-      CreateOption = "Copy"
-      SourceResourceId = $snapshotInfo.Id
-      DiskSizeGB = $diskInfo.DiskSizeGB
-      SkuName = $diskInfo.sku.name
-      Zone = $diskInfo.zones[0]
-      Location = $diskInfo.location
-      DiskIOPSReadWrite = $diskIOPSReadWrite
-      DiskIOPSReadOnly = $diskIOPSReadOnly
-      DiskMBpsReadWrite = $diskMBpsReadWrite
-      DiskMBpsReadOnly = $diskMBpsReadOnly
+    if ($useRestorePoints) {
+      $drpName = $diskRestorePointMap[$disk].Split('/')[-1]
+      Write-Host "  Source: disk restore point (CreateOption: Restore)"
+      Write-Host "  Disk restore point: $drpName"
+      $diskConfigParameters = @{
+        CreateOption      = "Restore"
+        SourceResourceId  = $diskRestorePointMap[$disk]
+        DiskSizeGB        = $diskInfo.DiskSizeGB
+        SkuName           = $diskInfo.sku.name
+        Zone              = $diskInfo.zones[0]
+        Location          = $diskInfo.location
+        DiskIOPSReadWrite = $diskIOPSReadWrite
+        DiskIOPSReadOnly  = $diskIOPSReadOnly
+        DiskMBpsReadWrite = $diskMBpsReadWrite
+        DiskMBpsReadOnly  = $diskMBpsReadOnly
+      }
+    } else {
+      $snapshotName = $sourceDiskToSnapshot[$disk]
+      $snapshotInfo = $sourceSnapshotInfo[$snapshotName]
+      Write-Host "  Source snapshot: $snapshotName"
+      $diskConfigParameters = @{
+        CreateOption      = "Copy"
+        SourceResourceId  = $snapshotInfo.Id
+        DiskSizeGB        = $diskInfo.DiskSizeGB
+        SkuName           = $diskInfo.sku.name
+        Zone              = $diskInfo.zones[0]
+        Location          = $diskInfo.location
+        DiskIOPSReadWrite = $diskIOPSReadWrite
+        DiskIOPSReadOnly  = $diskIOPSReadOnly
+        DiskMBpsReadWrite = $diskMBpsReadWrite
+        DiskMBpsReadOnly  = $diskMBpsReadOnly
+      }
     }
     if ($copyTagsFromSource) {
       if ($diskInfo.Tags -and $diskInfo.Tags.Count -gt 0) {
@@ -683,7 +1099,7 @@ if ($executeManagedDiskClone) {
     Write-Host "Managed Disk created (ProvisioningState: $($result.ProvisioningState))" -foregroundcolor green
   } # foreach source disk
 
-  if ($useInstantSnapshots) {
+  if ($useInstantSnapshots -and -not $useRestorePoints) {
     # With instant access snapshots, the disk is backed by the instant access snapshot data.
     # Reads to any region are served directly from the snapshot, so the disk is usable
     # immediately after ProvisioningState = Succeeded. No need to wait for background copy.
@@ -693,14 +1109,16 @@ if ($executeManagedDiskClone) {
   } else {
     Write-Host ""
     $diskPollSecs = $statusCheckSecs
+    $sourceLabel = if ($useRestorePoints) { "disk restore points" } else { "incremental snapshots" }
     Write-Host "Waiting for $diskCount Managed Disk(s) to finish background copy (polling every ${diskPollSecs}s)..." -foregroundcolor green
-    Write-Host "  Standard incremental snapshots require the background copy to complete before the disk can be attached"
+    Write-Host "  Managed Disks created from $sourceLabel require the background copy to complete before the disk can be attached"
     Write-Host ""
 
-    # Poll until all cloned disks finish background copy (standard snapshots only)
+    # Poll until all cloned disks finish background copy (standard snapshots and restore points)
     $diskComplete = @{}
     $pollIteration = 0
     $maxPollIterations = 120
+    $diskCopyStartTime = Get-Date
 
     while ($diskComplete.count -lt $diskCount) {
       if ($pollIteration -ge $maxPollIterations) {
@@ -709,22 +1127,29 @@ if ($executeManagedDiskClone) {
       }
       $pollIteration++
       $currentTime = Get-Date -format "yyyy-MM-dd HH:mm:ss"
+      $elapsed = [math]::Round(((Get-Date) - $diskCopyStartTime).TotalSeconds)
+      $pendingCopyDisks = @()
       foreach ($disk in $sourceDisks) {
         if ($diskComplete.ContainsKey($disk)) { continue }
         $targetDiskName = $sourceDiskToTargetDisk[$disk]
         $diskInfo = Get-AzDisk -DiskName $targetDiskName -ResourceGroupName $targetResourceGroup
         if ($diskInfo.CompletionPercent -lt 100) {
-          Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent), waiting another ${diskPollSecs}s..."
+          $pendingCopyDisks += @{ Name = $diskInfo.name; Pct = $diskInfo.CompletionPercent }
         } else {
-          Write-Host "${currentTime}: Disk copy: $($diskInfo.name), completion: $($diskInfo.CompletionPercent)" -foregroundcolor green
+          Write-Host "${currentTime}: Disk copy complete: $($diskInfo.name) (100%)" -foregroundcolor green
           $diskComplete.$disk = $true
         }
       }
       if ($diskComplete.count -lt $diskCount) {
+        Write-Host "${currentTime}: Waiting for disk background copy (${elapsed}s elapsed, next poll in ${diskPollSecs}s)..."
+        foreach ($pd in $pendingCopyDisks) {
+          Write-Host "  $($pd.Name): $($pd.Pct)% complete"
+        }
         Start-Sleep $diskPollSecs
       }
     } # while disk copy polling
-    Write-Host "All $diskCount Managed Disk(s) have finished background copy" -foregroundcolor green
+    $diskCopyElapsed = [math]::Round(((Get-Date) - $diskCopyStartTime).TotalSeconds)
+    Write-Host "All $diskCount Managed Disk(s) have finished background copy (${diskCopyElapsed}s elapsed)" -foregroundcolor green
   }
   Write-Host "Managed Disk clone step completed in $([math]::Round(((Get-Date) - $stepStart).TotalMinutes, 1)) minutes" -foregroundcolor green
 } # if ($executeManagedDiskClone)
@@ -997,13 +1422,13 @@ Write-Host "Script completed successfully in $elapsedMins minutes" -foregroundco
 Stop-Transcript
 
 # Build email body with summary header and full transcript
-$snapshotModeLabel = if ($useInstantSnapshots) { "Instant Access" } else { "Standard" }
+$snapshotModeLabel = if ($useRestorePoints) { "Restore Points (ApplicationConsistent)" } elseif ($useInstantSnapshots) { "Instant Access" } else { "Standard" }
 $emailBody += "Completed in $elapsedMins minutes | Snapshot mode: $snapshotModeLabel | Disks: $($sourceDisks.count) `n`n"
 $emailBody += Get-Content -Path $logPath -Raw
 $emailBodyHtml = "<pre>$emailBody</pre>"
 
 if ($sendMail) {
-  Send-MailMessage -From $emailFrom -To $emailTo -Subject "$emailSubject ($snapshotModeLabel)" -Body $emailBodyHtml -SmtpServer $smtpServer -BodyAsHtml $true
+  Send-MailMessage -From $emailFrom -To $emailTo -Subject "$emailSubject ($snapshotModeLabel)" -Body $emailBodyHtml -SmtpServer $SMTPServer -BodyAsHtml $true
 }
 
 exit 0
