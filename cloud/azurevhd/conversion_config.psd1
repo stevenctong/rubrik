@@ -36,18 +36,19 @@
     # Azure region
     location = 'eastus2'
 
-    # Azure storage account for VHD page blob upload (intermediary before managed disk)
-    storageAccountName = 'rrtonglighthouse101'
-
-    # Blob container name in the storage account
-    storageContainerName = 'vhds'
-
-    # Resource group of the storage account
-    storageAccountRG = 'rr-tong'
-
-    # Use storage account page blob upload instead of direct-to-managed-disk
+    # (Optional) Use storage account page blob upload instead of direct-to-managed-disk
     # Set to $true as a fallback if direct upload fails
     useStorageAccount = $false
+
+    # (Optional) Azure storage account for VHD page blob upload (intermediary before managed disk)
+    # Only required when useStorageAccount = $true
+    storageAccountName = 'rrtonglighthouse101'
+
+    # (Optional) Blob container name in the storage account
+    storageContainerName = 'vhds'
+
+    # (Optional) Resource group of the storage account
+    storageAccountRG = 'rr-tong'
 
     # Default OS type (Windows or Linux)
     osType = 'Windows'

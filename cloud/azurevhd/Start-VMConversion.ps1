@@ -96,6 +96,22 @@ Azure region (e.g., 'eastus2') for uploaded resources.
 .PARAMETER azcopyPath
 Path to azcopy.exe for direct-to-managed-disk upload.
 
+.PARAMETER storageAccountName
+(Optional) Azure storage account name for VHD page blob upload. Only
+required when -UseStorageAccount is set.
+
+.PARAMETER storageContainerName
+(Optional) Blob container name in the storage account. Only required
+when -UseStorageAccount is set.
+
+.PARAMETER storageAccountRG
+(Optional) Resource group of the storage account. Only required when
+-UseStorageAccount is set.
+
+.PARAMETER UseStorageAccount
+(Optional) Upload VHDs to a storage account page blob instead of direct-
+to-managed-disk. Use as a fallback if direct upload fails.
+
 .PARAMETER osType
 Default OS type for uploaded VMs. Valid values: 'Windows', 'Linux'. Default: 'Windows'.
 
@@ -167,16 +183,16 @@ param (
   # Path to azcopy.exe for VHD upload
   [Parameter(Mandatory=$false)]
   [string]$azcopyPath = '',
-  # Azure storage account name for VHD page blob upload
+  # (Optional) Azure storage account name for VHD page blob upload
   [Parameter(Mandatory=$false)]
   [string]$storageAccountName = '',
-  # Blob container name in the storage account
+  # (Optional) Blob container name in the storage account
   [Parameter(Mandatory=$false)]
   [string]$storageContainerName = '',
-  # Resource group of the storage account
+  # (Optional) Resource group of the storage account
   [Parameter(Mandatory=$false)]
   [string]$storageAccountRG = '',
-  # Use storage account page blob upload instead of direct-to-managed-disk
+  # (Optional) Use storage account page blob upload instead of direct-to-managed-disk
   [Parameter(Mandatory=$false)]
   [switch]$UseStorageAccount = $false,
   # Default OS type (Windows or Linux)
