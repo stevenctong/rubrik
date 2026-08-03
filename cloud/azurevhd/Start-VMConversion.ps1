@@ -32,7 +32,26 @@ GitHub: stevenctong
 Date: 8/2/26
 Updated: 8/3/26
 
-Requires PowerShell 7+.
+Requirements / Dependencies:
+- PowerShell 7+
+    https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell
+- aria2c: multi-connection download utility for VMDK downloads
+    https://aria2.github.io/
+- qemu-img: converts VMDK to fixed-size VHD
+    https://www.qemu.org/download/
+- Hyper-V role: VHD alignment via Resize-VHD requires the full Hyper-V role,
+    not just the management tools (the VHD cmdlets use the Hyper-V WMI provider).
+    Install: Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -Restart
+    If running this script on an Azure VM, use a Dv5/Dsv5 or newer SKU that
+    supports nested virtualization (e.g. Standard_D8s_v5) with a Windows Server
+    2022+ Datacenter image. Alternatively, deploy the pre-built "Hyper-V Server
+    2025" marketplace image from Cloud Infrastructure Services which has the
+    role pre-installed.
+- AzCopy: direct-to-managed-disk VHD upload
+    https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azcopy-v10
+- Azure PowerShell modules (Az.Accounts, Az.Compute, Az.Network, Az.Storage)
+    Install: Install-Module -Name Az -Scope CurrentUser
+    Az.Storage is only required when useStorageAccount = $true in the config.
 
 Per-VM Azure settings (ResourceGroup, VNetRG, VNetName, SubnetName, NsgRG,
 NsgName, VMSize, ManagedDiskSku, tgtVMName, DiskSuffix) and per-disk actions
