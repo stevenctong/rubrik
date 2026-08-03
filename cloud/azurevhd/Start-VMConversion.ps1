@@ -434,6 +434,41 @@ foreach ($vm in $vmGroups) {
   }
 }
 
+# -- Disk space summary --------------------------------------------------------
+
+$driveInfo = [System.IO.DriveInfo]::new([System.IO.Path]::GetPathRoot($workingDir))
+$driveTotalGiB = [math]::Round($driveInfo.TotalSize / 1073741824, 1)
+$driveFreeGiB = [math]::Round($driveInfo.AvailableFreeSpace / 1073741824, 1)
+
+$totalConvertGiB = ($vmGroups | ForEach-Object { ($_.VmdkSizesGiB | Measure-Object -Sum).Sum } |
+  Measure-Object -Sum).Sum
+$estDownloadGiB = [math]::Round($totalConvertGiB, 1)
+$estConvertGiB = [math]::Round($totalConvertGiB, 1)
+$estTotalGiB = [math]::Round($estDownloadGiB + $estConvertGiB, 1)
+$estFreeAfterGiB = [math]::Round($driveFreeGiB - $estTotalGiB, 1)
+
+Write-Host ""
+Write-Host "--- Disk Space Summary ---" -ForegroundColor Cyan
+Write-Host "  Working directory : $workingDir"
+Write-Host "  Drive             : $($driveInfo.Name)"
+Write-Host "  Total space       : $driveTotalGiB GiB"
+Write-Host "  Free space        : $driveFreeGiB GiB"
+Write-Host ""
+Write-Host "  Estimated space needed (worst case):"
+Write-Host "    Download VMDKs  : $estDownloadGiB GiB  (provisioned size, actual may be less)"
+Write-Host "    Convert to VHD  : $estConvertGiB GiB  (fixed-size VHD)"
+Write-Host "    Total estimated : $estTotalGiB GiB"
+Write-Host ""
+Write-Host "  Estimated free after conversion: $estFreeAfterGiB GiB"
+
+if ($estTotalGiB -gt $driveFreeGiB) {
+  Write-Host ""
+  Write-Host "  WARNING: Estimated space needed ($estTotalGiB GiB) exceeds free space ($driveFreeGiB GiB)!" -ForegroundColor Red
+} elseif ($estFreeAfterGiB -lt 50 -or $estFreeAfterGiB -lt ($driveTotalGiB * 0.1)) {
+  Write-Host ""
+  Write-Host "  WARNING: Estimated free space after conversion is low ($estFreeAfterGiB GiB)." -ForegroundColor Yellow
+}
+
 # -- Validate per-VM Azure columns (upload stage) ------------------------------
 
 if ($RunUpload) {
