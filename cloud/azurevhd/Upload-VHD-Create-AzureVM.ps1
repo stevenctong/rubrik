@@ -22,6 +22,9 @@ Supports both Gen 1 (MBR) and Gen 2 (GPT) managed disks via -hyperVGeneration.
 For data disks (-diskType Data): uploads and creates the managed disk, then attaches
 it to an existing VM specified by -attachToVM.
 
+Use -diskName to override the managed disk resource name. When omitted, the disk
+name defaults to "{vmName}-{vhdBaseName}".
+
 Use -SkipVMCreation to upload the VHD and create the managed disk only (returns the
 managed disk ID via stdout). The caller can then handle VM creation separately.
 
@@ -47,6 +50,11 @@ Some additional options for consideration:
 .PARAMETER vmName
 Azure VM name. For OS disks, VM resource names (disk, NIC) are derived from this.
 For data disks, used as the disk name prefix.
+
+.PARAMETER diskName
+Override the managed disk resource name. When provided, used directly instead of
+the default "{vmName}-{vhdBaseName}" derivation. Used by the orchestrator to pass
+user-chosen disk names from the CSV DiskSuffix column.
 
 .PARAMETER sourceVHD
 Path to the source VHD file to upload.
@@ -158,6 +166,9 @@ param (
   # Azure VM Name - VM resource names will be derived from this
   [Parameter(Mandatory=$false)]
   [string]$vmName = '',
+  # Override managed disk resource name (default: "{vmName}-{vhdBaseName}")
+  [Parameter(Mandatory=$false)]
+  [string]$diskName = '',
   # Source VHD file to upload
   [Parameter(Mandatory=$false)]
   [string]$sourceVHD = '',
@@ -331,7 +342,9 @@ if (-not (Test-Path $azcopyPath -PathType Leaf)) {
 
 ## Derived Variables
 $vhdBaseName = [System.IO.Path]::GetFileNameWithoutExtension($sourceVHD)
-$diskName = "$vmName-$vhdBaseName"
+if ([string]::IsNullOrEmpty($diskName)) {
+  $diskName = "$vmName-$vhdBaseName"
+}
 if ($diskType -eq 'OS') {
   $nicName = $vmName + "-nic-01"
 }

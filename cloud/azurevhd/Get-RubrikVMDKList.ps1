@@ -4,6 +4,9 @@ This script outputs all VMware VMDK info for VMs with at least one backup to a C
 
 .DESCRIPTION
 This script outputs all VMware VMDK info for VMs with at least one backup to a CSV.
+Includes user-editable columns: Convert, CreateOnly, BootDisk, DriveLetter,
+tgtVMName, DiskSuffix, and per-VM Azure settings. On re-run, user-edited values
+are merged forward from the previous CSV.
 
 .NOTES
 Written by Steven Tong for community usage
@@ -20,9 +23,10 @@ File path to the RSC Service Account JSON file.
 Prefix for the output CSV file. A timestamp is appended automatically.
 
 .PARAMETER SkipMerge
-Skip merging Convert and DriveLetter values from a previous CSV. By default,
-the script looks for the latest existing CSV matching the prefix and carries
-forward any user-entered Convert and DriveLetter values.
+Skip merging user-edited columns from a previous CSV. By default, the script
+looks for the latest existing CSV matching the prefix and carries forward
+Convert, CreateOnly, BootDisk, DriveLetter, tgtVMName, DiskSuffix, and
+per-VM Azure settings.
 
 .EXAMPLE
 ./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json'
@@ -42,7 +46,7 @@ param (
   # Prefix for the output CSV file
   [Parameter(Mandatory=$false)]
   [string]$csvOutputPrefix = './rubrik_vm_list',
-  # Skip merging Convert and DriveLetter from a previous CSV
+  # Skip merging user-edited columns from a previous CSV
   [switch]$SkipMerge
 )
 
@@ -246,8 +250,11 @@ if (-not $SkipMerge) {
       $key = "$($row.vmdkFile)|$($row.Cluster)"
       $previousData[$key] = @{
         Convert = $row.Convert
+        CreateOnly = $row.CreateOnly
         DriveLetter = $row.DriveLetter
         BootDisk = $row.BootDisk
+        tgtVMName = $row.tgtVMName
+        DiskSuffix = $row.DiskSuffix
         ResourceGroup = $row.ResourceGroup
         VNetRG = $row.VNetRG
         VNetName = $row.VNetName
@@ -266,8 +273,11 @@ foreach ($vm in $vmList) {
   foreach ($vmDisk in $vm.VsphereVirtualDisks.edges.node) {
     $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)"
     $mergedConvert = ""
+    $mergedCreateOnly = ""
     $mergedDriveLetter = ""
     $mergedBootDisk = ""
+    $mergedTgtVMName = ""
+    $mergedDiskSuffix = ""
     $mergedResourceGroup = ""
     $mergedVNetRG = ""
     $mergedVNetName = ""
@@ -278,8 +288,11 @@ foreach ($vm in $vmList) {
     $mergedManagedDiskSku = ""
     if ($previousData.ContainsKey($mergeKey)) {
       $mergedConvert = $previousData[$mergeKey].Convert
+      $mergedCreateOnly = $previousData[$mergeKey].CreateOnly
       $mergedDriveLetter = $previousData[$mergeKey].DriveLetter
       $mergedBootDisk = $previousData[$mergeKey].BootDisk
+      $mergedTgtVMName = $previousData[$mergeKey].tgtVMName
+      $mergedDiskSuffix = $previousData[$mergeKey].DiskSuffix
       $mergedResourceGroup = $previousData[$mergeKey].ResourceGroup
       $mergedVNetRG = $previousData[$mergeKey].VNetRG
       $mergedVNetName = $previousData[$mergeKey].VNetName
@@ -289,12 +302,21 @@ foreach ($vm in $vmList) {
       $mergedVMSize = $previousData[$mergeKey].VMSize
       $mergedManagedDiskSku = $previousData[$mergeKey].ManagedDiskSku
     }
+    if ([string]::IsNullOrEmpty($mergedTgtVMName)) {
+      $mergedTgtVMName = $vm.Name
+    }
+    if ([string]::IsNullOrEmpty($mergedDiskSuffix)) {
+      $mergedDiskSuffix = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path $vmDisk.FileName -Leaf))
+    }
     $vmDiskInfo = [PSCustomObject] @{
       "Convert" = $mergedConvert
+      "CreateOnly" = $mergedCreateOnly
       "Name" = $vm.Name
       "Excluded" = if ($vmDisk.excludeFromSnapshots) { "Y" } else { "" }
       "BootDisk" = $mergedBootDisk
       "DriveLetter" = $mergedDriveLetter
+      "tgtVMName" = $mergedTgtVMName
+      "DiskSuffix" = $mergedDiskSuffix
       "ResourceGroup" = $mergedResourceGroup
       "VNetRG" = $mergedVNetRG
       "VNetName" = $mergedVNetName
