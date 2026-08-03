@@ -503,6 +503,9 @@ if (Test-Path $stateFile) {
   }
 }
 
+Write-Host ""
+Write-Host "--- VMs to Process ---" -ForegroundColor Cyan
+
 # Initialize or update state for each VM group
 $vmsToProcess = @()
 foreach ($vm in $vmGroups) {
