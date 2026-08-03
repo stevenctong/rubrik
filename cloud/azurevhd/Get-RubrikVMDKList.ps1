@@ -9,16 +9,28 @@ This script outputs all VMware VMDK info for VMs with at least one backup to a C
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
-Updated: 7/15/26
+Updated: 8/3/26
 
 Requires PowerShell 7+.
 
-.PARAMETER serviceAccountPath
+.PARAMETER RscServiceAccountJson
 File path to the RSC Service Account JSON file.
 
+.PARAMETER csvOutputPrefix
+Prefix for the output CSV file. A timestamp is appended automatically.
+
+.PARAMETER SkipMerge
+Skip merging Convert and DriveLetter values from a previous CSV. By default,
+the script looks for the latest existing CSV matching the prefix and carries
+forward any user-entered Convert and DriveLetter values.
+
 .EXAMPLE
-./Get-RubrikVMDKList.ps1 -serviceAccountPath './rsc-service-account.json'
-Runs the script and outputs the results to a CSV
+./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json'
+Runs the script and outputs the results to a CSV, merging from previous CSV if found
+
+.EXAMPLE
+./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json' -SkipMerge
+Runs the script and outputs a fresh CSV without merging previous values
 
 #>
 
@@ -26,25 +38,22 @@ param (
   [CmdletBinding()]
   # File path to the RSC Service Account JSON
   [Parameter(Mandatory=$false)]
-  [string]$serviceAccountPath = ''
+  [string]$RscServiceAccountJson = '',
+  # Prefix for the output CSV file
+  [Parameter(Mandatory=$false)]
+  [string]$csvOutputPrefix = './rubrik_vm_list',
+  # Skip merging Convert and DriveLetter from a previous CSV
+  [switch]$SkipMerge
 )
-
-### VARIABLES - BEGIN ###
-
-# Testing variables
-# $serviceAccountPath = './rsc-service-account.json'
 
 $date = Get-Date
 
-# CSV file info
-$outCsvFile = "./rubrik_vm_list-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
-
-### VARIABLES - END ###
-
-if ([string]::IsNullOrEmpty($serviceAccountPath)) {
+if ([string]::IsNullOrEmpty($RscServiceAccountJson)) {
   Write-Host ""
   Write-Host "Usage: ./Get-RubrikVMDKList.ps1" -ForegroundColor Cyan
-  Write-Host "  -serviceAccountPath <path to RSC service account JSON>"
+  Write-Host "  -RscServiceAccountJson <path to RSC service account JSON>"
+  Write-Host "  [-csvOutputPrefix <output file prefix>] (default: ./rubrik_vm_list)"
+  Write-Host "  [-SkipMerge] (skip merging from previous CSV)"
   Write-Host ""
   exit
 }
@@ -62,163 +71,44 @@ vSphereVmNewConnection(
   edges {
     cursor
     node {
-      id
+      ... on HierarchyObject {
+        id
+        name
+        effectiveSlaDomain {
+          id
+          name
+        }
+      }
+      ... on CdmHierarchyObject {
+        cluster {
+          id
+          name
+        }
+      }
       snapshotConnection {
         edges {
           node {
             id
             date
-            archivalLocations {
-              id
-              name
-            }
           }
         }
-      }
-      snapshotConsistencyMandate
-      snapshotConsistencySource
-      ... on HierarchyObject {
-        id
-        name
-        objectType
-        __typename
-      }
-      ... on CdmHierarchyObject {
-        replicatedObjectCount
-        cluster {
-          id
-          name
-          version
-          status
-          __typename
-        }
-        __typename
-      }
-      ... on HierarchyObject {
-        id
-        effectiveSlaDomain {
-          id
-          name
-          ... on GlobalSlaReply {
-            isRetentionLockedSla
-            retentionLockMode
-            __typename
-          }
-          ... on ClusterSlaDomain {
-            fid
-            cluster {
-              id
-              name
-              __typename
-            }
-            isRetentionLockedSla
-            retentionLockMode
-            __typename
-          }
-          __typename
-          ... on GlobalSlaReply {
-            description
-            __typename
-          }
-        }
-        ... on CdmHierarchyObject {
-          pendingSla {
-            id
-            name
-            ... on ClusterSlaDomain {
-              fid
-              cluster {
-                id
-                name
-                __typename
-              }
-              __typename
-            }
-            __typename
-          }
-          __typename
-        }
-        __typename
-      }
-      ... on HierarchyObject {
-        effectiveSlaSourceObject {
-          fid
-          name
-          objectType
-          __typename
-        }
-        slaAssignment
-        __typename
-      }
-      ... on HierarchyObject {
-        allOrgs {
-          fullName
-          __typename
-        }
-        __typename
-      }
-      isRelic
-      templateType
-      primaryClusterLocation {
-        id
-        name
-        __typename
-      }
-      logicalPath {
-        fid
-        name
-        objectType
-        __typename
-      }
-      physicalPath {
-        fid
-        name
-        objectType
-        __typename
-      }
-      slaPauseStatus
-      snapshotDistribution {
-        id
-        totalCount
-        __typename
-      }
-      reportWorkload {
-        id
-        archiveStorage
-        physicalBytes
-        __typename
-      }
-      vmwareToolsInstalled
-      agentStatus {
-        agentStatus
-        __typename
       }
       vsphereVirtualDisks {
         edges {
           node {
-            fid
-            datastoreFid
             fileName
             size
-            __typename
+            excludeFromSnapshots
           }
-          __typename
         }
-        __typename
       }
-      __typename
     }
-    __typename
   }
   pageInfo {
-    startCursor
     endCursor
     hasNextPage
-    hasPreviousPage
-    __typename
   }
   count
-  __typename
 }
 }'
 
@@ -262,11 +152,11 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
   throw "PowerShell 7+ is required. Current version: $($PSVersionTable.PSVersion)"
 }
 
-Write-Host "Reading Service Account file: $serviceAccountPath"
+Write-Host "Reading Service Account file: $RscServiceAccountJson"
 try {
-  $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
+  $serviceAccountFile = Get-Content -Path "$RscServiceAccountJson" -ErrorAction Stop | ConvertFrom-Json
 } catch {
-  throw "Failed to read Service Account JSON at '$serviceAccountPath': $($_.Exception.Message)"
+  throw "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
 }
 
 $missingFields = @()
@@ -334,24 +224,92 @@ do {
 # Filter VMs by those that have at least one backup
 $vmList = $vmList | Where-Object { $_.SnapshotConnection.edges.node -ne $null }
 $vmCount = $vmList.count
-Write-Host "Found $vmCount VMs that have at least backup" -foregroundcolor green
+Write-Host "Found $vmCount VMs that have at least one backup" -foregroundcolor green
 
 # Use this if you want to filter by only objects with a SLA assigned to it
 # $vmList = $vmList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
 #   $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
 
+# Check for a previous CSV to merge in Convert and DriveLetter values
+$previousData = @{}
+if (-not $SkipMerge) {
+  $prefixDir = Split-Path -Parent $csvOutputPrefix
+  if ([string]::IsNullOrEmpty($prefixDir)) { $prefixDir = '.' }
+  $prefixName = Split-Path -Leaf $csvOutputPrefix
+  $previousCsvFiles = Get-ChildItem -Path $prefixDir -Filter "$prefixName-*.csv" -File |
+    Sort-Object Name -Descending
+  if ($previousCsvFiles.Count -gt 0) {
+    $previousCsvPath = $previousCsvFiles[0].FullName
+    Write-Host "Previous CSV found: $($previousCsvFiles[0].Name) - merging user-edited columns" -ForegroundColor Yellow
+    $previousCsv = Import-CSV -Path $previousCsvPath
+    foreach ($row in $previousCsv) {
+      $key = "$($row.vmdkFile)|$($row.Cluster)"
+      $previousData[$key] = @{
+        Convert = $row.Convert
+        DriveLetter = $row.DriveLetter
+        BootDisk = $row.BootDisk
+        ResourceGroup = $row.ResourceGroup
+        VNetRG = $row.VNetRG
+        VNetName = $row.VNetName
+        SubnetName = $row.SubnetName
+        NsgRG = $row.NsgRG
+        NsgName = $row.NsgName
+        VMSize = $row.VMSize
+        ManagedDiskSku = $row.ManagedDiskSku
+      }
+    }
+  }
+}
+
 $vmOutput = @()
 foreach ($vm in $vmList) {
   foreach ($vmDisk in $vm.VsphereVirtualDisks.edges.node) {
+    $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)"
+    $mergedConvert = ""
+    $mergedDriveLetter = ""
+    $mergedBootDisk = ""
+    $mergedResourceGroup = ""
+    $mergedVNetRG = ""
+    $mergedVNetName = ""
+    $mergedSubnetName = ""
+    $mergedNsgRG = ""
+    $mergedNsgName = ""
+    $mergedVMSize = ""
+    $mergedManagedDiskSku = ""
+    if ($previousData.ContainsKey($mergeKey)) {
+      $mergedConvert = $previousData[$mergeKey].Convert
+      $mergedDriveLetter = $previousData[$mergeKey].DriveLetter
+      $mergedBootDisk = $previousData[$mergeKey].BootDisk
+      $mergedResourceGroup = $previousData[$mergeKey].ResourceGroup
+      $mergedVNetRG = $previousData[$mergeKey].VNetRG
+      $mergedVNetName = $previousData[$mergeKey].VNetName
+      $mergedSubnetName = $previousData[$mergeKey].SubnetName
+      $mergedNsgRG = $previousData[$mergeKey].NsgRG
+      $mergedNsgName = $previousData[$mergeKey].NsgName
+      $mergedVMSize = $previousData[$mergeKey].VMSize
+      $mergedManagedDiskSku = $previousData[$mergeKey].ManagedDiskSku
+    }
     $vmDiskInfo = [PSCustomObject] @{
+      "Convert" = $mergedConvert
       "Name" = $vm.Name
-      "Cluster" = $vm.Cluster.Name
-      "ID" = $vm.Id
-      "SLA" = $vm.EffectiveSlaDomain.Name
-      "Convert" = ""
-      "vmdkFile" = $vmDisk.FileName
+      "Excluded" = if ($vmDisk.excludeFromSnapshots) { "Y" } else { "" }
+      "BootDisk" = $mergedBootDisk
+      "DriveLetter" = $mergedDriveLetter
+      "ResourceGroup" = $mergedResourceGroup
+      "VNetRG" = $mergedVNetRG
+      "VNetName" = $mergedVNetName
+      "SubnetName" = $mergedSubnetName
+      "NsgRG" = $mergedNsgRG
+      "NsgName" = $mergedNsgName
+      "VMSize" = $mergedVMSize
+      "ManagedDiskSku" = $mergedManagedDiskSku
       "vmdkSizeGiB" = [math]::Round($vmDisk.Size / 1073741824, 1)
+      "vmdkSizeGB" = [math]::Round($vmDisk.Size / 1000000000, 1)
+      "vmdkFile" = $vmDisk.FileName
+      "Cluster" = $vm.Cluster.Name
+      "SLA" = $vm.EffectiveSlaDomain.Name
       "LatestBackupDate" = $vm.snapshotconnection.edges.node[-1].Date
+      "ID" = $vm.Id
       "LatestBackupID" = $vm.snapshotconnection.edges.node[-1].Id
       "OldestBackupDate" = $vm.snapshotconnection.edges.node[0].Date
       "OldestBackupID" = $vm.snapshotconnection.edges.node[0].Id
@@ -361,5 +319,6 @@ foreach ($vm in $vmList) {
   }
 }
 
-$vmOutput | Export-CSV -Path $outCsvFile -NoTypeInformation
-Write-Host "VMDK info output to: $outCsvFile" -foregroundcolor green
+$csvOutput = "$($csvOutputPrefix)-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
+$vmOutput | Export-CSV -Path $csvOutput -NoTypeInformation
+Write-Host "VMDK info output to: $csvOutput" -foregroundcolor green

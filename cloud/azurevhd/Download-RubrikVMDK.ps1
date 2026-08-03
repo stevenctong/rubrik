@@ -18,11 +18,11 @@ Uses 'aria2c' to download the files from the Rubrik cluster.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
-Updated: 7/15/26
+Updated: 8/2/26
 
 Requires PowerShell 7+.
 
-.PARAMETER serviceAccountPath
+.PARAMETER RscServiceAccountJson
 File path to the RSC Service Account JSON file.
 
 .PARAMETER vmID
@@ -32,7 +32,8 @@ The VMware VM ID (FID) in RSC.
 The snapshot ID to download from.
 
 .PARAMETER vmdkFileName
-The VMDK filename to download in manual mode (e.g. '[datastore] vmname/vmname.vmdk').
+One or more VMDK filenames to download in manual mode
+(e.g. '[datastore] vmname/vmname.vmdk'). Accepts an array for multi-disk VMs.
 Not needed when using -vmCsvFile.
 
 .PARAMETER vmCsvFile
@@ -50,14 +51,19 @@ Path to the aria2c.exe download utility. Default: 'C:\Rubrik\aria2c.exe'.
 .PARAMETER timeoutMinutes
 Maximum minutes to wait for download preparation to complete. Default: 60.
 
+.PARAMETER vmName
+Optional VM name used as a log prefix (e.g. '[rp-fileserv-01] ...'). When
+called from Start-VMConversion.ps1, this is set automatically so parallel
+output can be traced back to a specific VM.
+
 .EXAMPLE
-./Download-RubrikVMDK.ps1 -serviceAccountPath './rsc-service-account.json'
+./Download-RubrikVMDK.ps1 -RscServiceAccountJson './rsc-service-account.json'
   -vmID <VMware VM ID> -snapshotID <snapshot ID>
   -vmdkFileName <vmdk files> -downloadPath <directory to download files to>
   Downloads the VMDK files for a given VMware VM and Snapshot to a target directory
 
 .EXAMPLE
-./Download-RubrikVMDK.ps1 -serviceAccountPath './rsc-service-account.json'
+./Download-RubrikVMDK.ps1 -RscServiceAccountJson './rsc-service-account.json'
   -vmCsvFile './rubrik_vm_list-2026-07-15_1200.csv'
   -downloadPath <directory to download files to>
   Reads the CSV and downloads VMDKs for rows marked with 'x' or 'y' in the Convert column
@@ -68,16 +74,16 @@ param (
   [CmdletBinding()]
   # File path to the RSC Service Account JSON
   [Parameter(Mandatory=$false)]
-  [string]$serviceAccountPath = '',
+  [string]$RscServiceAccountJson = '',
   # VM ID
   [Parameter(Mandatory=$false)]
   [string]$vmID = '',
   # Snapshot ID
   [Parameter(Mandatory=$false)]
   [string]$snapshotID = '',
-  # VMDK Filename
+  # VMDK filename(s) to download
   [Parameter(Mandatory=$false)]
-  [string]$vmdkFileName = '',
+  [string[]]$vmdkFileName = @(),
   # CSV file from Get-RubrikVMDKList.ps1
   [Parameter(Mandatory=$false)]
   [string]$vmCsvFile = '',
@@ -86,33 +92,38 @@ param (
   [string]$downloadPath = '',
   # Path to aria2c.exe download utility
   [Parameter(Mandatory=$false)]
-  [string]$aria2cPath = 'C:\Rubrik\aria2c.exe',
+  [string]$aria2cPath = '',
   # Max minutes to wait for download preparation
   [Parameter(Mandatory=$false)]
-  [int]$timeoutMinutes = 60
+  [int]$timeoutMinutes = 60,
+  # VM name prefix for log output (set by orchestrator)
+  [Parameter(Mandatory=$false)]
+  [string]$vmName = ''
 )
 
+$logPrefix = if ($vmName -ne '') { "[$vmName] " } else { '' }
+
 if (-not (Test-Path $aria2cPath)) {
-  Write-Error "aria2c not found at: $aria2cPath"
-  Write-Host "Download aria2c from https://aria2.github.io/ and update the -aria2cPath parameter." -ForegroundColor Yellow
+  Write-Error "${logPrefix}aria2c not found at: $aria2cPath"
+  Write-Host "${logPrefix}Download aria2c from https://aria2.github.io/ and update the -aria2cPath parameter." -ForegroundColor Yellow
   exit
 }
 
 $csvMode = -not [string]::IsNullOrEmpty($vmCsvFile)
 
-if ([string]::IsNullOrEmpty($serviceAccountPath) -or
+if ([string]::IsNullOrEmpty($RscServiceAccountJson) -or
     [string]::IsNullOrEmpty($downloadPath)) {
   Write-Host ""
   Write-Host "Usage (CSV mode): ./Download-RubrikVMDK.ps1" -ForegroundColor Cyan
-  Write-Host "  -serviceAccountPath <path to RSC service account JSON>"
+  Write-Host "  -RscServiceAccountJson <path to RSC service account JSON>"
   Write-Host "  -vmCsvFile <path to CSV from Get-RubrikVMDKList.ps1>"
   Write-Host "  -downloadPath <directory to download to>"
   Write-Host ""
   Write-Host "Usage (manual mode): ./Download-RubrikVMDK.ps1" -ForegroundColor Cyan
-  Write-Host "  -serviceAccountPath <path to RSC service account JSON>"
+  Write-Host "  -RscServiceAccountJson <path to RSC service account JSON>"
   Write-Host "  -vmID <VMware VM ID>"
   Write-Host "  -snapshotID <snapshot ID>"
-  Write-Host "  -vmdkFileName <VMDK filename>"
+  Write-Host "  -vmdkFileName <VMDK filename(s)>"
   Write-Host "  -downloadPath <directory to download to>"
   Write-Host ""
   exit
@@ -121,7 +132,7 @@ if ([string]::IsNullOrEmpty($serviceAccountPath) -or
 if (-not $csvMode -and (
     [string]::IsNullOrEmpty($vmID) -or
     [string]::IsNullOrEmpty($snapshotID) -or
-    [string]::IsNullOrEmpty($vmdkFileName))) {
+    $vmdkFileName.Count -eq 0)) {
   Write-Host "Manual mode requires -vmID, -snapshotID, and -vmdkFileName." -ForegroundColor Yellow
   Write-Host "Or provide -vmCsvFile to use CSV mode instead." -ForegroundColor Yellow
   exit
@@ -129,29 +140,29 @@ if (-not $csvMode -and (
 
 # If CSV mode, read the CSV and extract VM info from marked rows
 if ($csvMode) {
-  Write-Host "Reading CSV file: $vmCsvFile"
+  Write-Host "${logPrefix}Reading CSV file: $vmCsvFile"
   try {
     $csvData = Import-Csv -Path $vmCsvFile -ErrorAction Stop
   } catch {
-    Write-Error "Failed to read CSV file: $($_.Exception.Message)"
+    Write-Error "${logPrefix}Failed to read CSV file: $($_.Exception.Message)"
     exit
   }
   $convertRows = @($csvData | Where-Object {
     $_.Convert -match '^[xyXY]$'
   })
   if ($convertRows.Count -eq 0) {
-    Write-Error "No rows found with Convert set to 'x' or 'y' in: $vmCsvFile"
+    Write-Error "${logPrefix}No rows found with Convert set to 'x' or 'y' in: $vmCsvFile"
     exit
   }
   $vmID = $convertRows[0].ID
   $snapshotID = $convertRows[0].LatestBackupID
   $vmdkFileNames = @($convertRows | ForEach-Object { $_.vmdkFile })
-  Write-Host "CSV rows selected ($($convertRows.Count) VMDKs):" -ForegroundColor Cyan
-  Write-Host "  VM Name:       $($convertRows[0].Name)"
-  Write-Host "  VM ID:         $vmID"
-  Write-Host "  Snapshot ID:   $snapshotID"
+  Write-Host "${logPrefix}CSV rows selected ($($convertRows.Count) VMDKs):" -ForegroundColor Cyan
+  Write-Host "${logPrefix}  VM Name:       $($convertRows[0].Name)"
+  Write-Host "${logPrefix}  VM ID:         $vmID"
+  Write-Host "${logPrefix}  Snapshot ID:   $snapshotID"
   foreach ($vf in $vmdkFileNames) {
-    Write-Host "  VMDK File:     $vf"
+    Write-Host "${logPrefix}  VMDK File:     $vf"
   }
 } else {
   $vmdkFileNames = @($vmdkFileName)
@@ -256,11 +267,11 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
   throw "PowerShell 7+ is required. Current version: $($PSVersionTable.PSVersion)"
 }
 
-Write-Host "Reading Service Account file: $serviceAccountPath"
+Write-Host "${logPrefix}Reading Service Account file: $RscServiceAccountJson"
 try {
-  $serviceAccountFile = Get-Content -Path "$serviceAccountPath" -ErrorAction Stop | ConvertFrom-Json
+  $serviceAccountFile = Get-Content -Path "$RscServiceAccountJson" -ErrorAction Stop | ConvertFrom-Json
 } catch {
-  throw "Failed to read Service Account JSON at '$serviceAccountPath': $($_.Exception.Message)"
+  throw "Failed to read Service Account JSON at '$RscServiceAccountJson': $($_.Exception.Message)"
 }
 
 $missingFields = @()
@@ -305,7 +316,7 @@ $headers = @{
   'Authorization' = "Bearer $($response.access_token)"
 }
 
-Write-Host "Connected to RSC: $rubrikURL" -ForegroundColor Green
+Write-Host "${logPrefix}Connected to RSC: $rubrikURL" -ForegroundColor Green
 
 ###### RUBRIK AUTHENTICATION - END ######
 
@@ -322,8 +333,10 @@ $varDownloadVMDK = @{
 Write-Verbose "Download Mutation JSON:"
 Write-Verbose ($varDownloadVMDK | ConvertTo-Json -depth 100)
 
+$downloadStartTime = Get-Date
 Write-Host ""
-Write-Host "Triggering preparation of $($vmdkFileNames.Count) VMDK file(s) on Rubrik..."
+Write-Host "${logPrefix}Download started: $($downloadStartTime.ToString('M/d/yy h:mm:ss tt'))" -ForegroundColor Cyan
+Write-Host "${logPrefix}Triggering preparation of $($vmdkFileNames.Count) VMDK file(s) on Rubrik..."
 $body = @{
   query = $mutationDownloadVMDK
   variables = $varDownloadVMDK
@@ -331,30 +344,30 @@ $body = @{
 $mutationResult = Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers
 
 if ($mutationResult.errors) {
-  Write-Error "Mutation failed: $($mutationResult.errors[0].message)"
+  Write-Error "${logPrefix}Mutation failed: $($mutationResult.errors[0].message)"
   exit
 }
 
 $mutationData = $mutationResult.data.downloadVsphereVirtualMachineFiles
 if ($mutationData.error) {
-  Write-Error "Download request failed: $($mutationData.error.message)"
+  Write-Error "${logPrefix}Download request failed: $($mutationData.error.message)"
   exit
 }
-Write-Host "Download request queued (status: $($mutationData.status))" -ForegroundColor Green
+Write-Host "${logPrefix}Download request queued (status: $($mutationData.status))" -ForegroundColor Green
 
 $varGetEvent.filters.lastActivityType = @('RECOVERY')
 $varGetEvent.filters.objectFid = @("$vmID")
 
-Write-Host "Waiting for 15 seconds then checking events..."
+Write-Host "${logPrefix}Waiting for 15 seconds then checking events..."
 Start-Sleep -Seconds 15
-Write-Host "Getting the most recent recovery events for the VM..."
+Write-Host "${logPrefix}Getting the most recent recovery events for the VM..."
 $body = @{
   query = $queryGetEvent
   variables = $varGetEvent
 } | ConvertTo-Json -Depth 100
 $events = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.activitySeriesConnection.edges.node
 
-Write-Host "Checking events for the file download..."
+Write-Host "${logPrefix}Checking events for the file download..."
 $recoveryEvent = $null
 foreach ($e in $events) {
   $mes = $e.activityConnection.nodes[-1].message
@@ -369,41 +382,42 @@ foreach ($e in $events) {
 }
 
 if ($null -eq $recoveryEvent) {
-  Write-Error "No recovery event found for: $($vmdkFileNames -join ', ')"
+  Write-Error "${logPrefix}No recovery event found for: $($vmdkFileNames -join ', ')"
   exit
 }
 $eventID = $recoveryEvent.id
 $timeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
 $lastUpdatedEST = [System.TimeZoneInfo]::ConvertTimeFromUtc($recoveryEvent.LastUpdated, $timeZone)
-Write-Host "Recovery event found for: $($recoveryEvent.objectName)"
-Write-Host "Last updated (EST): $lastUpdatedEST"
-Write-Host "Current status: $($recoveryEvent.LastActivityStatus)"
+Write-Host "${logPrefix}Recovery event found for: $($recoveryEvent.objectName)"
+Write-Host "${logPrefix}Last updated (EST): $lastUpdatedEST"
+$progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
+Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$progressStr"
 $waitedSeconds = 0
 while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   if ($recoveryEvent.LastActivityStatus -in @('FAILURE', 'CANCELED')) {
-    Write-Error "Recovery event status: $($recoveryEvent.LastActivityStatus)"
+    Write-Error "${logPrefix}Recovery event status: $($recoveryEvent.LastActivityStatus)"
     exit
   }
   if ($waitedSeconds -ge ($timeoutMinutes * 60)) {
-    Write-Error "Timed out after $timeoutMinutes minutes waiting for download to complete."
+    Write-Error "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
     exit
   }
-  Write-Host "Waiting 30 seconds before checking event again..."
-  Start-Sleep -Seconds 30
-  $waitedSeconds += 30
+  Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$progressStr - waiting 60s..." -ForegroundColor DarkGray
+  Start-Sleep -Seconds 60
+  $waitedSeconds += 60
   $body = @{
     query = $queryGetEvent
     variables = $varGetEvent
   } | ConvertTo-Json -Depth 100
   $events = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.activitySeriesConnection.edges.node
   $recoveryEvent = $events | Where-Object { $_.id -eq $eventID}
-  Write-Host "Current status: $($recoveryEvent.LastActivityStatus)"
+  $progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
 }
 
 Write-Host ""
-Write-Host "Download preparation complete. Event messages:" -ForegroundColor Green
+Write-Host "${logPrefix}Download preparation complete. Event messages:" -ForegroundColor Green
 $recoveryEvent.ActivityConnection.nodes.message | ForEach-Object {
-  Write-Host "  $_"
+  Write-Host "${logPrefix}  $_"
 }
 
 $downloadList = @()
@@ -415,65 +429,69 @@ foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
 }
 
 if ($downloadList.Count -eq 0) {
-  Write-Error "No download links found in the recovery event messages."
+  Write-Error "${logPrefix}No download links found in the recovery event messages."
   exit
 }
 
 Write-Host ""
-Write-Host "Found $($downloadList.Count) file(s) to download:" -ForegroundColor Cyan
+Write-Host "${logPrefix}Found $($downloadList.Count) file(s) to download:" -ForegroundColor Cyan
 foreach ($dl in $downloadList) {
-  Write-Host "  $dl"
+  Write-Host "${logPrefix}  $dl"
 }
 
 [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
 
 $clusterIP = ([System.Uri]$downloadList[0]).Host
 Write-Host ""
-Write-Host "Creating CDM session on cluster: $clusterIP"
+Write-Host "${logPrefix}Creating CDM session on cluster: $clusterIP"
 try {
   $cdmSession = Invoke-RestMethod -Method POST -ContentType 'application/json' -SkipCertificateCheck `
     -Uri "https://$clusterIP/api/v1/service_account/session" `
     -Body (@{ serviceAccountId = $serviceAccountFile.client_id; secret = $serviceAccountFile.client_secret } | ConvertTo-Json) `
     -ErrorAction Stop
 } catch {
-  Write-Error "CDM authentication failed for cluster $clusterIP : $($_.Exception.Message)"
+  Write-Error "${logPrefix}CDM authentication failed for cluster $clusterIP : $($_.Exception.Message)"
   exit
 }
-Write-Host "Connected to CDM cluster: $clusterIP" -ForegroundColor Green
+Write-Host "${logPrefix}Connected to CDM cluster: $clusterIP" -ForegroundColor Green
 
 $downloadCount = 0
 $failCount = 0
 Write-Host ""
 for ($i = 0; $i -lt $downloadList.Count; $i++) {
   $f = $downloadList[$i]
-  Write-Host "[$($i + 1)/$($downloadList.Count)] Downloading: $f"
+  Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Downloading: $f"
   try {
-    & $aria2cPath --check-certificate=false --file-allocation=none --header="Authorization: Bearer $($cdmSession.token)" $f -d $downloadPath
+    $aria2Output = & $aria2cPath --check-certificate=false --file-allocation=none --summary-interval=60 --header="Authorization: Bearer $($cdmSession.token)" $f -d $downloadPath 2>&1
+    $aria2Output | ForEach-Object { Write-Host "${logPrefix}  $_" }
     if ($LASTEXITCODE -ne 0) {
-      Write-Error "aria2c exited with code $LASTEXITCODE for: $f"
+      Write-Error "${logPrefix}aria2c exited with code $LASTEXITCODE for: $f"
       $failCount++
     } else {
       $downloadCount++
     }
   } catch {
-    Write-Error "aria2c failed for: $f - $($_.Exception.Message)"
+    Write-Error "${logPrefix}aria2c failed for: $f - $($_.Exception.Message)"
     $failCount++
   }
 }
 
 Write-Host ""
+$downloadEndTime = Get-Date
+$downloadElapsed = $downloadEndTime - $downloadStartTime
 if ($failCount -eq 0) {
-  Write-Host "All $downloadCount file(s) downloaded to: $downloadPath" -ForegroundColor Green
+  Write-Host "${logPrefix}All $downloadCount file(s) downloaded to: $downloadPath" -ForegroundColor Green
 } else {
-  Write-Host "$downloadCount file(s) downloaded, $failCount failed. Output directory: $downloadPath" -ForegroundColor Yellow
+  Write-Host "${logPrefix}$downloadCount file(s) downloaded, $failCount failed. Output directory: $downloadPath" -ForegroundColor Yellow
 }
+Write-Host "${logPrefix}Download completed: $($downloadEndTime.ToString('M/d/yy h:mm:ss tt')) (elapsed: $([math]::Round($downloadElapsed.TotalMinutes, 1)) min)" -ForegroundColor Cyan
 
 # Clean up CDM session
 try {
   Invoke-RestMethod -Method DELETE -SkipCertificateCheck `
     -Uri "https://$clusterIP/api/v1/session/$([Uri]::EscapeDataString($cdmSession.sessionId))" `
     -Headers @{ 'Authorization' = "Bearer $($cdmSession.token)"; 'Content-Type' = 'application/json' } | Out-Null
-  Write-Host "CDM session deleted." -ForegroundColor DarkGray
+  Write-Host "${logPrefix}CDM session deleted." -ForegroundColor DarkGray
 } catch {
-  Write-Warning "Failed to delete CDM session: $($_.Exception.Message)"
+  Write-Warning "${logPrefix}Failed to delete CDM session: $($_.Exception.Message)"
 }
