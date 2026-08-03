@@ -4,9 +4,10 @@ This script outputs all VMware VMDK info for VMs with at least one backup to a C
 
 .DESCRIPTION
 This script outputs all VMware VMDK info for VMs with at least one backup to a CSV.
-Includes user-editable columns: Convert, CreateOnly, BootDisk, DriveLetter,
-tgtVMName, DiskSuffix, and per-VM Azure settings. On re-run, user-edited values
-are merged forward from the previous CSV.
+Fetches both primary and replica (replicated) VM objects so the user can choose
+which cluster to recover from. Includes user-editable columns: Convert, CreateOnly,
+BootDisk, DriveLetter, tgtVMName, DiskSuffix, and per-VM Azure settings. On re-run,
+user-edited values are merged forward from the previous CSV.
 
 .NOTES
 Written by Steven Tong for community usage
@@ -22,6 +23,11 @@ File path to the RSC Service Account JSON file.
 .PARAMETER csvOutputPrefix
 Prefix for the output CSV file. A timestamp is appended automatically.
 
+.PARAMETER RecoveryCluster
+Filter the CSV output to a specific Rubrik cluster name. Both primary and
+replica objects are fetched from RSC, but only rows matching this cluster
+name are written to the CSV. If omitted, all clusters are included.
+
 .PARAMETER SkipMerge
 Skip merging user-edited columns from a previous CSV. By default, the script
 looks for the latest existing CSV matching the prefix and carries forward
@@ -30,7 +36,11 @@ per-VM Azure settings.
 
 .EXAMPLE
 ./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json'
-Runs the script and outputs the results to a CSV, merging from previous CSV if found
+Runs the script and outputs all primary + replica VMs to a CSV
+
+.EXAMPLE
+./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json' -RecoveryCluster 'cluster-dr-01'
+Outputs only VMs with snapshots on the specified cluster (primary or replica)
 
 .EXAMPLE
 ./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json' -SkipMerge
@@ -46,6 +56,9 @@ param (
   # Prefix for the output CSV file
   [Parameter(Mandatory=$false)]
   [string]$csvOutputPrefix = './rubrik_vm_list',
+  # Filter CSV output to a specific Rubrik cluster name
+  [Parameter(Mandatory=$false)]
+  [string]$RecoveryCluster = '',
   # Skip merging user-edited columns from a previous CSV
   [switch]$SkipMerge
 )
@@ -57,6 +70,7 @@ if ([string]::IsNullOrEmpty($RscServiceAccountJson)) {
   Write-Host "Usage: ./Get-RubrikVMDKList.ps1" -ForegroundColor Cyan
   Write-Host "  -RscServiceAccountJson <path to RSC service account JSON>"
   Write-Host "  [-csvOutputPrefix <output file prefix>] (default: ./rubrik_vm_list)"
+  Write-Host "  [-RecoveryCluster <cluster name>] (filter output to a specific cluster)"
   Write-Host "  [-SkipMerge] (skip merging from previous CSV)"
   Write-Host ""
   exit
@@ -116,37 +130,16 @@ vSphereVmNewConnection(
 }
 }'
 
-$varGetVMs = @{
-  "first" = 1000
-  "filter" = @(
-    @{
-      "field" = "IS_RELIC"
-      "texts" = @(
-        "false"
-      )
-    },
-    @{
-      "field" = "IS_REPLICATED"
-      "texts" = @(
-        "false"
-      )
-    },
-    @{
-      "field" = "IS_ACTIVE"
-      "texts" = @(
-        "true"
-      )
-    },
-    @{
-      "field" = "IS_ACTIVE_AMONG_DUPLICATED_OBJECTS"
-      "texts" = @(
-        "false"
-      )
-    }
-  )
-  "sortBy" = "NAME"
-  "sortOrder" = "ASC"
-}
+$baseFilters = @(
+  @{ "field" = "IS_RELIC"; "texts" = @("false") },
+  @{ "field" = "IS_ACTIVE"; "texts" = @("true") },
+  @{ "field" = "IS_ACTIVE_AMONG_DUPLICATED_OBJECTS"; "texts" = @("false") }
+)
+
+$filterSets = @(
+  @{ Label = 'Primary'; IsReplicated = 'false' },
+  @{ Label = 'Replica'; IsReplicated = 'true' }
+)
 
 ### RSC GQL Queries - END ###
 
@@ -209,30 +202,43 @@ Write-Host "Connected to RSC: $rubrikURL" -ForegroundColor Green
 
 ###### RUBRIK AUTHENTICATION - END ######
 
-Write-Host "Getting a list of all VMs"
+Write-Host "Getting a list of all VMs (primary + replica)..."
 $vmList = @()
-$afterCursor = ''
-do {
-  if ($afterCursor -ne '') {
-    $varGetVMs.after = $afterCursor
+$primaryCount = 0
+$replicaCount = 0
+
+foreach ($fs in $filterSets) {
+  $varGetVMs = @{
+    "first" = 1000
+    "filter" = $baseFilters + @(
+      @{ "field" = "IS_REPLICATED"; "texts" = @($fs.IsReplicated) }
+    )
+    "sortBy" = "NAME"
+    "sortOrder" = "ASC"
   }
-  $body = @{
-    query = $queryGetVMs
-    variables = $varGetVMs
-  } | ConvertTo-Json -Depth 100
-  $vmInventory = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.vSphereVmNewConnection
-  $vmList += $vmInventory.edges.node
-  $afterCursor = $vmInventory.pageInfo.endCursor
-} while ($vmInventory.pageInfo.hasNextPage)
+  $afterCursor = ''
+  do {
+    if ($afterCursor -ne '') {
+      $varGetVMs.after = $afterCursor
+    }
+    $body = @{
+      query = $queryGetVMs
+      variables = $varGetVMs
+    } | ConvertTo-Json -Depth 100
+    $vmInventory = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.vSphereVmNewConnection
+    foreach ($node in $vmInventory.edges.node) {
+      $node | Add-Member -NotePropertyName '_SourceType' -NotePropertyValue $fs.Label
+      $vmList += $node
+    }
+    $afterCursor = $vmInventory.pageInfo.endCursor
+  } while ($vmInventory.pageInfo.hasNextPage)
+}
 
 # Filter VMs by those that have at least one backup
 $vmList = $vmList | Where-Object { $_.SnapshotConnection.edges.node -ne $null }
-$vmCount = $vmList.count
-Write-Host "Found $vmCount VMs that have at least one backup" -foregroundcolor green
-
-# Use this if you want to filter by only objects with a SLA assigned to it
-# $vmList = $vmList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and
-#   $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
+$primaryCount = @($vmList | Where-Object { $_._SourceType -eq 'Primary' }).Count
+$replicaCount = @($vmList | Where-Object { $_._SourceType -eq 'Replica' }).Count
+Write-Host "Found $primaryCount primary + $replicaCount replica VM(s) ($($vmList.Count) total) with at least one backup" -ForegroundColor Green
 
 # Check for a previous CSV to merge in Convert and DriveLetter values
 $previousData = @{}
@@ -247,7 +253,7 @@ if (-not $SkipMerge) {
     Write-Host "Previous CSV found: $($previousCsvFiles[0].Name) - merging user-edited columns" -ForegroundColor Yellow
     $previousCsv = Import-CSV -Path $previousCsvPath
     foreach ($row in $previousCsv) {
-      $key = "$($row.vmdkFile)|$($row.Cluster)"
+      $key = "$($row.vmdkFile)|$($row.Cluster)|$($row.SourceType)"
       $previousData[$key] = @{
         Convert = $row.Convert
         CreateOnly = $row.CreateOnly
@@ -271,7 +277,7 @@ if (-not $SkipMerge) {
 $vmOutput = @()
 foreach ($vm in $vmList) {
   foreach ($vmDisk in $vm.VsphereVirtualDisks.edges.node) {
-    $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)"
+    $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)|$($vm._SourceType)"
     $mergedConvert = ""
     $mergedCreateOnly = ""
     $mergedDriveLetter = ""
@@ -312,6 +318,7 @@ foreach ($vm in $vmList) {
       "Convert" = $mergedConvert
       "CreateOnly" = $mergedCreateOnly
       "Name" = $vm.Name
+      "SourceType" = $vm._SourceType
       "Excluded" = if ($vmDisk.excludeFromSnapshots) { "Y" } else { "" }
       "BootDisk" = $mergedBootDisk
       "DriveLetter" = $mergedDriveLetter
@@ -341,6 +348,17 @@ foreach ($vm in $vmList) {
   }
 }
 
+if (-not [string]::IsNullOrEmpty($RecoveryCluster)) {
+  $beforeCount = $vmOutput.Count
+  $vmOutput = @($vmOutput | Where-Object { $_.Cluster -eq $RecoveryCluster })
+  Write-Host "Filtered to cluster '$RecoveryCluster': $($vmOutput.Count) of $beforeCount row(s)" -ForegroundColor Yellow
+  if ($vmOutput.Count -eq 0) {
+    $allClusters = @($vmList | ForEach-Object { $_.Cluster.Name } | Sort-Object -Unique)
+    Write-Host "No VMs found on cluster '$RecoveryCluster'. Available clusters:" -ForegroundColor Red
+    foreach ($c in $allClusters) { Write-Host "  $c" }
+  }
+}
+
 $csvOutput = "$($csvOutputPrefix)-$($date.ToString("yyyy-MM-dd_HHmm")).csv"
 $vmOutput | Export-CSV -Path $csvOutput -NoTypeInformation
-Write-Host "VMDK info output to: $csvOutput" -foregroundcolor green
+Write-Host "VMDK info output to: $csvOutput" -ForegroundColor Green

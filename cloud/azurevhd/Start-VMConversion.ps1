@@ -699,20 +699,26 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       Write-Host "[$($vm.VMName)] Stage 1: Downloading $($vm.VmdkFiles.Count) VMDK(s)..." -ForegroundColor Green
       Update-State @{ Stage = 'Download'; DownloadStatus = 'InProgress' }
 
-      & "$scriptDir\Download-RubrikVMDK.ps1" `
-        -RscServiceAccountJson $RscServiceAccountJson `
-        -vmID $vm.VMID `
-        -snapshotID $vm.SnapshotID `
-        -vmdkFileName $vm.VmdkFiles `
-        -downloadPath $downloadDir `
-        -aria2cPath $aria2cPath `
-        -timeoutMinutes $timeoutMinutes `
-        -vmName $vm.VMName
+      try {
+        & "$scriptDir\Download-RubrikVMDK.ps1" `
+          -RscServiceAccountJson $RscServiceAccountJson `
+          -vmID $vm.VMID `
+          -snapshotID $vm.SnapshotID `
+          -vmdkFileName $vm.VmdkFiles `
+          -downloadPath $downloadDir `
+          -aria2cPath $aria2cPath `
+          -timeoutMinutes $timeoutMinutes `
+          -vmName $vm.VMName `
+          -ErrorAction Stop
+      } catch {
+        $logFile = Join-Path $vmDir "conversion.log"
+        throw "Download failed: $($_.Exception.Message) -- see log: $logFile"
+      }
 
-      # Verify downloaded files exist (sub-scripts use exit, not exit 1)
       $downloadedFiles = @(Get-ChildItem -Path $downloadDir -Filter '*-flat.vmdk' -ErrorAction SilentlyContinue)
       if ($downloadedFiles.Count -eq 0) {
-        throw "Download failed: no VMDK data files found in $downloadDir"
+        $logFile = Join-Path $vmDir "conversion.log"
+        throw "Download failed: no VMDK data files found in $downloadDir -- see log: $logFile"
       }
       Write-Host "[$($vm.VMName)] Downloaded $($downloadedFiles.Count) VMDK data file(s)" -ForegroundColor Green
 

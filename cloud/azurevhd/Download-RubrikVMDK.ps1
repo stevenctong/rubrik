@@ -18,7 +18,7 @@ Uses 'aria2c' to download the files from the Rubrik cluster.
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
-Updated: 8/2/26
+Updated: 8/3/26
 
 Requires PowerShell 7+.
 
@@ -104,9 +104,7 @@ param (
 $logPrefix = if ($vmName -ne '') { "[$vmName] " } else { '' }
 
 if (-not (Test-Path $aria2cPath)) {
-  Write-Error "${logPrefix}aria2c not found at: $aria2cPath"
-  Write-Host "${logPrefix}Download aria2c from https://aria2.github.io/ and update the -aria2cPath parameter." -ForegroundColor Yellow
-  exit
+  throw "${logPrefix}aria2c not found at: $aria2cPath. Download from https://aria2.github.io/"
 }
 
 $csvMode = -not [string]::IsNullOrEmpty($vmCsvFile)
@@ -151,8 +149,7 @@ if ($csvMode) {
     $_.Convert -match '^[xyXY]$'
   })
   if ($convertRows.Count -eq 0) {
-    Write-Error "${logPrefix}No rows found with Convert set to 'x' or 'y' in: $vmCsvFile"
-    exit
+    throw "${logPrefix}No rows found with Convert set to 'x' or 'y' in: $vmCsvFile"
   }
   $vmID = $convertRows[0].ID
   $snapshotID = $convertRows[0].LatestBackupID
@@ -344,14 +341,12 @@ $body = @{
 $mutationResult = Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers
 
 if ($mutationResult.errors) {
-  Write-Error "${logPrefix}Mutation failed: $($mutationResult.errors[0].message)"
-  exit
+  throw "${logPrefix}Download mutation failed: $($mutationResult.errors[0].message)"
 }
 
 $mutationData = $mutationResult.data.downloadVsphereVirtualMachineFiles
 if ($mutationData.error) {
-  Write-Error "${logPrefix}Download request failed: $($mutationData.error.message)"
-  exit
+  throw "${logPrefix}Download request failed: $($mutationData.error.message)"
 }
 Write-Host "${logPrefix}Download request queued (status: $($mutationData.status))" -ForegroundColor Green
 
@@ -382,8 +377,7 @@ foreach ($e in $events) {
 }
 
 if ($null -eq $recoveryEvent) {
-  Write-Error "${logPrefix}No recovery event found for: $($vmdkFileNames -join ', ')"
-  exit
+  throw "${logPrefix}No recovery event found for: $($vmdkFileNames -join ', ')"
 }
 $eventID = $recoveryEvent.id
 $timeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
@@ -395,12 +389,10 @@ Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$pro
 $waitedSeconds = 0
 while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   if ($recoveryEvent.LastActivityStatus -in @('FAILURE', 'CANCELED')) {
-    Write-Error "${logPrefix}Recovery event status: $($recoveryEvent.LastActivityStatus)"
-    exit
+    throw "${logPrefix}Recovery event status: $($recoveryEvent.LastActivityStatus)"
   }
   if ($waitedSeconds -ge ($timeoutMinutes * 60)) {
-    Write-Error "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
-    exit
+    throw "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
   }
   Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$progressStr - waiting 60s..." -ForegroundColor DarkGray
   Start-Sleep -Seconds 60
@@ -429,8 +421,7 @@ foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
 }
 
 if ($downloadList.Count -eq 0) {
-  Write-Error "${logPrefix}No download links found in the recovery event messages."
-  exit
+  throw "${logPrefix}No download links found in the recovery event messages."
 }
 
 Write-Host ""
@@ -450,8 +441,7 @@ try {
     -Body (@{ serviceAccountId = $serviceAccountFile.client_id; secret = $serviceAccountFile.client_secret } | ConvertTo-Json) `
     -ErrorAction Stop
 } catch {
-  Write-Error "${logPrefix}CDM authentication failed for cluster $clusterIP : $($_.Exception.Message)"
-  exit
+  throw "${logPrefix}CDM authentication failed for cluster $clusterIP : $($_.Exception.Message)"
 }
 Write-Host "${logPrefix}Connected to CDM cluster: $clusterIP" -ForegroundColor Green
 
@@ -494,4 +484,8 @@ try {
   Write-Host "${logPrefix}CDM session deleted." -ForegroundColor DarkGray
 } catch {
   Write-Warning "${logPrefix}Failed to delete CDM session: $($_.Exception.Message)"
+}
+
+if ($failCount -gt 0) {
+  throw "${logPrefix}aria2c download failed for $failCount of $($downloadList.Count) file(s). Check log for aria2c output."
 }
