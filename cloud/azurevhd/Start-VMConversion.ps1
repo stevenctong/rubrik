@@ -416,21 +416,29 @@ Write-Host "Grouped into $($vmGroups.Count) VM(s):" -ForegroundColor Cyan
 foreach ($vm in $vmGroups) {
   $convertGiB = ($vm.VmdkSizesGiB | Measure-Object -Sum).Sum
   $coCount = $vm.CreateOnlyDisks.Count
-  $bootLabel = if ($vm.BootDiskVMDK -ne '') { " [boot: $(Split-Path $vm.BootDiskVMDK -Leaf)]" } else { " [no boot disk marked]" }
+  $coGiB = ($vm.CreateOnlyDisks | ForEach-Object { $_.SizeGiB } | Measure-Object -Sum).Sum
   $tgtLabel = if ($vm.TgtVMName -ne $vm.VMName) { " -> $($vm.TgtVMName)" } else { "" }
-  $coLabel = if ($coCount -gt 0) { ", $coCount create-only" } else { "" }
-  Write-Host "  $($vm.VMName)$tgtLabel ($($vm.VmdkFiles.Count) VMDK(s), $convertGiB GiB$coLabel)$bootLabel"
-  for ($i = 0; $i -lt $vm.VmdkFiles.Count; $i++) {
-    $leaf = Split-Path $vm.VmdkFiles[$i] -Leaf
-    $vmdkBase = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
-    $suffix = $vm.VhdBaseToSuffix[$vmdkBase]
-    $suffixLabel = if ($suffix -ne $vmdkBase) { " -> $suffix" } else { "" }
-    $size = $vm.VmdkSizesGiB[$i]
-    $bootTag = if ($vm.VmdkFiles[$i] -eq $vm.BootDiskVMDK) { "  (boot)" } else { "" }
-    Write-Host "    $leaf  $size GiB$bootTag$suffixLabel" -ForegroundColor Gray
+  $summaryParts = @()
+  if ($vm.VmdkFiles.Count -gt 0) { $summaryParts += "$($vm.VmdkFiles.Count) convert: $convertGiB GiB" }
+  if ($coCount -gt 0) { $summaryParts += "$coCount create-only: $coGiB GiB" }
+  Write-Host "  $($vm.VMName)$tgtLabel ($($summaryParts -join ', '))"
+  if ($vm.VmdkFiles.Count -gt 0) {
+    Write-Host "    Convert:" -ForegroundColor Gray
+    for ($i = 0; $i -lt $vm.VmdkFiles.Count; $i++) {
+      $leaf = Split-Path $vm.VmdkFiles[$i] -Leaf
+      $vmdkBase = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+      $suffix = $vm.VhdBaseToSuffix[$vmdkBase]
+      $suffixLabel = if ($suffix -ne $vmdkBase) { " -> $suffix" } else { "" }
+      $size = $vm.VmdkSizesGiB[$i]
+      $bootTag = if ($vm.VmdkFiles[$i] -eq $vm.BootDiskVMDK) { "  (boot)" } else { "" }
+      Write-Host "      $leaf  $size GiB$bootTag$suffixLabel" -ForegroundColor Gray
+    }
   }
-  foreach ($coDisk in $vm.CreateOnlyDisks) {
-    Write-Host "    $($coDisk.DiskSuffix)  $($coDisk.SizeGiB) GiB  (create-only)" -ForegroundColor DarkCyan
+  if ($coCount -gt 0) {
+    Write-Host "    Create-only:" -ForegroundColor DarkCyan
+    foreach ($coDisk in $vm.CreateOnlyDisks) {
+      Write-Host "      $($coDisk.DiskSuffix)  $($coDisk.SizeGiB) GiB" -ForegroundColor DarkCyan
+    }
   }
 }
 
