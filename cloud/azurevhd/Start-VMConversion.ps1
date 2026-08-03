@@ -955,16 +955,41 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
 
       # Create VM (single API call with all disks)
       try {
-        $null = New-AzVM -ResourceGroupName $vm.ResourceGroup -Location $location -VM $vmConfig -ErrorAction Stop
+        Write-Host "[$($vm.VMName)] Submitting VM creation request for '$azureVMName'..." -ForegroundColor Green
+        $vmJob = New-AzVM -ResourceGroupName $vm.ResourceGroup -Location $location -VM $vmConfig -AsJob -ErrorAction Stop
+        $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($vmJob.State -eq 'Running') {
+          Start-Sleep -Seconds 30
+          Write-Host "[$($vm.VMName)] VM provisioning... ($([int]$elapsed.Elapsed.TotalSeconds)s elapsed)" -ForegroundColor Gray
+        }
+        $elapsed.Stop()
+        if ($vmJob.State -ne 'Completed') {
+          $jobError = $vmJob | Receive-Job -ErrorAction SilentlyContinue 2>&1
+          throw "New-AzVM job finished with state '$($vmJob.State)': $jobError"
+        }
+        $null = $vmJob | Receive-Job
+        Write-Host "[$($vm.VMName)] VM provisioning completed ($([int]$elapsed.Elapsed.TotalSeconds)s)" -ForegroundColor Green
       } catch {
         throw "New-AzVM failed: $($_.Exception.Message)"
       }
 
-      # Verify the Azure VM was created
-      $createdVM = Get-AzVM -ResourceGroupName $vm.ResourceGroup -Name $azureVMName -ErrorAction SilentlyContinue
-      if ($null -eq $createdVM) {
-        throw "VM creation failed: Azure VM '$azureVMName' not found after New-AzVM"
+      # Poll VM power state until running (or timeout)
+      Write-Host "[$($vm.VMName)] Checking VM power state..." -ForegroundColor Green
+      $powerElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+      $powerTimeout = 300
+      $powerState = ''
+      while ($powerElapsed.Elapsed.TotalSeconds -lt $powerTimeout) {
+        $vmStatus = Get-AzVM -ResourceGroupName $vm.ResourceGroup -Name $azureVMName -Status -ErrorAction SilentlyContinue
+        $powerState = ($vmStatus.Statuses | Where-Object { $_.Code -like 'PowerState/*' }).DisplayStatus
+        Write-Host "[$($vm.VMName)] VM power state: $powerState ($([int]$powerElapsed.Elapsed.TotalSeconds)s)" -ForegroundColor Gray
+        if ($powerState -eq 'VM running') { break }
+        Start-Sleep -Seconds 15
       }
+      $powerElapsed.Stop()
+      if ($powerState -ne 'VM running') {
+        Write-Host "[$($vm.VMName)] WARNING: VM power state is '$powerState' after $([int]$powerElapsed.Elapsed.TotalSeconds)s (expected 'VM running')" -ForegroundColor Yellow
+      }
+
       Write-Host "[$($vm.VMName)] Azure VM '$azureVMName' created with $($dataDiskIds.Count + 1) disk(s)" -ForegroundColor Green
 
       Update-State @{ UploadStatus = 'Complete' }
