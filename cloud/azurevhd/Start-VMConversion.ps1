@@ -1013,7 +1013,7 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
               Write-Host "[$($vm.VMName)] VM is running in Azure ($([int]$elapsed.Elapsed.TotalSeconds)s), giving job 5 min to finish..." -ForegroundColor Green
             } elseif ($vmRunningTimer.Elapsed.TotalMinutes -ge 5) {
               Write-Host "[$($vm.VMName)] Job still running after 5 min, stopping ($([int]$elapsed.Elapsed.TotalSeconds)s)" -ForegroundColor Yellow
-              $vmJob.Stop()
+              Stop-Job $vmJob -ErrorAction SilentlyContinue
               break
             } else {
               $remainSec = [int](300 - $vmRunningTimer.Elapsed.TotalSeconds)
@@ -1026,7 +1026,7 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
           }
         }
         $elapsed.Stop()
-        if ($vmJob.State -eq 'Running') { $vmJob.Stop() }
+        if ($vmJob.State -eq 'Running') { Stop-Job $vmJob -ErrorAction SilentlyContinue }
         if ($vmJob.State -notin @('Completed', 'Stopped')) {
           $jobError = $vmJob | Receive-Job -ErrorAction SilentlyContinue 2>&1
           throw "New-AzVM job finished with state '$($vmJob.State)': $jobError"
