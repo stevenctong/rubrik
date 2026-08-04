@@ -651,60 +651,90 @@ for ($i = 0; $i -lt $downloadList.Count; $i++) {
 
   $fileElapsed = [System.Diagnostics.Stopwatch]::StartNew()
   $targetFile = Join-Path $downloadPath $urlFileName
-  $stdoutLog = [System.IO.Path]::GetTempFileName()
-  $stderrLog = [System.IO.Path]::GetTempFileName()
-  try {
-    $aria2Args = "--check-certificate=false --file-allocation=none --continue=true --summary-interval=0 `"--header=Authorization: Bearer $($cdmSession.token)`" `"$f`" -d `"$downloadPath`""
-    $proc = Start-Process -FilePath $aria2cPath -ArgumentList $aria2Args `
-      -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog `
-      -NoNewWindow -PassThru
+  $stallThreshold = 3
+  $maxRetries = 3
+  $downloadSuccess = $false
 
-    while (-not $proc.HasExited) {
-      Start-Sleep -Seconds $pollIntervalSec
-      $elapsedMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
-      if (Test-Path $targetFile) {
-        $currentBytes = (Get-Item $targetFile).Length
-        $currentGiB = [math]::Round($currentBytes / 1073741824, 1)
-        if ($expectedBytes -gt 0) {
-          $pct = [math]::Round(($currentBytes / $expectedBytes) * 100, 0)
-          Write-Host "${logPrefix}$currentGiB / $expectedGiB GiB ($pct%) [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+  for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+    $stdoutLog = [System.IO.Path]::GetTempFileName()
+    $stderrLog = [System.IO.Path]::GetTempFileName()
+    $stalled = $false
+    try {
+      if ($attempt -gt 1) {
+        Write-Host "${logPrefix}  Retry $attempt/$maxRetries for $urlFileName" -ForegroundColor Yellow
+      }
+      $aria2Args = "--check-certificate=false --file-allocation=none --continue=true --summary-interval=0 `"--header=Authorization: Bearer $($cdmSession.token)`" `"$f`" -d `"$downloadPath`""
+      $proc = Start-Process -FilePath $aria2cPath -ArgumentList $aria2Args `
+        -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog `
+        -NoNewWindow -PassThru
+
+      $lastBytes = -1
+      $stallCount = 0
+      while (-not $proc.HasExited) {
+        Start-Sleep -Seconds $pollIntervalSec
+        $elapsedMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
+        if (Test-Path $targetFile) {
+          $currentBytes = (Get-Item $targetFile).Length
+          $currentGiB = [math]::Round($currentBytes / 1073741824, 1)
+          if ($currentBytes -eq $lastBytes -and $currentBytes -gt 0) {
+            $stallCount++
+            if ($stallCount -ge $stallThreshold) {
+              Write-Host "${logPrefix}  Stalled at $currentGiB GiB for $($stallCount * $pollIntervalSec)s -- restarting download" -ForegroundColor Yellow
+              $stalled = $true
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              $proc.WaitForExit()
+              Remove-Item -Path $targetFile -Force -ErrorAction SilentlyContinue
+              break
+            }
+          } else {
+            $stallCount = 0
+          }
+          $lastBytes = $currentBytes
+          if ($expectedBytes -gt 0) {
+            $pct = [math]::Round(($currentBytes / $expectedBytes) * 100, 0)
+            Write-Host "${logPrefix}$currentGiB / $expectedGiB GiB ($pct%) [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+          } else {
+            Write-Host "${logPrefix}$currentGiB GiB [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+          }
         } else {
-          Write-Host "${logPrefix}$currentGiB GiB [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+          Write-Host "${logPrefix}  $urlFileName : waiting for file... - ${elapsedMin} min" -ForegroundColor DarkGray
         }
+      }
+
+      if ($stalled) { continue }
+
+      $proc.WaitForExit()
+      $exitCode = $proc.ExitCode
+      $fileMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
+      $totalMin = [math]::Round($transferElapsed.Elapsed.TotalMinutes, 1)
+
+      $aria2Stdout = Get-Content -Path $stdoutLog -Raw -ErrorAction SilentlyContinue
+      if (-not [string]::IsNullOrWhiteSpace($aria2Stdout)) {
+        $aria2Stdout -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" }
+      }
+
+      if ($exitCode -ne 0) {
+        $aria2Stderr = Get-Content -Path $stderrLog -Raw -ErrorAction SilentlyContinue
+        if (-not [string]::IsNullOrWhiteSpace($aria2Stderr)) {
+          $aria2Stderr -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" -ForegroundColor Red }
+        }
+        Write-Error "${logPrefix}aria2c exited with code $exitCode for: $urlFileName"
       } else {
-        Write-Host "${logPrefix}  $urlFileName : waiting for file... - ${elapsedMin} min" -ForegroundColor DarkGray
+        $downloadCount++
+        $downloadSuccess = $true
+        $finalGiB = if (Test-Path $targetFile) { [math]::Round((Get-Item $targetFile).Length / 1073741824, 1) } else { '?' }
+        Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Complete: $urlFileName ($finalGiB GiB, $fileMin min, transfer total: $totalMin min)" -ForegroundColor Green
       }
+      break
+    } catch {
+      Write-Error "${logPrefix}aria2c failed for: $urlFileName - $($_.Exception.Message)"
+    } finally {
+      Remove-Item -Path $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
     }
+  }
 
-    $proc.WaitForExit()
-    $exitCode = $proc.ExitCode
-    $fileElapsed.Stop()
-    $fileMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
-    $totalMin = [math]::Round($transferElapsed.Elapsed.TotalMinutes, 1)
-
-    $aria2Stdout = Get-Content -Path $stdoutLog -Raw -ErrorAction SilentlyContinue
-    if (-not [string]::IsNullOrWhiteSpace($aria2Stdout)) {
-      $aria2Stdout -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" }
-    }
-
-    if ($exitCode -ne 0) {
-      $aria2Stderr = Get-Content -Path $stderrLog -Raw -ErrorAction SilentlyContinue
-      if (-not [string]::IsNullOrWhiteSpace($aria2Stderr)) {
-        $aria2Stderr -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" -ForegroundColor Red }
-      }
-      Write-Error "${logPrefix}aria2c exited with code $exitCode for: $urlFileName"
-      $failCount++
-    } else {
-      $downloadCount++
-      $finalGiB = if (Test-Path $targetFile) { [math]::Round((Get-Item $targetFile).Length / 1073741824, 1) } else { '?' }
-      Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Complete: $urlFileName ($finalGiB GiB, $fileMin min, transfer total: $totalMin min)" -ForegroundColor Green
-    }
-  } catch {
-    $fileElapsed.Stop()
-    Write-Error "${logPrefix}aria2c failed for: $urlFileName - $($_.Exception.Message)"
+  if (-not $downloadSuccess) {
     $failCount++
-  } finally {
-    Remove-Item -Path $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
   }
 }
 
