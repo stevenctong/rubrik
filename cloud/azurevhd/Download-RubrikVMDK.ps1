@@ -240,6 +240,54 @@ fragment EventSeriesFragment on ActivitySeries {
   __typename
 }'
 
+$queryGetEventDetail = 'query EventSeriesDetailsQuery($activitySeriesId: UUID!, $clusterUuid: UUID) {
+  activitySeries(input: { activitySeriesId: $activitySeriesId, clusterUuid: $clusterUuid }) {
+    activityConnection {
+      nodes {
+        message
+        status
+        time
+        __typename
+      }
+      __typename
+    }
+    ...EventSeriesFragment
+    cluster {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+}
+fragment EventSeriesFragment on ActivitySeries {
+  id
+  fid
+  activitySeriesId
+  lastUpdated
+  lastActivityType
+  lastActivityStatus
+  objectId
+  objectName
+  objectType
+  severity
+  progress
+  isCancelable
+  isPolarisEventSeries
+  location
+  effectiveThroughput
+  dataTransferred
+  logicalSize
+  organizations {
+    id
+    name
+    __typename
+  }
+  clusterUuid
+  clusterName
+  __typename
+}'
+
 $varGetEvent = @{
   "filters" = @{
     "objectType" = $null
@@ -257,6 +305,64 @@ $varGetEvent = @{
 }
 
 ### RSC GQL Queries - END ###
+
+### Helper Functions - BEGIN ###
+
+function Get-DownloadLinksFromEvent {
+  param(
+    [string]$ActivitySeriesId,
+    [string]$ClusterUuid,
+    [string]$Endpoint,
+    [hashtable]$Headers,
+    [string]$QueryText,
+    [string]$LogPrefix
+  )
+  $body = @{
+    query = $QueryText
+    variables = @{
+      activitySeriesId = $ActivitySeriesId
+      clusterUuid      = $ClusterUuid
+    }
+  } | ConvertTo-Json -Depth 100
+  $detail = (Invoke-RestMethod -Method POST -Uri $Endpoint -Body $body -Headers $Headers).data.activitySeries
+  if ($null -eq $detail) { return $null }
+
+  $links = @()
+  $vmdkMap = @{}
+  foreach ($node in $detail.activityConnection.nodes) {
+    if ($node.message -match 'The Virtual Machine file (.+?), with file type .+ The file can also be downloaded through this link:\s*(.+)') {
+      $vmdkPath = $matches[1]
+      $url = $matches[2]
+      $links += $url
+      $vmdkMap[$vmdkPath] = $url
+    }
+  }
+  return @{
+    Links   = $links
+    VmdkMap = $vmdkMap
+    Detail  = $detail
+  }
+}
+
+function Test-AllVmdksPresent {
+  param(
+    [string[]]$RequestedVmdks,
+    [hashtable]$VmdkMap
+  )
+  foreach ($vf in $RequestedVmdks) {
+    $found = $false
+    foreach ($key in $VmdkMap.Keys) {
+      if ($key -like "*$vf*" -or $vf -like "*$key*") {
+        $found = $true
+        break
+      }
+    }
+    if (-not $found) { return $false }
+  }
+  return $true
+}
+
+### Helper Functions - END ###
 
 ###### RUBRIK AUTHENTICATION - BEGIN ######
 
@@ -333,97 +439,167 @@ Write-Verbose ($varDownloadVMDK | ConvertTo-Json -depth 100)
 $downloadStartTime = Get-Date
 Write-Host ""
 Write-Host "${logPrefix}Download started: $($downloadStartTime.ToString('M/d/yy h:mm:ss tt'))" -ForegroundColor Cyan
-Write-Host "${logPrefix}Triggering preparation of $($vmdkFileNames.Count) VMDK file(s) on Rubrik..."
-$body = @{
-  query = $mutationDownloadVMDK
-  variables = $varDownloadVMDK
-} | ConvertTo-Json -Depth 100
-$mutationResult = Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers
 
-if ($mutationResult.errors) {
-  throw "${logPrefix}Download mutation failed: $($mutationResult.errors[0].message)"
-}
+# -- Phase 1: Check for existing download links (last 24 hours) --
+Write-Host "${logPrefix}Checking for existing download links (last 24 hours)..."
 
-$mutationData = $mutationResult.data.downloadVsphereVirtualMachineFiles
-if ($mutationData.error) {
-  throw "${logPrefix}Download request failed: $($mutationData.error.message)"
-}
-Write-Host "${logPrefix}Download request queued (status: $($mutationData.status))" -ForegroundColor Green
-
-$varGetEvent.filters.lastActivityType = @('RECOVERY')
-$varGetEvent.filters.objectFid = @("$vmID")
-
-Write-Host "${logPrefix}Waiting for 15 seconds then checking events..."
-Start-Sleep -Seconds 15
-Write-Host "${logPrefix}Getting the most recent recovery events for the VM..."
-$body = @{
+$checkBody = @{
   query = $queryGetEvent
-  variables = $varGetEvent
+  variables = @{
+    filters = @{
+      lastActivityType   = @('RECOVERY')
+      lastActivityStatus = @('SUCCESS')
+      objectFid          = @("$vmID")
+      lastUpdatedTimeGt  = (Get-Date).AddHours(-24).ToUniversalTime().ToString('o')
+    }
+    first = 10
+  }
 } | ConvertTo-Json -Depth 100
-$events = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.activitySeriesConnection.edges.node
+$recentEvents = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $checkBody -Headers $headers).data.activitySeriesConnection.edges.node
 
-Write-Host "${logPrefix}Checking events for the file download..."
-$recoveryEvent = $null
-foreach ($e in $events) {
-  $mes = $e.activityConnection.nodes[-1].message
-  if ([string]::IsNullOrEmpty($mes)) { continue }
-  foreach ($vf in $vmdkFileNames) {
-    if ($mes.contains($vf)) {
-      $recoveryEvent = $e
+$reusedLinks = $null
+if ($recentEvents.Count -gt 0) {
+  Write-Host "${logPrefix}Found $($recentEvents.Count) recent SUCCESS recovery event(s), checking for matching VMDKs..."
+  foreach ($evt in $recentEvents) {
+    $result = Get-DownloadLinksFromEvent -ActivitySeriesId $evt.activitySeriesId `
+      -ClusterUuid $evt.clusterUuid -Endpoint $endpoint -Headers $headers `
+      -QueryText $queryGetEventDetail -LogPrefix $logPrefix
+    if ($null -eq $result -or $result.Links.Count -eq 0) { continue }
+
+    if (Test-AllVmdksPresent -RequestedVmdks $vmdkFileNames -VmdkMap $result.VmdkMap) {
+      Write-Host "${logPrefix}Found existing download with all $($vmdkFileNames.Count) VMDK(s)!" -ForegroundColor Green
+      $result.Detail.activityConnection.nodes.message | ForEach-Object {
+        Write-Host "${logPrefix}  $_"
+      }
+      $reusedLinks = $result.Links
       break
+    } else {
+      Write-Host "${logPrefix}  Event $($evt.activitySeriesId): has links but missing some VMDKs -- skipping" -ForegroundColor DarkGray
     }
   }
-  if ($null -ne $recoveryEvent) { break }
+} else {
+  Write-Host "${logPrefix}No recent SUCCESS recovery events found." -ForegroundColor DarkGray
 }
 
-if ($null -eq $recoveryEvent) {
-  throw "${logPrefix}No recovery event found for: $($vmdkFileNames -join ', ')"
-}
-$eventID = $recoveryEvent.id
-$timeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
-$lastUpdatedEST = [System.TimeZoneInfo]::ConvertTimeFromUtc($recoveryEvent.LastUpdated, $timeZone)
-Write-Host "${logPrefix}Recovery event found for: $($recoveryEvent.objectName)"
-Write-Host "${logPrefix}Last updated (EST): $lastUpdatedEST"
-$progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
-$prepElapsed = [System.Diagnostics.Stopwatch]::StartNew()
-Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr"
-$waitedSeconds = 0
-while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
-  if ($recoveryEvent.LastActivityStatus -in @('FAILURE', 'CANCELED')) {
-    throw "${logPrefix}Recovery event status: $($recoveryEvent.LastActivityStatus)"
+if ($null -ne $reusedLinks) {
+  Write-Host "${logPrefix}Reusing existing download links (skipping new download request)" -ForegroundColor Green
+  $downloadList = $reusedLinks
+} else {
+  Write-Host "${logPrefix}No reusable download found, initiating new download..."
+
+  # -- Phase 2: Trigger new download mutation and poll for completion --
+  Write-Host "${logPrefix}Triggering preparation of $($vmdkFileNames.Count) VMDK file(s) on Rubrik..."
+  $body = @{
+    query = $mutationDownloadVMDK
+    variables = $varDownloadVMDK
+  } | ConvertTo-Json -Depth 100
+  $mutationResult = Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers
+
+  if ($mutationResult.errors) {
+    throw "${logPrefix}Download mutation failed: $($mutationResult.errors[0].message)"
   }
-  if ($waitedSeconds -ge ($timeoutMinutes * 60)) {
-    throw "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
+
+  $mutationData = $mutationResult.data.downloadVsphereVirtualMachineFiles
+  if ($mutationData.error) {
+    throw "${logPrefix}Download request failed: $($mutationData.error.message)"
   }
-  $elapsedMin = [math]::Round($prepElapsed.Elapsed.TotalMinutes, 1)
-  Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr - ${elapsedMin} min elapsed, waiting 60s..." -ForegroundColor DarkGray
-  Start-Sleep -Seconds 60
-  $waitedSeconds += 60
+  Write-Host "${logPrefix}Download request queued (status: $($mutationData.status))" -ForegroundColor Green
+
+  $varGetEvent.filters.lastActivityType = @('RECOVERY')
+  $varGetEvent.filters.objectFid = @("$vmID")
+
+  Write-Host "${logPrefix}Waiting for 15 seconds then checking events..."
+  Start-Sleep -Seconds 15
+  Write-Host "${logPrefix}Getting the most recent recovery events for the VM..."
   $body = @{
     query = $queryGetEvent
     variables = $varGetEvent
   } | ConvertTo-Json -Depth 100
   $events = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.activitySeriesConnection.edges.node
-  $recoveryEvent = $events | Where-Object { $_.id -eq $eventID}
+
+  Write-Host "${logPrefix}Checking events for the file download..."
+  $recoveryEvent = $null
+  foreach ($e in $events) {
+    $mes = $e.activityConnection.nodes[-1].message
+    if ([string]::IsNullOrEmpty($mes)) { continue }
+    foreach ($vf in $vmdkFileNames) {
+      if ($mes.contains($vf)) {
+        $recoveryEvent = $e
+        break
+      }
+    }
+    if ($null -ne $recoveryEvent) { break }
+  }
+
+  if ($null -eq $recoveryEvent) {
+    throw "${logPrefix}No recovery event found for: $($vmdkFileNames -join ', ')"
+  }
+  $eventID = $recoveryEvent.id
+  $timeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+  $lastUpdatedEST = [System.TimeZoneInfo]::ConvertTimeFromUtc($recoveryEvent.LastUpdated, $timeZone)
+  Write-Host "${logPrefix}Recovery event found for: $($recoveryEvent.objectName)"
+  Write-Host "${logPrefix}Last updated (EST): $lastUpdatedEST"
   $progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
-}
+  $prepElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+  Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr"
+  $waitedSeconds = 0
+  while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
+    if ($recoveryEvent.LastActivityStatus -in @('FAILURE', 'CANCELED')) {
+      throw "${logPrefix}Recovery event status: $($recoveryEvent.LastActivityStatus)"
+    }
+    if ($waitedSeconds -ge ($timeoutMinutes * 60)) {
+      throw "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
+    }
+    $elapsedMin = [math]::Round($prepElapsed.Elapsed.TotalMinutes, 1)
+    Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr - ${elapsedMin} min elapsed, waiting 60s..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 60
+    $waitedSeconds += 60
+    $body = @{
+      query = $queryGetEvent
+      variables = $varGetEvent
+    } | ConvertTo-Json -Depth 100
+    $events = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $body -Headers $headers).data.activitySeriesConnection.edges.node
+    $recoveryEvent = $events | Where-Object { $_.id -eq $eventID}
+    $progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
+  }
 
-Write-Host ""
-Write-Host "${logPrefix}Download preparation complete. Event messages:" -ForegroundColor Green
-$recoveryEvent.ActivityConnection.nodes.message | ForEach-Object {
-  Write-Host "${logPrefix}  $_"
-}
+  Write-Host ""
+  Write-Host "${logPrefix}Download preparation complete." -ForegroundColor Green
 
-$downloadList = @()
-foreach ($e in $recoveryEvent.ActivityConnection.nodes) {
-  if ($e.message -match "The file can also be downloaded through this link:\s*(.+)") {
-    $dlLink = $matches[1]
-    $downloadList += $dlLink
+  # Fetch full event details using helper function
+  Write-Host "${logPrefix}Fetching event details for download links..."
+  $linkResult = Get-DownloadLinksFromEvent -ActivitySeriesId $recoveryEvent.activitySeriesId `
+    -ClusterUuid $recoveryEvent.clusterUuid -Endpoint $endpoint -Headers $headers `
+    -QueryText $queryGetEventDetail -LogPrefix $logPrefix
+
+  Write-Host "${logPrefix}Event messages:" -ForegroundColor Green
+  $linkResult.Detail.activityConnection.nodes.message | ForEach-Object {
+    Write-Host "${logPrefix}  $_"
+  }
+
+  $downloadList = $linkResult.Links
+
+  if ($downloadList.Count -eq 0) {
+    throw "${logPrefix}No download links found in the recovery event details."
   }
 }
 
-if ($downloadList.Count -eq 0) {
-  throw "${logPrefix}No download links found in the recovery event messages."
+# -- Phase 3: Verify download links cover all requested VMDKs --
+$missingVmdks = @()
+foreach ($vf in $vmdkFileNames) {
+  $diskBase = ($vf -replace '.*/', '').Replace('.vmdk', '')
+  $hasLink = $false
+  foreach ($dl in $downloadList) {
+    if ($dl -match [regex]::Escape($diskBase)) {
+      $hasLink = $true
+      break
+    }
+  }
+  if (-not $hasLink) { $missingVmdks += $vf }
+}
+if ($missingVmdks.Count -gt 0) {
+  Write-Warning "${logPrefix}Download links may not cover all VMDKs. Missing: $($missingVmdks -join ', ')"
+  Write-Warning "${logPrefix}Proceeding anyway -- download will fail for missing files."
 }
 
 Write-Host ""
@@ -449,20 +625,27 @@ Write-Host "${logPrefix}Connected to CDM cluster: $clusterIP" -ForegroundColor G
 
 $downloadCount = 0
 $failCount = 0
+$transferElapsed = [System.Diagnostics.Stopwatch]::StartNew()
 Write-Host ""
 for ($i = 0; $i -lt $downloadList.Count; $i++) {
   $f = $downloadList[$i]
   Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Downloading: $f"
+  $fileElapsed = [System.Diagnostics.Stopwatch]::StartNew()
   try {
-    $aria2Output = & $aria2cPath --check-certificate=false --file-allocation=none --summary-interval=60 --header="Authorization: Bearer $($cdmSession.token)" $f -d $downloadPath 2>&1
+    $aria2Output = & $aria2cPath --check-certificate=false --file-allocation=none --continue=true --summary-interval=60 --header="Authorization: Bearer $($cdmSession.token)" $f -d $downloadPath 2>&1
     $aria2Output | ForEach-Object { Write-Host "${logPrefix}  $_" }
+    $fileElapsed.Stop()
+    $fileMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
+    $totalMin = [math]::Round($transferElapsed.Elapsed.TotalMinutes, 1)
     if ($LASTEXITCODE -ne 0) {
       Write-Error "${logPrefix}aria2c exited with code $LASTEXITCODE for: $f"
       $failCount++
     } else {
       $downloadCount++
+      Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Complete ($fileMin min, transfer total: $totalMin min)" -ForegroundColor Green
     }
   } catch {
+    $fileElapsed.Stop()
     Write-Error "${logPrefix}aria2c failed for: $f - $($_.Exception.Message)"
     $failCount++
   }

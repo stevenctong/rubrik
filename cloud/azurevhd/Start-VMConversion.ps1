@@ -324,6 +324,9 @@ $masterLog = Join-Path $logDir "conversion_master-$(Get-Date -Format 'yyyy-MM-dd
 Start-Transcript -Path $masterLog -Append | Out-Null
 Write-Host "Master log: $masterLog" -ForegroundColor Cyan
 
+$statsFile = Join-Path $logDir "conversion_stats.csv"
+Write-Host "Stats log: $statsFile" -ForegroundColor Cyan
+
 # -- Read and group input CSV -------------------------------------------------
 
 Write-Host "Reading VMDK CSV: $vmCsvFile" -ForegroundColor Cyan
@@ -644,6 +647,7 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
   $runDownload = $using:RunDownload
   $runConvert = $using:RunConvert
   $runUpload = $using:RunUpload
+  $statsFile = $using:statsFile
 
   # Helper to update state CSV with mutex
   function Update-State {
@@ -692,9 +696,14 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
   }
 
   $currentStage = 'Download'
+  $totalElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+  $downloadMin = 0.0
+  $convertMin = 0.0
+  $uploadMin = 0.0
 
   try {
     # -- Stage 1: Download --------------------------------------------------
+    $stageElapsed = [System.Diagnostics.Stopwatch]::StartNew()
     if ($runDownload -and $vm.PriorDownloadStatus -ne 'Complete') {
       Write-Host "[$($vm.VMName)] Stage 1: Downloading $($vm.VmdkFiles.Count) VMDK(s)..." -ForegroundColor Green
       Update-State @{ Stage = 'Download'; DownloadStatus = 'InProgress' }
@@ -723,16 +732,21 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       Write-Host "[$($vm.VMName)] Downloaded $($downloadedFiles.Count) VMDK data file(s)" -ForegroundColor Green
 
       Update-State @{ DownloadStatus = 'Complete' }
-      Write-Host "[$($vm.VMName)] Download complete" -ForegroundColor Green
+      $stageElapsed.Stop()
+      $downloadMin = [math]::Round($stageElapsed.Elapsed.TotalMinutes, 1)
+      Write-Host "[$($vm.VMName)] Download complete ($downloadMin min, total: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min)" -ForegroundColor Green
     } elseif ($vm.PriorDownloadStatus -eq 'Complete') {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping download (already complete)" -ForegroundColor DarkGray
     } else {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping download (RunDownload = false)" -ForegroundColor DarkGray
       Update-State @{ DownloadStatus = 'Skipped' }
     }
 
     # -- Stage 2: Convert ---------------------------------------------------
     $currentStage = 'Convert'
+    $stageElapsed = [System.Diagnostics.Stopwatch]::StartNew()
     if ($runConvert -and $vm.PriorConvertStatus -ne 'Complete') {
       Write-Host "[$($vm.VMName)] Stage 2: Converting VMDKs to VHD..." -ForegroundColor Green
       Update-State @{ Stage = 'Convert'; ConvertStatus = 'InProgress' }
@@ -754,16 +768,21 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       Write-Host "[$($vm.VMName)] Converted $($convertedFiles.Count) file(s)" -ForegroundColor Green
 
       Update-State @{ ConvertStatus = 'Complete' }
-      Write-Host "[$($vm.VMName)] Conversion complete" -ForegroundColor Green
+      $stageElapsed.Stop()
+      $convertMin = [math]::Round($stageElapsed.Elapsed.TotalMinutes, 1)
+      Write-Host "[$($vm.VMName)] Conversion complete ($convertMin min, total: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min)" -ForegroundColor Green
     } elseif ($vm.PriorConvertStatus -eq 'Complete') {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping convert (already complete)" -ForegroundColor DarkGray
     } else {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping convert (RunConvert = false)" -ForegroundColor DarkGray
       Update-State @{ ConvertStatus = 'Skipped' }
     }
 
     # -- Stage 3: Upload ----------------------------------------------------
     $currentStage = 'Upload'
+    $stageElapsed = [System.Diagnostics.Stopwatch]::StartNew()
     if ($runUpload -and $vm.PriorUploadStatus -ne 'Complete') {
       Write-Host "[$($vm.VMName)] Stage 3: Uploading to Azure..." -ForegroundColor Green
       Update-State @{ Stage = 'Upload'; UploadStatus = 'InProgress' }
@@ -999,15 +1018,20 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       Write-Host "[$($vm.VMName)] Azure VM '$azureVMName' created with $($dataDiskIds.Count + 1) disk(s)" -ForegroundColor Green
 
       Update-State @{ UploadStatus = 'Complete' }
-      Write-Host "[$($vm.VMName)] Upload complete" -ForegroundColor Green
+      $stageElapsed.Stop()
+      $uploadMin = [math]::Round($stageElapsed.Elapsed.TotalMinutes, 1)
+      Write-Host "[$($vm.VMName)] Upload complete ($uploadMin min, total: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min)" -ForegroundColor Green
     } elseif ($vm.PriorUploadStatus -eq 'Complete') {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping upload (already complete)" -ForegroundColor DarkGray
     } else {
+      $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping upload (RunUpload = false)" -ForegroundColor DarkGray
       Update-State @{ UploadStatus = 'Skipped' }
     }
 
     # -- Complete -----------------------------------------------------------
+    $totalElapsed.Stop()
     $endTime = Get-Date
 
     # Read back sub-statuses to determine overall completion
@@ -1032,7 +1056,7 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
         HyperVGen = $result.HyperVGen
         EndTime = $endTime.ToString('yyyy-MM-dd HH:mm:ss')
       }
-      Write-Host "[$($vm.VMName)] Pipeline complete! Azure VM: $($result.AzureVMName)" -ForegroundColor Green
+      Write-Host "[$($vm.VMName)] Pipeline complete! Total elapsed: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min. Azure VM: $($result.AzureVMName)" -ForegroundColor Green
     } else {
       $skipped = @()
       if ($dlStatus -ne 'Complete') { $skipped += 'Download' }
@@ -1042,7 +1066,7 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
         Stage = 'Partial'
         EndTime = $endTime.ToString('yyyy-MM-dd HH:mm:ss')
       }
-      Write-Host "[$($vm.VMName)] Pipeline partial - skipped stages: $($skipped -join ', ')" -ForegroundColor Yellow
+      Write-Host "[$($vm.VMName)] Pipeline partial ($([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min). Skipped stages: $($skipped -join ', ')" -ForegroundColor Yellow
       $result.Stage = 'Partial'
     }
   } catch {
@@ -1052,7 +1076,8 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
     $result.ErrorStage = $currentStage
     $result.ErrorMessage = $errorMsg
 
-    Write-Host "[$($vm.VMName)] FAILED at $currentStage stage: $errorMsg" -ForegroundColor Red
+    $totalElapsed.Stop()
+    Write-Host "[$($vm.VMName)] FAILED at $currentStage stage ($([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min): $errorMsg" -ForegroundColor Red
 
     Update-State @{
       Stage = 'Failed'
@@ -1062,6 +1087,30 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
     }
   } finally {
     Stop-Transcript | Out-Null
+
+    $totalSizeGiB = [math]::Round(($vm.VmdkSizesGiB | Measure-Object -Sum).Sum, 1)
+    $totalMin = [math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)
+    $statsRow = [PSCustomObject]@{
+      Timestamp    = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+      VMName       = $vm.VMName
+      AzureVMName  = $result.AzureVMName
+      Cluster      = $vm.Cluster
+      VmdkCount    = $vm.VmdkFiles.Count
+      TotalSizeGiB = $totalSizeGiB
+      DownloadMin  = $downloadMin
+      ConvertMin   = $convertMin
+      UploadMin    = $uploadMin
+      TotalMin     = $totalMin
+      Status       = $result.Stage
+      ErrorStage   = $result.ErrorStage
+    }
+    $statsMutex = [System.Threading.Mutex]::new($false, "VMConversionStats")
+    try {
+      $statsMutex.WaitOne() | Out-Null
+      $statsRow | Export-Csv -Path $statsFile -Append -NoTypeInformation
+    } finally {
+      $statsMutex.ReleaseMutex()
+    }
   }
 
   $result
