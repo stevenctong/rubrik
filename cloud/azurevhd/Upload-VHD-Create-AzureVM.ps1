@@ -418,14 +418,28 @@ if ($UseStorageAccount) {
 
   # Upload VHD via AzCopy using Start-Process to avoid PowerShell glob-expanding
   # the '?' in the SAS URL (PowerShell treats '?' as a wildcard in native command args)
-  Write-Host "${logPrefix}Starting AzCopy upload to page blob..." -foregroundcolor green
+  Write-Host "${logPrefix}Starting AzCopy upload to page blob ($vhdSizeGiB GiB)..." -foregroundcolor green
   Write-Host "${logPrefix}  Destination: $blobUrl" -foregroundcolor green
   $stdoutFile = Join-Path ([System.IO.Path]::GetTempPath()) "azcopy_out_$([guid]::NewGuid().ToString('N')).log"
   $stderrFile = Join-Path ([System.IO.Path]::GetTempPath()) "azcopy_err_$([guid]::NewGuid().ToString('N')).log"
   $proc = Start-Process -FilePath $azcopyPath `
     -ArgumentList "copy `"$sourceVHD`" `"$blobUrlWithSas`" --blob-type PageBlob" `
-    -NoNewWindow -Wait -PassThru `
+    -NoNewWindow -PassThru `
     -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+  $azcopyElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not $proc.HasExited) {
+    Start-Sleep -Seconds 30
+    $elapsedMin = [math]::Round($azcopyElapsed.Elapsed.TotalMinutes, 1)
+    if (Test-Path $stdoutFile) {
+      $lastProgress = Get-Content $stdoutFile -Tail 20 | Where-Object { $_ -match '^\d+\.\d+ %' } | Select-Object -Last 1
+      if ($lastProgress) {
+        Write-Host "${logPrefix}  AzCopy: $($lastProgress.Trim()) - ${elapsedMin} min" -ForegroundColor DarkCyan
+      } else {
+        Write-Host "${logPrefix}  AzCopy: uploading... - ${elapsedMin} min" -ForegroundColor DarkCyan
+      }
+    }
+  }
+  $proc.WaitForExit()
   $azcopyExitCode = $proc.ExitCode
   $azcopyOutput = @()
   if (Test-Path $stdoutFile) { $azcopyOutput += Get-Content $stdoutFile }
@@ -518,9 +532,32 @@ if ($UseStorageAccount) {
   }
 
   # Upload VHD via AzCopy to the managed disk SAS URL
-  Write-Host "${logPrefix}Starting AzCopy upload to managed disk..." -foregroundcolor green
-  $azcopyOutput = & $azcopyPath copy $sourceVHD $diskSas.AccessSAS --blob-type PageBlob 2>&1
-  $azcopyExitCode = $LASTEXITCODE
+  Write-Host "${logPrefix}Starting AzCopy upload to managed disk ($vhdSizeGiB GiB)..." -foregroundcolor green
+  $stdoutFile = Join-Path ([System.IO.Path]::GetTempPath()) "azcopy_out_$([guid]::NewGuid().ToString('N')).log"
+  $stderrFile = Join-Path ([System.IO.Path]::GetTempPath()) "azcopy_err_$([guid]::NewGuid().ToString('N')).log"
+  $proc = Start-Process -FilePath $azcopyPath `
+    -ArgumentList "copy `"$sourceVHD`" `"$($diskSas.AccessSAS)`" --blob-type PageBlob" `
+    -NoNewWindow -PassThru `
+    -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+  $azcopyElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not $proc.HasExited) {
+    Start-Sleep -Seconds 30
+    $elapsedMin = [math]::Round($azcopyElapsed.Elapsed.TotalMinutes, 1)
+    if (Test-Path $stdoutFile) {
+      $lastProgress = Get-Content $stdoutFile -Tail 20 | Where-Object { $_ -match '^\d+\.\d+ %' } | Select-Object -Last 1
+      if ($lastProgress) {
+        Write-Host "${logPrefix}  AzCopy: $($lastProgress.Trim()) - ${elapsedMin} min" -ForegroundColor DarkCyan
+      } else {
+        Write-Host "${logPrefix}  AzCopy: uploading... - ${elapsedMin} min" -ForegroundColor DarkCyan
+      }
+    }
+  }
+  $proc.WaitForExit()
+  $azcopyExitCode = $proc.ExitCode
+  $azcopyOutput = @()
+  if (Test-Path $stdoutFile) { $azcopyOutput += Get-Content $stdoutFile }
+  if (Test-Path $stderrFile) { $azcopyOutput += Get-Content $stderrFile }
+  Remove-Item $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
   $azcopyOutput | Where-Object {
     $line = $_.ToString().Trim()
     $line -ne '' -and $line -notmatch '^\d+\.\d+ %' -and $line -notmatch '^DONE'

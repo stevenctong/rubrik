@@ -329,18 +329,23 @@ function Get-DownloadLinksFromEvent {
 
   $links = @()
   $vmdkMap = @{}
+  $fileSizeMap = @{}
   foreach ($node in $detail.activityConnection.nodes) {
-    if ($node.message -match 'The Virtual Machine file (.+?), with file type .+ The file can also be downloaded through this link:\s*(.+)') {
+    if ($node.message -match 'The Virtual Machine file (.+?), with file type .+The file can also be downloaded through this link:\s*(\S+)') {
       $vmdkPath = $matches[1]
-      $url = $matches[2]
+      $url = $matches[2].Trim()
       $links += $url
       $vmdkMap[$vmdkPath] = $url
+      if ($node.message -match 'file size (\d+) bytes') {
+        $fileSizeMap[$url] = @{ Size = [long]$matches[1] }
+      }
     }
   }
   return @{
-    Links   = $links
-    VmdkMap = $vmdkMap
-    Detail  = $detail
+    Links       = $links
+    VmdkMap     = $vmdkMap
+    FileSizeMap = $fileSizeMap
+    Detail      = $detail
   }
 }
 
@@ -352,7 +357,7 @@ function Test-AllVmdksPresent {
   foreach ($vf in $RequestedVmdks) {
     $found = $false
     foreach ($key in $VmdkMap.Keys) {
-      if ($key -like "*$vf*" -or $vf -like "*$key*") {
+      if ($key.Contains($vf) -or $vf.Contains($key)) {
         $found = $true
         break
       }
@@ -458,6 +463,7 @@ $checkBody = @{
 $recentEvents = (Invoke-RestMethod -Method POST -Uri $endpoint -Body $checkBody -Headers $headers).data.activitySeriesConnection.edges.node
 
 $reusedLinks = $null
+$fileSizeMap = @{}
 if ($recentEvents.Count -gt 0) {
   Write-Host "${logPrefix}Found $($recentEvents.Count) recent SUCCESS recovery event(s), checking for matching VMDKs..."
   foreach ($evt in $recentEvents) {
@@ -472,6 +478,7 @@ if ($recentEvents.Count -gt 0) {
         Write-Host "${logPrefix}  $_"
       }
       $reusedLinks = $result.Links
+      $fileSizeMap = $result.FileSizeMap
       break
     } else {
       Write-Host "${logPrefix}  Event $($evt.activitySeriesId): has links but missing some VMDKs -- skipping" -ForegroundColor DarkGray
@@ -578,6 +585,7 @@ if ($null -ne $reusedLinks) {
   }
 
   $downloadList = $linkResult.Links
+  $fileSizeMap = $linkResult.FileSizeMap
 
   if ($downloadList.Count -eq 0) {
     throw "${logPrefix}No download links found in the recovery event details."
@@ -626,28 +634,77 @@ Write-Host "${logPrefix}Connected to CDM cluster: $clusterIP" -ForegroundColor G
 $downloadCount = 0
 $failCount = 0
 $transferElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+$pollIntervalSec = 30
 Write-Host ""
 for ($i = 0; $i -lt $downloadList.Count; $i++) {
   $f = $downloadList[$i]
-  Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Downloading: $f"
+  $urlFileName = [System.Uri]::UnescapeDataString(([System.Uri]$f).Segments[-1])
+  $expectedBytes = 0
+  $expectedGiB = 0
+  if ($null -ne $fileSizeMap -and $fileSizeMap.ContainsKey($f)) {
+    $expectedBytes = $fileSizeMap[$f].Size
+    $expectedGiB = [math]::Round($expectedBytes / 1073741824, 1)
+    Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Downloading: $urlFileName ($expectedGiB GiB)"
+  } else {
+    Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Downloading: $urlFileName"
+  }
+
   $fileElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+  $targetFile = Join-Path $downloadPath $urlFileName
+  $stdoutLog = [System.IO.Path]::GetTempFileName()
+  $stderrLog = [System.IO.Path]::GetTempFileName()
   try {
-    $aria2Output = & $aria2cPath --check-certificate=false --file-allocation=none --continue=true --summary-interval=60 --header="Authorization: Bearer $($cdmSession.token)" $f -d $downloadPath 2>&1
-    $aria2Output | ForEach-Object { Write-Host "${logPrefix}  $_" }
+    $aria2Args = "--check-certificate=false --file-allocation=none --continue=true --summary-interval=0 `"--header=Authorization: Bearer $($cdmSession.token)`" `"$f`" -d `"$downloadPath`""
+    $proc = Start-Process -FilePath $aria2cPath -ArgumentList $aria2Args `
+      -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog `
+      -NoNewWindow -PassThru
+
+    while (-not $proc.HasExited) {
+      Start-Sleep -Seconds $pollIntervalSec
+      $elapsedMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
+      if (Test-Path $targetFile) {
+        $currentBytes = (Get-Item $targetFile).Length
+        $currentGiB = [math]::Round($currentBytes / 1073741824, 1)
+        if ($expectedBytes -gt 0) {
+          $pct = [math]::Round(($currentBytes / $expectedBytes) * 100, 0)
+          Write-Host "${logPrefix}$currentGiB / $expectedGiB GiB ($pct%) [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+        } else {
+          Write-Host "${logPrefix}$currentGiB GiB [$urlFileName] - elapsed ${elapsedMin} min" -ForegroundColor DarkCyan
+        }
+      } else {
+        Write-Host "${logPrefix}  $urlFileName : waiting for file... - ${elapsedMin} min" -ForegroundColor DarkGray
+      }
+    }
+
+    $proc.WaitForExit()
+    $exitCode = $proc.ExitCode
     $fileElapsed.Stop()
     $fileMin = [math]::Round($fileElapsed.Elapsed.TotalMinutes, 1)
     $totalMin = [math]::Round($transferElapsed.Elapsed.TotalMinutes, 1)
-    if ($LASTEXITCODE -ne 0) {
-      Write-Error "${logPrefix}aria2c exited with code $LASTEXITCODE for: $f"
+
+    $aria2Stdout = Get-Content -Path $stdoutLog -Raw -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($aria2Stdout)) {
+      $aria2Stdout -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" }
+    }
+
+    if ($exitCode -ne 0) {
+      $aria2Stderr = Get-Content -Path $stderrLog -Raw -ErrorAction SilentlyContinue
+      if (-not [string]::IsNullOrWhiteSpace($aria2Stderr)) {
+        $aria2Stderr -split "`n" | ForEach-Object { Write-Host "${logPrefix}  $_" -ForegroundColor Red }
+      }
+      Write-Error "${logPrefix}aria2c exited with code $exitCode for: $urlFileName"
       $failCount++
     } else {
       $downloadCount++
-      Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Complete ($fileMin min, transfer total: $totalMin min)" -ForegroundColor Green
+      $finalGiB = if (Test-Path $targetFile) { [math]::Round((Get-Item $targetFile).Length / 1073741824, 1) } else { '?' }
+      Write-Host "${logPrefix}[$($i + 1)/$($downloadList.Count)] Complete: $urlFileName ($finalGiB GiB, $fileMin min, transfer total: $totalMin min)" -ForegroundColor Green
     }
   } catch {
     $fileElapsed.Stop()
-    Write-Error "${logPrefix}aria2c failed for: $f - $($_.Exception.Message)"
+    Write-Error "${logPrefix}aria2c failed for: $urlFileName - $($_.Exception.Message)"
     $failCount++
+  } finally {
+    Remove-Item -Path $stdoutLog, $stderrLog -Force -ErrorAction SilentlyContinue
   }
 }
 

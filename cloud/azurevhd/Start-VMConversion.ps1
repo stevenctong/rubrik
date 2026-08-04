@@ -783,7 +783,26 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
     # -- Stage 3: Upload ----------------------------------------------------
     $currentStage = 'Upload'
     $stageElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Check if the Azure VM already exists from a prior run (skip upload entirely)
+    $existingAzureVM = $false
     if ($runUpload -and $vm.PriorUploadStatus -ne 'Complete') {
+      $priorVMName = $vm.TgtVMName
+      $priorVM = Get-AzVM -ResourceGroupName $vm.ResourceGroup -Name $priorVMName -Status -ErrorAction SilentlyContinue
+      if ($null -ne $priorVM) {
+        $priorPower = ($priorVM.Statuses | Where-Object { $_.Code -like 'PowerState/*' }).DisplayStatus
+        if ($priorPower -eq 'VM running') {
+          Write-Host "[$($vm.VMName)] Azure VM '$priorVMName' already exists and is running -- marking upload complete" -ForegroundColor Green
+          $result.AzureVMName = $priorVMName
+          $existingAzureVM = $true
+          Update-State @{ UploadStatus = 'Complete' }
+        } else {
+          Write-Host "[$($vm.VMName)] Azure VM '$priorVMName' exists but power state is '$priorPower' -- continuing upload" -ForegroundColor Yellow
+        }
+      }
+    }
+
+    if ($runUpload -and $vm.PriorUploadStatus -ne 'Complete' -and -not $existingAzureVM) {
       Write-Host "[$($vm.VMName)] Stage 3: Uploading to Azure..." -ForegroundColor Green
       Update-State @{ Stage = 'Upload'; UploadStatus = 'InProgress' }
 
@@ -983,16 +1002,36 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
         Write-Host "[$($vm.VMName)] Submitting VM creation request for '$azureVMName'..." -ForegroundColor Green
         $vmJob = New-AzVM -ResourceGroupName $vm.ResourceGroup -Location $location -VM $vmConfig -AsJob -ErrorAction Stop
         $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
+        $vmRunningTimer = $null
         while ($vmJob.State -eq 'Running') {
           Start-Sleep -Seconds 30
-          Write-Host "[$($vm.VMName)] VM provisioning... ($([int]$elapsed.Elapsed.TotalSeconds)s elapsed)" -ForegroundColor Gray
+          $vmCheck = Get-AzVM -ResourceGroupName $vm.ResourceGroup -Name $azureVMName -Status -ErrorAction SilentlyContinue
+          $vmPower = ($vmCheck.Statuses | Where-Object { $_.Code -like 'PowerState/*' }).DisplayStatus
+          if ($vmPower -eq 'VM running') {
+            if ($null -eq $vmRunningTimer) {
+              $vmRunningTimer = [System.Diagnostics.Stopwatch]::StartNew()
+              Write-Host "[$($vm.VMName)] VM is running in Azure ($([int]$elapsed.Elapsed.TotalSeconds)s), giving job 5 min to finish..." -ForegroundColor Green
+            } elseif ($vmRunningTimer.Elapsed.TotalMinutes -ge 5) {
+              Write-Host "[$($vm.VMName)] Job still running after 5 min, stopping ($([int]$elapsed.Elapsed.TotalSeconds)s)" -ForegroundColor Yellow
+              $vmJob.Stop()
+              break
+            } else {
+              $remainSec = [int](300 - $vmRunningTimer.Elapsed.TotalSeconds)
+              Write-Host "[$($vm.VMName)] VM running, job grace period (${remainSec}s left, $([int]$elapsed.Elapsed.TotalSeconds)s elapsed)" -ForegroundColor Gray
+            }
+          } else {
+            $vmProv = ($vmCheck.Statuses | Where-Object { $_.Code -like 'ProvisioningState/*' }).DisplayStatus
+            $statusMsg = if ($vmProv) { "$vmProv" } else { 'waiting' }
+            Write-Host "[$($vm.VMName)] VM provisioning... $statusMsg ($([int]$elapsed.Elapsed.TotalSeconds)s elapsed)" -ForegroundColor Gray
+          }
         }
         $elapsed.Stop()
-        if ($vmJob.State -ne 'Completed') {
+        if ($vmJob.State -eq 'Running') { $vmJob.Stop() }
+        if ($vmJob.State -notin @('Completed', 'Stopped')) {
           $jobError = $vmJob | Receive-Job -ErrorAction SilentlyContinue 2>&1
           throw "New-AzVM job finished with state '$($vmJob.State)': $jobError"
         }
-        $null = $vmJob | Receive-Job
+        $null = $vmJob | Receive-Job -ErrorAction SilentlyContinue
         Write-Host "[$($vm.VMName)] VM provisioning completed ($([int]$elapsed.Elapsed.TotalSeconds)s)" -ForegroundColor Green
       } catch {
         throw "New-AzVM failed: $($_.Exception.Message)"
@@ -1021,6 +1060,10 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       $stageElapsed.Stop()
       $uploadMin = [math]::Round($stageElapsed.Elapsed.TotalMinutes, 1)
       Write-Host "[$($vm.VMName)] Upload complete ($uploadMin min, total: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min)" -ForegroundColor Green
+    } elseif ($existingAzureVM) {
+      $stageElapsed.Stop()
+      $uploadMin = [math]::Round($stageElapsed.Elapsed.TotalMinutes, 1)
+      Write-Host "[$($vm.VMName)] Upload complete -- existing VM ($uploadMin min, total: $([math]::Round($totalElapsed.Elapsed.TotalMinutes, 1)) min)" -ForegroundColor Green
     } elseif ($vm.PriorUploadStatus -eq 'Complete') {
       $stageElapsed.Stop()
       Write-Host "[$($vm.VMName)] Skipping upload (already complete)" -ForegroundColor DarkGray
