@@ -253,7 +253,7 @@ if (-not $SkipMerge) {
     Write-Host "Previous CSV found: $($previousCsvFiles[0].Name) - merging user-edited columns" -ForegroundColor Yellow
     $previousCsv = Import-CSV -Path $previousCsvPath
     foreach ($row in $previousCsv) {
-      $key = "$($row.vmdkFile)|$($row.Cluster)|$($row.SourceType)"
+      $key = "$($row.vmdkFile)|$($row.Cluster)"
       $previousData[$key] = @{
         Convert = $row.Convert
         CreateOnly = $row.CreateOnly
@@ -277,7 +277,7 @@ if (-not $SkipMerge) {
 $vmOutput = @()
 foreach ($vm in $vmList) {
   foreach ($vmDisk in $vm.VsphereVirtualDisks.edges.node) {
-    $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)|$($vm._SourceType)"
+    $mergeKey = "$($vmDisk.FileName)|$($vm.Cluster.Name)"
     $mergedConvert = ""
     $mergedCreateOnly = ""
     $mergedDriveLetter = ""
@@ -324,6 +324,10 @@ foreach ($vm in $vmList) {
       "DriveLetter" = $mergedDriveLetter
       "tgtVMName" = $mergedTgtVMName
       "DiskSuffix" = $mergedDiskSuffix
+      "vmdkSizeGiB" = [math]::Round($vmDisk.Size / 1073741824, 1)
+      "vmdkSizeGB" = [math]::Round($vmDisk.Size / 1000000000, 1)
+      "vmdkFile" = $vmDisk.FileName
+      "Cluster" = $vm.Cluster.Name
       "ResourceGroup" = $mergedResourceGroup
       "VNetRG" = $mergedVNetRG
       "VNetName" = $mergedVNetName
@@ -332,10 +336,6 @@ foreach ($vm in $vmList) {
       "NsgName" = $mergedNsgName
       "VMSize" = $mergedVMSize
       "ManagedDiskSku" = $mergedManagedDiskSku
-      "vmdkSizeGiB" = [math]::Round($vmDisk.Size / 1073741824, 1)
-      "vmdkSizeGB" = [math]::Round($vmDisk.Size / 1000000000, 1)
-      "vmdkFile" = $vmDisk.FileName
-      "Cluster" = $vm.Cluster.Name
       "SLA" = $vm.EffectiveSlaDomain.Name
       "LatestBackupDate" = $vm.snapshotconnection.edges.node[-1].Date
       "ID" = $vm.Id
