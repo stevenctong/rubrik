@@ -385,7 +385,8 @@ $lastUpdatedEST = [System.TimeZoneInfo]::ConvertTimeFromUtc($recoveryEvent.LastU
 Write-Host "${logPrefix}Recovery event found for: $($recoveryEvent.objectName)"
 Write-Host "${logPrefix}Last updated (EST): $lastUpdatedEST"
 $progressStr = if ($recoveryEvent.progress) { " ($($recoveryEvent.progress))" } else { '' }
-Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$progressStr"
+$prepElapsed = [System.Diagnostics.Stopwatch]::StartNew()
+Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr"
 $waitedSeconds = 0
 while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   if ($recoveryEvent.LastActivityStatus -in @('FAILURE', 'CANCELED')) {
@@ -394,7 +395,8 @@ while ($recoveryEvent.LastActivityStatus -ne 'SUCCESS') {
   if ($waitedSeconds -ge ($timeoutMinutes * 60)) {
     throw "${logPrefix}Timed out after $timeoutMinutes minutes waiting for download to complete."
   }
-  Write-Host "${logPrefix}Current status: $($recoveryEvent.LastActivityStatus)$progressStr - waiting 60s..." -ForegroundColor DarkGray
+  $elapsedMin = [math]::Round($prepElapsed.Elapsed.TotalMinutes, 1)
+  Write-Host "${logPrefix}$($recoveryEvent.LastActivityStatus)$progressStr - ${elapsedMin} min elapsed, waiting 60s..." -ForegroundColor DarkGray
   Start-Sleep -Seconds 60
   $waitedSeconds += 60
   $body = @{
