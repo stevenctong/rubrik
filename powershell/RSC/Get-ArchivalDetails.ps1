@@ -36,31 +36,47 @@ For authentication, use a RSC Service Account:
 ** Define the service account JSON path in the script: $serviceAccountPath
 
 
-.EXAMPLE
-./Get-ArchivalDetails.ps1
-Runs the script.
+.PARAMETER serviceAccountPath
+File path to the RSC service account JSON file.
+
+.PARAMETER slaIgnoreList
+List of SLA domain names to filter out / ignore.
+
+.PARAMETER cluster
+Rubrik cluster name to filter results against.
 
 .EXAMPLE
-./Get-ArchivalDetails.ps1 -Cluster <cluster_name>
+./Get-ArchivalDetails.ps1
+Runs the script with default settings.
+
+.EXAMPLE
+./Get-ArchivalDetails.ps1 -serviceAccountPath './rsc-gaia.json'
+Runs the script using a specific service account JSON file.
+
+.EXAMPLE
+./Get-ArchivalDetails.ps1 -cluster <cluster_name>
 Runs the script and filters against a specific cluster.
+
+.EXAMPLE
+./Get-ArchivalDetails.ps1 -slaIgnoreList @('SLA1', 'SLA2')
+Runs the script while ignoring specific SLA domains.
 #>
 
 ### Variables section - please fill out as needed
 
+[CmdletBinding()]
 param (
-  [CmdletBinding()]
+  # File location of the RSC service account json
+  [Parameter(Mandatory=$false)]
+  [string]$serviceAccountPath = './ArchivalDetailsScripts.json',
+  # List of SLA domains to filter out / ignore
+  [Parameter(Mandatory=$false)]
+  [string[]]$slaIgnoreList = @('IDOC-VM-BKP-STD'),
   # Rubrik cluster name
   [Parameter(Mandatory=$false)]
   [string]$cluster = ''
 )
 ### VARIABLES - START ###
-
-# List of SLA domains to filter out / ignore
-$slaIgnoreList = @('IDOC-VM-BKP-STD')
-
-# File location of the RSC service account json
-# $serviceAccountPath = "./rsc-gaia-tong.json"
-$serviceAccountPath = "./ArchivalDetailsScripts.json"
 
 $date = Get-Date
 $utcDate = $date.ToUniversalTime()
@@ -1748,8 +1764,8 @@ Write-Host "Total object count so far: $allObjCount" -foregroundcolor green
 Write-Host "Now filtering out objects by Protected, SLA, and Cluster" -foregroundcolor green
 Write-Host ""
 
-# Filter out unprotected objects (UNPROTECTED / DO_NOT_PROTECT SLAs)
-# VMs are filtered by whether they have snapshots; all others by SLA name
+# VMs are filtered by snapshot existence (they may have valid snapshots even after SLA reassignment);
+# all other workloads are filtered by SLA name
 $vmList = $vmList | Where-Object { $_.SnapshotConnection.edges.node -ne $null }
 $sqlList = $sqlList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
 $oracleList = $oracleList | Where-Object { $_.effectiveSlaDomain.name -ne 'UNPROTECTED' -and $_.effectiveSlaDomain.name -ne 'DO_NOT_PROTECT' }
@@ -1814,6 +1830,8 @@ $prepList = @()
 for ($i = 0; $i -lt $objList.count; $i++) {
   $obj = $objList[$i]
   $workload = $obj.objectType
+  # Snapshots are owned by different parent objects depending on workload type:
+  # SQL AG DBs -> DAG ID, Oracle Data Guard -> DG group ID, NAS -> primary fileset, VG -> volume group ID
   if ($workload -eq 'Mssql') {
     $objID = $obj.dagid
   } elseif ($workload -eq 'OracleDatabase' -and $($obj.dataGuardType) -eq 'DATA_GUARD_MEMBER') {
@@ -1822,6 +1840,10 @@ for ($i = 0; $i -lt $objList.count; $i++) {
     $objID = $obj.primaryFileset.id
   } elseif ($workload -eq 'PhysicalHost') {
     $volGroup = $obj.hostVolumes | Where-Object { $_.volumeGroupId -ne $null }
+    if ($null -eq $volGroup) {
+      Write-Host "WARNING: No volume group ID found for PhysicalHost '$($obj.name)' - skipping" -foregroundcolor red
+      continue
+    }
     $objID = $volGroup[0].volumeGroupId
   } else {
     $objID = $obj.id
@@ -1836,6 +1858,7 @@ for ($i = 0; $i -lt $objList.count; $i++) {
 Write-Host "Phase 2: Fetching backup details for $totalCount objects in parallel..." -foregroundcolor green
 Write-Host "Don't worry if the numbers skip around, it provides directionally accurate progress..." -foregroundcolor green
 
+# Query is duplicated from Get-BackupDetail because ForEach-Object -Parallel runs in separate runspaces and can't call script-scoped functions
 $snapshotQuery = "query SnapshotsListSingleQuery(`$snappableId: String!, `$first: Int, `$after: String, `$snapshotFilter: [SnapshotQueryFilterInput!], `$sortBy: SnapshotQuerySortByField, `$sortOrder: SortOrder, `$timeRange: TimeRangeInput) {
   snapshotsListConnection: snapshotOfASnappableConnection(
     workloadId: `$snappableId
@@ -2057,6 +2080,7 @@ foreach ($obj in $objList) {
       $oldestLocalBackupDate = $($localBackups[-1].date)
       $oldestLocalBackupExpire = $($localBackups[-1].snapshotRetentionInfo.localInfo.expirationTime)
     }
+    # 2+ archival entries means both ARCH and BKP locations are present; otherwise match by name
     $rcvARCHList = $backups | Where-Object { ($_.snapshotRetentionInfo.archivalInfos.count -ge 2) -or
       ($_.snapshotRetentionInfo.archivalInfos[0].name -match 'ARCH') }
     if ($rcvARCHList.count -gt 0) {
@@ -2119,7 +2143,7 @@ foreach ($obj in $objList) {
 ### $objList[].backupList contains the backup information for each object
 ### Can write some logic to loop through $objList[].backupList to filter out by a particular date
 
-# Comparison date to flag any objects that don't have archival to ARCH more recent to this date
+# -32 days roughly covers "end of prior month" regardless of month length
 $compDate = $date.AddDays(-32)
 $objNoSecondArchiveSinceLastMonth = $resultList | Where-Object { $_.'Latest Archive to ARCH' -lt $compDate }
 
