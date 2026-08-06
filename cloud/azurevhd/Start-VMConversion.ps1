@@ -388,6 +388,16 @@ foreach ($row in $actionRows) {
       ManagedDiskSku   = $row.ManagedDiskSku
     }
   }
+  $vm = $vmGroupHash[$key]
+  $isBoot = $row.BootDisk -match '^[xyXY]$'
+  $azureCols = @('ResourceGroup', 'VNetRG', 'VNetName', 'SubnetName', 'NsgRG', 'NsgName', 'VMSize', 'ManagedDiskSku')
+  foreach ($col in $azureCols) {
+    if (-not [string]::IsNullOrEmpty($row.$col)) {
+      if ($isBoot -or [string]::IsNullOrEmpty($vm.$col)) {
+        $vm.$col = $row.$col
+      }
+    }
+  }
   $vmdkLeaf = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path $row.vmdkFile -Leaf))
   $suffix = if (-not [string]::IsNullOrEmpty($row.DiskSuffix)) { $row.DiskSuffix } else { $vmdkLeaf }
   $vmGroupHash[$key].VhdBaseToSuffix[$vmdkLeaf] = $suffix
@@ -484,13 +494,25 @@ if ($estTotalGiB -gt $driveFreeGiB) {
 
 if ($RunUpload) {
   $uploadErrors = @()
-  $requiredCols = @('ResourceGroup', 'VNetRG', 'VNetName', 'SubnetName', 'NsgRG', 'NsgName', 'VMSize')
+  $uploadWarnings = @()
+  $requiredCols = @('ResourceGroup', 'VNetRG', 'VNetName', 'SubnetName', 'VMSize')
+  $optionalCols = @('NsgRG', 'NsgName')
   foreach ($vm in $vmGroups) {
     foreach ($col in $requiredCols) {
       if ([string]::IsNullOrEmpty($vm.$col)) {
         $uploadErrors += "$($vm.VMName): missing '$col' in CSV"
       }
     }
+    foreach ($col in $optionalCols) {
+      if ([string]::IsNullOrEmpty($vm.$col)) {
+        $uploadWarnings += "$($vm.VMName): '$col' not set - VM NIC will be created without an NSG"
+      }
+    }
+  }
+  if ($uploadWarnings.Count -gt 0) {
+    Write-Host "WARNING: Optional Azure columns missing in CSV:" -ForegroundColor Yellow
+    $uploadWarnings | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host ""
   }
   if ($uploadErrors.Count -gt 0) {
     Write-Host "ERROR: Per-VM Azure columns missing in CSV (required for upload):" -ForegroundColor Red

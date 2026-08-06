@@ -300,7 +300,9 @@ if ($diskType -eq 'OS') {
     if ([string]::IsNullOrEmpty($vnetRG)) { $conditionalErrors += "vnetRG is required for OS disks" }
     if ([string]::IsNullOrEmpty($vnetName)) { $conditionalErrors += "vnetName is required for OS disks" }
     if ([string]::IsNullOrEmpty($subnetName)) { $conditionalErrors += "subnetName is required for OS disks" }
-    if ([string]::IsNullOrEmpty($nsgName)) { $conditionalErrors += "nsgName is required for OS disks" }
+    if ([string]::IsNullOrEmpty($nsgName)) {
+      Write-Host "${logPrefix}NOTE: nsgName not specified - NIC will be created without an NSG" -ForegroundColor Yellow
+    }
   }
 } elseif ($diskType -eq 'Data') {
   if (-not $SkipVMCreation -and [string]::IsNullOrEmpty($attachToVM)) { $conditionalErrors += "attachToVM is required for data disks" }
@@ -619,22 +621,32 @@ if ($diskType -eq 'OS') {
     Write-Host "${logPrefix}ERROR: Subnet '$subnetName' not found in VNET '$vnetName'" -foregroundcolor red
     exit 1
   }
-  try {
-    $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $nsgRG -Name $nsgName -ErrorAction Stop
-  } catch {
-    Write-Host "${logPrefix}ERROR: Failed to get NSG '$nsgName' in RG '$nsgRG': $($_.Exception.Message)" -foregroundcolor red
-    exit 1
+  $nsg = $null
+  if (-not [string]::IsNullOrEmpty($nsgName)) {
+    try {
+      $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $nsgRG -Name $nsgName -ErrorAction Stop
+    } catch {
+      Write-Host "${logPrefix}ERROR: Failed to get NSG '$nsgName' in RG '$nsgRG': $($_.Exception.Message)" -foregroundcolor red
+      exit 1
+    }
+  } else {
+    Write-Host "${logPrefix}No NSG specified - NIC will be created without an NSG" -ForegroundColor Yellow
   }
 
   # Create a new NIC
   try {
-    $nic = New-AzNetworkInterface -Name $nicName `
-      -ResourceGroupName $resourceGroup `
-      -Location $location `
-      -SubnetId $subnet.Id `
-      -NetworkSecurityGroupId $nsg.Id `
-      -EnableAcceleratedNetworking `
-      -ErrorAction Stop
+    $nicParams = @{
+      Name                       = $nicName
+      ResourceGroupName          = $resourceGroup
+      Location                   = $location
+      SubnetId                   = $subnet.Id
+      EnableAcceleratedNetworking = $true
+      ErrorAction                = 'Stop'
+    }
+    if ($null -ne $nsg) {
+      $nicParams['NetworkSecurityGroupId'] = $nsg.Id
+    }
+    $nic = New-AzNetworkInterface @nicParams
   } catch {
     Write-Host "${logPrefix}ERROR: Failed to create NIC '$nicName': $($_.Exception.Message)" -foregroundcolor red
     exit 1
