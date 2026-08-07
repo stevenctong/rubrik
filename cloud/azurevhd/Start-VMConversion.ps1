@@ -980,8 +980,13 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
         if ($null -eq $subnet) {
           throw "Subnet '$($vm.SubnetName)' not found in VNet '$($vm.VNetName)'"
         }
-        $nsgRG = if ($vm.NsgRG -ne '') { $vm.NsgRG } else { $vm.ResourceGroup }
-        $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $nsgRG -Name $vm.NsgName -ErrorAction Stop
+        $nsg = $null
+        if (-not [string]::IsNullOrEmpty($vm.NsgName)) {
+          $nsgRG = if ($vm.NsgRG -ne '') { $vm.NsgRG } else { $vm.ResourceGroup }
+          $nsg = Get-AzNetworkSecurityGroup -ResourceGroupName $nsgRG -Name $vm.NsgName -ErrorAction Stop
+        } else {
+          Write-Host "[$($vm.VMName)] No NSG specified - NIC will be created without an NSG" -ForegroundColor Yellow
+        }
       } catch {
         throw "Failed to get networking resources: $($_.Exception.Message)"
       }
@@ -992,9 +997,18 @@ $job = $vmsToProcess | ForEach-Object -Parallel {
       if ($null -eq $nic) {
         Write-Host "[$($vm.VMName)] Creating NIC: $nicName" -ForegroundColor Green
         try {
-          $nic = New-AzNetworkInterface -Name $nicName -ResourceGroupName $vm.ResourceGroup `
-            -Location $location -SubnetId $subnet.Id -NetworkSecurityGroupId $nsg.Id `
-            -EnableAcceleratedNetworking -ErrorAction Stop
+          $nicParams = @{
+            Name                       = $nicName
+            ResourceGroupName          = $vm.ResourceGroup
+            Location                   = $location
+            SubnetId                   = $subnet.Id
+            EnableAcceleratedNetworking = $true
+            ErrorAction                = 'Stop'
+          }
+          if ($null -ne $nsg) {
+            $nicParams['NetworkSecurityGroupId'] = $nsg.Id
+          }
+          $nic = New-AzNetworkInterface @nicParams
         } catch {
           throw "Failed to create NIC '$nicName': $($_.Exception.Message)"
         }
