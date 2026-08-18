@@ -6,14 +6,16 @@ This script outputs all VMware VMDK info for VMs with at least one backup to a C
 This script outputs all VMware VMDK info for VMs with at least one backup to a CSV.
 Fetches both primary and replica (replicated) VM objects so the user can choose
 which cluster to recover from. Includes user-editable columns: Convert, CreateOnly,
-BootDisk, DriveLetter, tgtVMName, DiskSuffix, and per-VM Azure settings. On re-run,
+BootDisk, DriveLetter, tgtVMName, DiskSuffix, per-VM Azure settings, and
+post-recovery action columns (sourceHostname, targetRbsWinHost, sourceFlrDrive,
+targetFlrDrive, srcSqlInstance, tgtSqlInstance, sqlDataPath, sqlLogPath). On re-run,
 user-edited values are merged forward from the previous CSV.
 
 .NOTES
 Written by Steven Tong for community usage
 GitHub: stevenctong
 Date: 5/21/25
-Updated: 8/3/26
+Updated: 8/18/26
 
 Requires PowerShell 7+.
 
@@ -269,6 +271,14 @@ if (-not $SkipMerge) {
         NsgName = $row.NsgName
         VMSize = $row.VMSize
         ManagedDiskSku = $row.ManagedDiskSku
+        sourceHostname = $row.sourceHostname
+        targetRbsWinHost = $row.targetRbsWinHost
+        sourceFlrDrive = $row.sourceFlrDrive
+        targetFlrDrive = $row.targetFlrDrive
+        srcSqlInstance = $row.srcSqlInstance
+        tgtSqlInstance = $row.tgtSqlInstance
+        sqlDataPath = $row.sqlDataPath
+        sqlLogPath = $row.sqlLogPath
       }
     }
   }
@@ -292,6 +302,14 @@ foreach ($vm in $vmList) {
     $mergedNsgName = ""
     $mergedVMSize = ""
     $mergedManagedDiskSku = ""
+    $mergedSourceHostname = ""
+    $mergedTargetRbsWinHost = ""
+    $mergedSourceFlrDrive = ""
+    $mergedTargetFlrDrive = ""
+    $mergedSrcSqlInstance = ""
+    $mergedTgtSqlInstance = ""
+    $mergedSqlDataPath = ""
+    $mergedSqlLogPath = ""
     if ($previousData.ContainsKey($mergeKey)) {
       $mergedConvert = $previousData[$mergeKey].Convert
       $mergedCreateOnly = $previousData[$mergeKey].CreateOnly
@@ -307,6 +325,14 @@ foreach ($vm in $vmList) {
       $mergedNsgName = $previousData[$mergeKey].NsgName
       $mergedVMSize = $previousData[$mergeKey].VMSize
       $mergedManagedDiskSku = $previousData[$mergeKey].ManagedDiskSku
+      $mergedSourceHostname = $previousData[$mergeKey].sourceHostname
+      $mergedTargetRbsWinHost = $previousData[$mergeKey].targetRbsWinHost
+      $mergedSourceFlrDrive = $previousData[$mergeKey].sourceFlrDrive
+      $mergedTargetFlrDrive = $previousData[$mergeKey].targetFlrDrive
+      $mergedSrcSqlInstance = $previousData[$mergeKey].srcSqlInstance
+      $mergedTgtSqlInstance = $previousData[$mergeKey].tgtSqlInstance
+      $mergedSqlDataPath = $previousData[$mergeKey].sqlDataPath
+      $mergedSqlLogPath = $previousData[$mergeKey].sqlLogPath
     }
     if ([string]::IsNullOrEmpty($mergedTgtVMName)) {
       $mergedTgtVMName = $vm.Name
@@ -336,6 +362,14 @@ foreach ($vm in $vmList) {
       "NsgName" = $mergedNsgName
       "VMSize" = $mergedVMSize
       "ManagedDiskSku" = $mergedManagedDiskSku
+      "sourceHostname" = $mergedSourceHostname
+      "targetRbsWinHost" = $mergedTargetRbsWinHost
+      "sourceFlrDrive" = $mergedSourceFlrDrive
+      "targetFlrDrive" = $mergedTargetFlrDrive
+      "srcSqlInstance" = $mergedSrcSqlInstance
+      "tgtSqlInstance" = $mergedTgtSqlInstance
+      "sqlDataPath" = $mergedSqlDataPath
+      "sqlLogPath" = $mergedSqlLogPath
       "SLA" = $vm.EffectiveSlaDomain.Name
       "LatestBackupDate" = $vm.snapshotconnection.edges.node[-1].Date
       "ID" = $vm.Id
