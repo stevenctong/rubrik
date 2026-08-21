@@ -1,12 +1,12 @@
 import requests
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Variables
 report_id = 5  # Set your desired report ID here
-service_account_path = './rsc-service-account-rr.json'  # Path to service account JSON
-csv_report_filename = f"rubrik_report_csv-{datetime.utcnow().strftime('%Y-%m-%d_%H%M')}.csv"
+service_account_path = '/rsc-service-account-rr.json'  # Path to service account JSON
+csv_report_filename = f"rubrik_report_csv-{datetime.now(timezone.utc).strftime('%Y-%m-%d_%H%M')}.csv"
 
 # Rubrik Authentication
 def authenticate_rsc(service_account_path):
@@ -103,7 +103,10 @@ def get_download_status(endpoint, headers):
     response = requests.post(endpoint, json=payload, headers=headers)
     response.raise_for_status()
     data = response.json()
-    return data['data']['allUserFiles']['downloads']
+    downloads = []
+    for item in data['data']['allUserFiles']:
+        downloads.extend(item.get('downloads', []))
+    return downloads
 
 # Function: Get Report CSV Link
 def get_report_csv_link(auth, report_id):
@@ -133,11 +136,24 @@ def get_report_csv_link(auth, report_id):
     download_url = f"{rubrik_url}/file-downloads/{matching_report['externalId']}"
     return download_url
 
+# Function: Download Report CSV
+def download_report_csv(download_url, auth, filename):
+    headers = {
+        'Authorization': f"Bearer {auth['access_token']}"
+    }
+    response = requests.get(download_url, headers=headers)
+    response.raise_for_status()
+    with open(filename, 'wb') as f:
+        f.write(response.content)
+    return filename
+
 # Main Execution
 try:
     print("Authenticating...")
     auth = authenticate_rsc(service_account_path)
     csv_link = get_report_csv_link(auth, report_id)
-    print(f"Generated report CSV download link: {csv_link}")
+    print(f"Downloading CSV from: {csv_link}")
+    download_report_csv(csv_link, auth, csv_report_filename)
+    print(f"Report saved to: {csv_report_filename}")
 except Exception as e:
     print(f"Error: {str(e)}")
