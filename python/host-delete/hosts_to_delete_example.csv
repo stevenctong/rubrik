@@ -1,0 +1,6 @@
+name
+linux-server-01.example.com
+linux-server-02.example.com
+win-app-server-01.example.com
+db-backup-server.internal
+app-server-staging.dev.local
