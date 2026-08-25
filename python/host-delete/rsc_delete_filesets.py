@@ -45,12 +45,13 @@ from cdm_client import run_in_batches, clean_input
 class RSCClient:
     """RSC GraphQL API client, authenticated via Service Account credentials."""
 
-    def __init__(self, rsc_url, client_id, client_secret):
+    def __init__(self, rsc_url, client_id, client_secret, debug=False):
         if not rsc_url.startswith("http"):
             rsc_url = f"https://{rsc_url}"
         rsc_url = rsc_url.rstrip("/")
 
         self.graphql_url = f"{rsc_url}/api/graphql"
+        self.debug = debug
         token_uri = f"{rsc_url}/api/client_token"
         self.token = None
         self._authenticate(token_uri, client_id, client_secret)
@@ -82,7 +83,8 @@ class RSCClient:
             raise Exception(f"No access_token in auth response: {result}")
 
     def graphql(self, query, variables=None):
-        body = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
+        payload = {"query": query, "variables": variables or {}}
+        body = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -92,6 +94,13 @@ class RSCClient:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
 
+        if self.debug:
+            op_line = next((l.strip() for l in query.strip().splitlines() if l.strip().startswith(("query ", "mutation "))), "")
+            print(f"\n[DEBUG] >>> GraphQL request to {self.graphql_url}")
+            print(f"[DEBUG]     Operation: {op_line}")
+            print(f"[DEBUG]     Variables: {json.dumps(variables or {}, indent=2)}")
+            print(f"[DEBUG]     Full query:\n{query.strip()}")
+
         req = urllib.request.Request(
             self.graphql_url, data=body, headers=headers, method="POST",
         )
@@ -100,7 +109,12 @@ class RSCClient:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
+            if self.debug:
+                print(f"[DEBUG] <<< HTTP {e.code} error: {error_body}")
             raise Exception(f"GraphQL error (HTTP {e.code}): {error_body}") from e
+
+        if self.debug:
+            print(f"[DEBUG] <<< Response: {json.dumps(result, indent=2)[:3000]}")
 
         if "errors" in result and result["errors"]:
             raise Exception(f"GraphQL errors: {json.dumps(result['errors'], indent=2)}")
@@ -112,12 +126,14 @@ class RSCClient:
 # ---------------------------------------------------------------------------
 
 FIND_HOSTS_QUERY = """
-query FindHosts($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!) {
-  physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after) {
+query PhysicalHostListQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $sortBy: HierarchySortByField, $sortOrder: SortOrder, $filter: [Filter!]!) {
+  physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
     edges {
+      cursor
       node {
         id
         name
+        objectType
         cluster {
           id
           name
@@ -138,12 +154,14 @@ query FindHosts($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Fi
 """
 
 FIND_HOST_FILESETS_QUERY = """
-query FindHostFilesets($id: UUID!, $first: Int!, $after: String) {
+query PhysicalHostDetailQuery($id: UUID!, $first: Int!, $after: String, $sortBy: HierarchySortByField, $sortOrder: SortOrder) {
   physicalHost(fid: $id) {
     id
     name
-    physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], first: $first, after: $after) {
+    physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
+      count
       edges {
+        cursor
         node {
           id
           name
@@ -229,6 +247,8 @@ def parse_args():
                         help="Delay between batches in seconds (default: 2)")
     parser.add_argument("--force", "-f", action="store_true",
                         help="Skip confirmation and use default timings (batch-size=50, batch-delay=2)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print full GraphQL requests and responses")
     return parser.parse_args()
 
 
@@ -287,6 +307,8 @@ def find_hosts(client, hostnames):
         variables = {
             "hostRoot": host_root,
             "first": 200,
+            "sortBy": "NAME",
+            "sortOrder": "ASC",
             "filter": [
                 {"field": "NAME", "texts": list(hostnames)},
             ],
@@ -328,7 +350,7 @@ def get_host_filesets(client, host_id):
     after = None
 
     while True:
-        variables = {"id": host_id, "first": 200}
+        variables = {"id": host_id, "first": 200, "sortBy": "NAME", "sortOrder": "ASC"}
         if after:
             variables["after"] = after
 
@@ -447,7 +469,7 @@ def main():
 
     print(f"\nConnecting to RSC...")
     try:
-        client = RSCClient(rsc_url, client_id, client_secret)
+        client = RSCClient(rsc_url, client_id, client_secret, debug=args.debug)
     except Exception as e:
         print(f"ERROR: {e}")
         sys.exit(1)
