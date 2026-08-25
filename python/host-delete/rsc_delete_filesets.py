@@ -16,6 +16,9 @@ Usage examples:
   # Non-interactive with RSC Service Account JSON
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --force
 
+  # Non-interactive with direct credentials
+  python3 rsc_delete_filesets.py --rsc_url rubrik-gaia.my.rubrik.com --svc_client_id ABC --svc_secret XYZ --csv hosts.csv --force
+
   # Preserve snapshots instead of expiring immediately
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --preserve-snapshots --force
 """
@@ -40,30 +43,17 @@ from cdm_client import run_in_batches, clean_input
 # ---------------------------------------------------------------------------
 
 class RSCClient:
-    """RSC GraphQL API client, authenticated via a Service Account JSON."""
+    """RSC GraphQL API client, authenticated via Service Account credentials."""
 
-    def __init__(self, json_path):
-        with open(json_path, "r") as f:
-            data = json.load(f)
+    def __init__(self, rsc_url, client_id, client_secret):
+        if not rsc_url.startswith("http"):
+            rsc_url = f"https://{rsc_url}"
+        rsc_url = rsc_url.rstrip("/")
 
-        client_id = data.get("client_id")
-        client_secret = data.get("client_secret")
-        access_token_uri = data.get("access_token_uri")
-
-        missing = []
-        if not client_id:
-            missing.append("client_id")
-        if not client_secret:
-            missing.append("client_secret")
-        if not access_token_uri:
-            missing.append("access_token_uri")
-        if missing:
-            raise Exception(f"JSON file is missing required fields: {', '.join(missing)}")
-
-        base_url = access_token_uri.replace("/api/client_token", "")
-        self.graphql_url = f"{base_url}/api/graphql"
+        self.graphql_url = f"{rsc_url}/api/graphql"
+        token_uri = f"{rsc_url}/api/client_token"
         self.token = None
-        self._authenticate(access_token_uri, client_id, client_secret)
+        self._authenticate(token_uri, client_id, client_secret)
 
     def _authenticate(self, token_uri, client_id, client_secret):
         body = json.dumps({
@@ -71,13 +61,17 @@ class RSCClient:
             "client_secret": client_secret,
         }).encode("utf-8")
 
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
         req = urllib.request.Request(
             token_uri, data=body,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, context=ctx) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
@@ -94,11 +88,15 @@ class RSCClient:
             "Accept": "application/json",
             "Authorization": f"Bearer {self.token}",
         }
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
         req = urllib.request.Request(
             self.graphql_url, data=body, headers=headers, method="POST",
         )
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, context=ctx) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
@@ -156,6 +154,26 @@ mutation DeleteFilesets($ids: [String!]!, $preserveSnapshots: Boolean) {
 # Helper functions
 # ---------------------------------------------------------------------------
 
+def load_rsc_json_credentials(json_path):
+    with open(json_path, "r") as f:
+        data = json.load(f)
+    client_id = data.get("client_id")
+    client_secret = data.get("client_secret")
+    access_token_uri = data.get("access_token_uri")
+    missing = []
+    if not client_id:
+        missing.append("client_id")
+    if not client_secret:
+        missing.append("client_secret")
+    if not access_token_uri:
+        missing.append("access_token_uri")
+    if missing:
+        print(f"ERROR: JSON file is missing required fields: {', '.join(missing)}")
+        sys.exit(1)
+    rsc_url = access_token_uri.replace("/api/client_token", "")
+    return rsc_url, client_id, client_secret
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Delete filesets from Rubrik hosts via the RSC GraphQL API. "
@@ -163,11 +181,20 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
                "  %(prog)s --svc_json rsc-sa.json --csv hosts.csv --force\n"
-               "  %(prog)s --svc_json rsc-sa.json --csv hosts.csv --preserve-snapshots --force\n"
+               "  %(prog)s --rsc_url rubrik-gaia.my.rubrik.com --svc_client_id ABC --svc_secret XYZ --csv hosts.csv --force\n"
                "  %(prog)s   (fully interactive)\n",
     )
-    parser.add_argument("--svc_json", metavar="FILE",
-                        help="RSC Service Account JSON file (client_id, client_secret, access_token_uri)")
+
+    auth_group = parser.add_argument_group("authentication")
+    auth_group.add_argument("--svc_json", metavar="FILE",
+                            help="RSC Service Account JSON file (client_id, client_secret, access_token_uri)")
+    auth_group.add_argument("--rsc_url", metavar="URL",
+                            help="RSC URL (e.g., rubrik-gaia.my.rubrik.com) (alt to --svc_json)")
+    auth_group.add_argument("--svc_client_id", metavar="ID",
+                            help="Service Account Client ID (alt to --svc_json)")
+    auth_group.add_argument("--svc_secret",
+                            help="Service Account Secret (alt to --svc_json)")
+
     parser.add_argument("--csv", metavar="FILE",
                         help="CSV file with hostname and cluster columns")
     parser.add_argument("--preserve-snapshots", action="store_true",
@@ -341,9 +368,22 @@ def main():
         print("Mode: EXPIRE snapshots immediately")
     print()
 
-    # --- Auth ---
-    json_path = prompt_if_missing(args.svc_json, "RSC Service Account JSON file path: ", required=True)
-    json_path = os.path.expanduser(json_path)
+    # --- Resolve credentials ---
+    json_path = args.svc_json
+    if not json_path and not args.svc_client_id:
+        json_path = input("Service Account JSON (leave blank if providing credentials directly): ").strip()
+    if json_path:
+        json_path = os.path.expanduser(json_path)
+        print(f"Reading credentials from: {json_path}")
+        rsc_url, client_id, client_secret = load_rsc_json_credentials(json_path)
+    else:
+        rsc_url = prompt_if_missing(
+            args.rsc_url, "RSC URL (e.g., rubrik-gaia.my.rubrik.com): ", required=True)
+        client_id = prompt_if_missing(
+            args.svc_client_id, "Service Account Client ID: ", required=True)
+        client_secret = prompt_if_missing(
+            args.svc_secret, "Service Account Secret: ", required=True)
+
     csv_file = prompt_if_missing(args.csv, "CSV file path (hostname,cluster): ", required=True)
     csv_file = os.path.expanduser(csv_file)
 
@@ -359,7 +399,7 @@ def main():
 
     print(f"\nConnecting to RSC...")
     try:
-        client = RSCClient(json_path)
+        client = RSCClient(rsc_url, client_id, client_secret)
     except Exception as e:
         print(f"ERROR: {e}")
         sys.exit(1)

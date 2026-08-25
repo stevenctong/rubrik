@@ -138,8 +138,10 @@ to keep them in Unmanaged Objects instead.
 BEFORE YOU START
 -----------------
 You'll need:
-  - An RSC Service Account JSON file (client_id, client_secret,
-    access_token_uri)
+  - Either:
+    (a) An RSC Service Account JSON file (contains client_id, client_secret,
+        access_token_uri)
+    (b) RSC URL, Service Account Client ID, and Secret
 
 Input CSV must have "name" (or "hostname") and "cluster" columns:
 
@@ -153,11 +155,22 @@ RUNNING IT
   # Fully interactive
   python3 rsc_delete_filesets.py
 
-  # Non-interactive
+  # Non-interactive with Service Account JSON
   python3 rsc_delete_filesets.py \
     --svc_json rsc-sa.json \
     --csv hosts.csv \
     --force
+
+  # Non-interactive with direct credentials
+  python3 rsc_delete_filesets.py \
+    --rsc_url rubrik-gaia.my.rubrik.com \
+    --svc_client_id "abc-123" \
+    --svc_secret "my-secret" \
+    --csv hosts.csv \
+    --force
+
+  # Hybrid -- provide some args, prompt for the rest
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv
 
   # Preserve snapshots instead of expiring
   python3 rsc_delete_filesets.py \
@@ -168,7 +181,10 @@ RUNNING IT
 CLI arguments:
 
   Authentication:
-    --svc_json FILE       RSC Service Account JSON file
+    --svc_json FILE       Service Account JSON file
+    --rsc_url URL         RSC URL (e.g., rubrik-gaia.my.rubrik.com) (alt to --svc_json)
+    --svc_client_id ID    Service Account Client ID (alt to --svc_json)
+    --svc_secret SECRET   Service Account Secret (alt to --svc_json)
 
   Input:
     --csv FILE            CSV file with hostname and cluster columns
@@ -182,7 +198,7 @@ CLI arguments:
     --preserve-snapshots  Preserve snapshots (default: expire immediately)
 
 What it does:
-  1. Authenticates to RSC using the Service Account JSON.
+  1. Authenticates to RSC using the Service Account JSON or direct credentials.
   2. Queries RSC for each unique hostname across both Linux and Windows
      host roots, retrieving the host and all its filesets.
   3. Matches RSC results against the CSV by hostname + cluster name.
