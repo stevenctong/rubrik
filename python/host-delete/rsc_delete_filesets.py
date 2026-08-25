@@ -111,8 +111,8 @@ class RSCClient:
 # GraphQL queries
 # ---------------------------------------------------------------------------
 
-FIND_HOST_FILESETS_QUERY = """
-query FindHostFilesets($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!) {
+FIND_HOSTS_QUERY = """
+query FindHosts($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!) {
   physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after) {
     edges {
       node {
@@ -121,22 +121,45 @@ query FindHostFilesets($hostRoot: HostRoot!, $first: Int!, $after: String, $filt
         cluster {
           id
           name
+          __typename
         }
-        descendantConnection(typeFilter: [LinuxFileset, WindowsFileset]) {
-          edges {
-            node {
-              id
-              name
-              objectType
-            }
-          }
-        }
+        __typename
       }
+      __typename
     }
     pageInfo {
       endCursor
       hasNextPage
+      __typename
     }
+    __typename
+  }
+}
+"""
+
+FIND_HOST_FILESETS_QUERY = """
+query FindHostFilesets($id: UUID!, $first: Int!, $after: String) {
+  physicalHost(fid: $id) {
+    id
+    name
+    physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], first: $first, after: $after) {
+      edges {
+        node {
+          id
+          name
+          objectType
+          __typename
+        }
+        __typename
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+        __typename
+      }
+      __typename
+    }
+    __typename
   }
 }
 """
@@ -145,6 +168,7 @@ DELETE_FILESETS_MUTATION = """
 mutation DeleteFilesets($ids: [String!]!, $preserveSnapshots: Boolean) {
   bulkDeleteFileset(input: {ids: $ids, preserveSnapshots: $preserveSnapshots}) {
     success
+    __typename
   }
 }
 """
@@ -252,10 +276,10 @@ def read_csv_entries(csv_file):
     return entries
 
 
-def find_hosts_with_filesets(client, hostnames):
+def find_hosts(client, hostnames):
     """
     Query RSC for hosts matching the given hostnames (both Linux and Windows
-    host roots). Returns a list of dicts with host info and filesets.
+    host roots). Returns a list of dicts with basic host info.
     """
     all_hosts = []
 
@@ -273,27 +297,17 @@ def find_hosts_with_filesets(client, hostnames):
             if after:
                 variables["after"] = after
 
-            data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
+            data = client.graphql(FIND_HOSTS_QUERY, variables)
             connection = data.get("physicalHosts", {})
-            edges = connection.get("edges", [])
 
-            for edge in edges:
+            for edge in connection.get("edges", []):
                 node = edge.get("node", {})
                 cluster = node.get("cluster", {})
-                filesets = []
-                for fs_edge in node.get("descendantConnection", {}).get("edges", []):
-                    fs_node = fs_edge.get("node", {})
-                    filesets.append({
-                        "id": fs_node.get("id"),
-                        "name": fs_node.get("name"),
-                        "objectType": fs_node.get("objectType"),
-                    })
                 all_hosts.append({
                     "host_id": node.get("id"),
                     "hostname": node.get("name", ""),
                     "cluster_id": cluster.get("id"),
                     "cluster_name": cluster.get("name", ""),
-                    "filesets": filesets,
                 })
 
             page_info = connection.get("pageInfo", {})
@@ -303,6 +317,40 @@ def find_hosts_with_filesets(client, hostnames):
                 break
 
     return all_hosts
+
+
+def get_host_filesets(client, host_id):
+    """
+    Query RSC for all filesets belonging to a single host.
+    Returns a list of fileset dicts.
+    """
+    filesets = []
+    after = None
+
+    while True:
+        variables = {"id": host_id, "first": 200}
+        if after:
+            variables["after"] = after
+
+        data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
+        host_data = data.get("physicalHost", {})
+        connection = host_data.get("physicalChildConnection", {})
+
+        for edge in connection.get("edges", []):
+            node = edge.get("node", {})
+            filesets.append({
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "objectType": node.get("objectType"),
+            })
+
+        page_info = connection.get("pageInfo", {})
+        if page_info.get("hasNextPage") and page_info.get("endCursor"):
+            after = page_info["endCursor"]
+        else:
+            break
+
+    return filesets
 
 
 def delete_filesets(client, fileset_ids, preserve_snapshots, batch_size, delay_seconds):
@@ -413,10 +461,10 @@ def main():
         sys.exit(1)
     print(f"Found {len(entries)} hostname+cluster entries in CSV.\n")
 
-    # --- Look up hosts and filesets ---
+    # --- Look up hosts ---
     unique_hostnames = list({e["hostname"].lower() for e in entries})
     print(f"Looking up {len(unique_hostnames)} unique hostnames in RSC...")
-    rsc_hosts = find_hosts_with_filesets(client, unique_hostnames)
+    rsc_hosts = find_hosts(client, unique_hostnames)
     print(f"RSC returned {len(rsc_hosts)} matching host(s).\n")
 
     # --- Match CSV entries to RSC hosts ---
@@ -425,30 +473,45 @@ def main():
         key = (entry["hostname"].lower(), entry["cluster"].lower())
         csv_lookup[key] = entry
 
-    matched_filesets = []
-    not_found = []
-
+    matched_hosts = []
     matched_keys = set()
     for host in rsc_hosts:
         key = (host["hostname"].lower(), host["cluster_name"].lower())
         if key in csv_lookup:
             matched_keys.add(key)
-            for fs in host["filesets"]:
-                matched_filesets.append({
-                    "hostname": host["hostname"],
-                    "cluster": host["cluster_name"],
-                    "id": fs["id"],
-                    "name": fs["name"],
-                    "objectType": fs["objectType"],
-                })
+            matched_hosts.append(host)
+
+    not_found = []
 
     for key, entry in csv_lookup.items():
         if key not in matched_keys:
             not_found.append(entry)
 
-    hosts_matched = len(matched_keys)
-    print(f"  CSV entries matched:   {hosts_matched}")
+    print(f"  CSV entries matched:   {len(matched_hosts)}")
     print(f"  CSV entries not found: {len(not_found)}")
+
+    if not matched_hosts:
+        print("\nNo matching hosts found. Exiting.")
+        if not_found:
+            print("  Not found (first 5):")
+            for entry in not_found[:5]:
+                print(f"    - {entry['hostname']} ({entry['cluster']})")
+        sys.exit(0)
+
+    # --- Look up filesets per host ---
+    print(f"\nLooking up filesets for {len(matched_hosts)} host(s)...")
+    matched_filesets = []
+    for host in matched_hosts:
+        filesets = get_host_filesets(client, host["host_id"])
+        for fs in filesets:
+            matched_filesets.append({
+                "hostname": host["hostname"],
+                "cluster": host["cluster_name"],
+                "id": fs["id"],
+                "name": fs["name"],
+                "objectType": fs["objectType"],
+            })
+
     print(f"  Total filesets found:  {len(matched_filesets)}")
 
     if not_found:
