@@ -83,7 +83,7 @@ class RSCClient:
             raise Exception(f"No access_token in auth response: {result}")
 
     def graphql(self, query, variables=None):
-        payload = {"query": query, "variables": variables or {}}
+        payload = {"variables": variables or {}, "query": query}
         body = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -128,18 +128,26 @@ class RSCClient:
 FIND_HOSTS_QUERY = """
 query PhysicalHostListQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $sortBy: HierarchySortByField, $sortOrder: SortOrder, $filter: [Filter!]!) {
   physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
-    nodes {
-      id
-      name
-      objectType
-      cluster {
+    edges {
+      cursor
+      node {
         id
         name
+        objectType
+        cluster {
+          id
+          name
+          __typename
+        }
         __typename
       }
       __typename
     }
-    count
+    pageInfo {
+      endCursor
+      hasNextPage
+      __typename
+    }
     __typename
   }
 }
@@ -151,10 +159,19 @@ query PhysicalHostDetailQuery($id: UUID!, $first: Int!, $after: String, $sortBy:
     id
     name
     physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
-      nodes {
-        id
-        name
-        objectType
+      edges {
+        cursor
+        node {
+          id
+          name
+          objectType
+          __typename
+        }
+        __typename
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
         __typename
       }
       count
@@ -222,6 +239,8 @@ def parse_args():
 
     parser.add_argument("--csv", metavar="FILE",
                         help="CSV file with hostname and cluster columns")
+    parser.add_argument("--host_inventory", metavar="FILE",
+                        help="Previously-saved host inventory CSV (skips RSC host lookup)")
     parser.add_argument("--preserve-snapshots", action="store_true",
                         help="Keep snapshots (default: expire immediately)")
     parser.add_argument("--batch-size", type=int, default=None, metavar="N",
@@ -279,37 +298,93 @@ def read_csv_entries(csv_file):
     return entries
 
 
-def find_hosts(client, hostnames):
+def fetch_all_hosts(client):
     """
-    Query RSC for hosts matching the given hostnames (both Linux and Windows
-    host roots). Returns a list of dicts with basic host info.
+    Paginate the full RSC host inventory (Linux + Windows roots).
+    Returns every host as a list of dicts -- no client-side filtering.
     """
     all_hosts = []
 
     for host_root in ["LINUX_HOST_ROOT", "WINDOWS_HOST_ROOT"]:
-        variables = {
-            "hostRoot": host_root,
-            "first": 200,
-            "sortBy": "NAME",
-            "sortOrder": "ASC",
-            "filter": [
-                {"field": "NAME", "texts": list(hostnames)},
-            ],
-        }
+        root_label = "Linux" if "LINUX" in host_root else "Windows"
+        after = None
+        page = 0
+        total_scanned = 0
+        while True:
+            variables = {
+                "hostRoot": host_root,
+                "first": 200,
+                "sortBy": "NAME",
+                "sortOrder": "ASC",
+                "filter": [
+                    {"field": "IS_RELIC", "texts": ["false"]},
+                    {"field": "IS_REPLICATED", "texts": ["false"]},
+                    {"field": "IS_KUPR_HOST", "texts": ["false"]},
+                ],
+            }
+            if after:
+                variables["after"] = after
 
-        data = client.graphql(FIND_HOSTS_QUERY, variables)
-        connection = data.get("physicalHosts", {})
+            data = client.graphql(FIND_HOSTS_QUERY, variables)
+            connection = data.get("physicalHosts", {})
+            edges = connection.get("edges", [])
+            total_scanned += len(edges)
 
-        for node in connection.get("nodes", []):
-            cluster = node.get("cluster", {})
-            all_hosts.append({
-                "host_id": node.get("id"),
-                "hostname": node.get("name", ""),
-                "cluster_id": cluster.get("id"),
-                "cluster_name": cluster.get("name", ""),
-            })
+            for edge in edges:
+                node = edge.get("node", {})
+                cluster = node.get("cluster", {})
+                all_hosts.append({
+                    "hostname": node.get("name", ""),
+                    "host_id": node.get("id"),
+                    "cluster_name": cluster.get("name", ""),
+                    "cluster_id": cluster.get("id"),
+                    "host_root": host_root,
+                })
+
+            page_info = connection.get("pageInfo", {})
+            if page_info.get("hasNextPage") and page_info.get("endCursor"):
+                after = page_info["endCursor"]
+                page += 1
+                print(f"  {root_label} hosts: scanned {total_scanned} (page {page + 1})...")
+            else:
+                print(f"  {root_label} hosts: {total_scanned} total" +
+                      (f" across {page + 1} pages" if page > 0 else ""))
+                break
 
     return all_hosts
+
+
+INVENTORY_FIELDS = ["hostname", "host_id", "cluster_name", "cluster_id", "host_root"]
+
+
+def save_inventory_csv(hosts, log_dir):
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = os.path.join(log_dir, f"rsc_host_inventory_{timestamp}.csv")
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=INVENTORY_FIELDS)
+        writer.writeheader()
+        for host in hosts:
+            writer.writerow({k: host.get(k, "") for k in INVENTORY_FIELDS})
+    return path
+
+
+def load_inventory_csv(csv_path):
+    hosts = []
+    with open(csv_path, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            hostname = row.get("hostname") or row.get("Hostname") or row.get("name") or ""
+            host_id = row.get("host_id") or row.get("id") or ""
+            if hostname.strip() and host_id.strip():
+                hosts.append({
+                    "hostname": hostname.strip(),
+                    "host_id": host_id.strip(),
+                    "cluster_name": (row.get("cluster_name") or row.get("cluster") or "").strip(),
+                    "cluster_id": (row.get("cluster_id") or "").strip(),
+                    "host_root": (row.get("host_root") or "").strip(),
+                })
+    return hosts
 
 
 def get_host_filesets(client, host_id):
@@ -318,18 +393,30 @@ def get_host_filesets(client, host_id):
     Returns a list of fileset dicts.
     """
     filesets = []
-    variables = {"id": host_id, "first": 200, "sortBy": "NAME", "sortOrder": "ASC"}
+    after = None
 
-    data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
-    host_data = data.get("physicalHost", {})
-    connection = host_data.get("physicalChildConnection", {})
+    while True:
+        variables = {"id": host_id, "first": 200, "sortBy": "NAME", "sortOrder": "ASC"}
+        if after:
+            variables["after"] = after
 
-    for node in connection.get("nodes", []):
-        filesets.append({
-            "id": node.get("id"),
-            "name": node.get("name"),
-            "objectType": node.get("objectType"),
-        })
+        data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
+        host_data = data.get("physicalHost", {})
+        connection = host_data.get("physicalChildConnection", {})
+
+        for edge in connection.get("edges", []):
+            node = edge.get("node", {})
+            filesets.append({
+                "id": node.get("id"),
+                "name": node.get("name"),
+                "objectType": node.get("objectType"),
+            })
+
+        page_info = connection.get("pageInfo", {})
+        if page_info.get("hasNextPage") and page_info.get("endCursor"):
+            after = page_info["endCursor"]
+        else:
+            break
 
     return filesets
 
@@ -442,13 +529,21 @@ def main():
         sys.exit(1)
     print(f"Found {len(entries)} hostname+cluster entries in CSV.\n")
 
-    # --- Look up hosts ---
-    unique_hostnames = list({e["hostname"].lower() for e in entries})
-    print(f"Looking up {len(unique_hostnames)} unique hostnames in RSC...")
-    rsc_hosts = find_hosts(client, unique_hostnames)
-    print(f"RSC returned {len(rsc_hosts)} matching host(s).\n")
+    # --- Get host inventory (from RSC or cached CSV) ---
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    if args.host_inventory:
+        inv_path = os.path.expanduser(args.host_inventory)
+        print(f"Loading host inventory from: {inv_path}")
+        all_rsc_hosts = load_inventory_csv(inv_path)
+        print(f"Loaded {len(all_rsc_hosts)} hosts from inventory CSV.\n")
+    else:
+        print("Fetching full host inventory from RSC...")
+        all_rsc_hosts = fetch_all_hosts(client)
+        inv_path = save_inventory_csv(all_rsc_hosts, log_dir)
+        print(f"  Total hosts in RSC: {len(all_rsc_hosts)}")
+        print(f"  Inventory saved to: {inv_path}\n")
 
-    # --- Match CSV entries to RSC hosts ---
+    # --- Match CSV entries to inventory ---
     csv_lookup = {}
     for entry in entries:
         key = (entry["hostname"].lower(), entry["cluster"].lower())
@@ -456,14 +551,13 @@ def main():
 
     matched_hosts = []
     matched_keys = set()
-    for host in rsc_hosts:
+    for host in all_rsc_hosts:
         key = (host["hostname"].lower(), host["cluster_name"].lower())
         if key in csv_lookup:
             matched_keys.add(key)
             matched_hosts.append(host)
 
     not_found = []
-
     for key, entry in csv_lookup.items():
         if key not in matched_keys:
             not_found.append(entry)
@@ -547,7 +641,6 @@ def main():
     fail_count = sum(1 for r in results if r["status"] == "Failed")
 
     # --- Write output ---
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_file = os.path.join(log_dir, f"fileset_delete_results_{timestamp}.csv")
@@ -570,7 +663,7 @@ def main():
     print(f"{'=' * 60}")
     print(f"  CSV entries:           {len(entries)}")
     print(f"  Entries not found:     {len(not_found)}")
-    print(f"  Hosts matched:         {hosts_matched}")
+    print(f"  Hosts matched:         {len(matched_hosts)}")
     print(f"  Filesets processed:    {len(matched_filesets)}")
     print(f"  Deleted:               {success_count}")
     print(f"  Failed:                {fail_count}")

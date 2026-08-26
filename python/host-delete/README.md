@@ -178,6 +178,13 @@ RUNNING IT
     --csv hosts.csv \
     --preserve-snapshots --force
 
+  # Re-run using a previously-saved host inventory (skips RSC host lookup)
+  python3 rsc_delete_filesets.py \
+    --svc_json rsc-sa.json \
+    --csv hosts.csv \
+    --host_inventory logs/rsc_host_inventory_20260826_143012.csv \
+    --force
+
 CLI arguments:
 
   Authentication:
@@ -188,6 +195,9 @@ CLI arguments:
 
   Input:
     --csv FILE            CSV file with hostname and cluster columns
+    --host_inventory FILE Previously-saved host inventory CSV (skips RSC
+                          host lookup). Generated automatically on each run
+                          in logs/rsc_host_inventory_<timestamp>.csv.
 
   Tuning:
     --batch-size N        Fileset IDs per delete call (default 50)
@@ -199,12 +209,16 @@ CLI arguments:
 
 What it does:
   1. Authenticates to RSC using the Service Account JSON or direct credentials.
-  2. Queries RSC for each unique hostname across both Linux and Windows
-     host roots, retrieving the host and all its filesets.
-  3. Matches RSC results against the CSV by hostname + cluster name.
+  2. Pulls the full host inventory from RSC (Linux + Windows host roots)
+     with pagination and saves it to logs/rsc_host_inventory_<timestamp>.csv.
+     If --host_inventory is provided, loads the inventory from that CSV
+     instead (skips the RSC lookup).
+  3. Matches inventory hosts against the input CSV by hostname + cluster name,
+     then queries RSC for each matched host's filesets.
   4. Previews all matched hosts and filesets, then asks for confirmation.
   5. Deletes all matched filesets in batches via the bulkDeleteFileset
      GraphQL mutation. If a batch fails, falls back to individual deletes.
   6. Writes output files to logs/:
-       fileset_delete_results_<timestamp>.csv  - per-fileset results
-       hosts_not_found_<timestamp>.csv         - unmatched CSV entries
+       rsc_host_inventory_<timestamp>.csv      - full host inventory from RSC
+       fileset_delete_results_<timestamp>.csv   - per-fileset results
+       hosts_not_found_<timestamp>.csv          - unmatched CSV entries
