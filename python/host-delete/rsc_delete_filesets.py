@@ -128,26 +128,18 @@ class RSCClient:
 FIND_HOSTS_QUERY = """
 query PhysicalHostListQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $sortBy: HierarchySortByField, $sortOrder: SortOrder, $filter: [Filter!]!) {
   physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
-    edges {
-      cursor
-      node {
+    nodes {
+      id
+      name
+      objectType
+      cluster {
         id
         name
-        objectType
-        cluster {
-          id
-          name
-          __typename
-        }
         __typename
       }
       __typename
     }
-    pageInfo {
-      endCursor
-      hasNextPage
-      __typename
-    }
+    count
     __typename
   }
 }
@@ -159,22 +151,13 @@ query PhysicalHostDetailQuery($id: UUID!, $first: Int!, $after: String, $sortBy:
     id
     name
     physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
+      nodes {
+        id
+        name
+        objectType
+        __typename
+      }
       count
-      edges {
-        cursor
-        node {
-          id
-          name
-          objectType
-          __typename
-        }
-        __typename
-      }
-      pageInfo {
-        endCursor
-        hasNextPage
-        __typename
-      }
       __typename
     }
     __typename
@@ -314,29 +297,17 @@ def find_hosts(client, hostnames):
             ],
         }
 
-        after = None
-        while True:
-            if after:
-                variables["after"] = after
+        data = client.graphql(FIND_HOSTS_QUERY, variables)
+        connection = data.get("physicalHosts", {})
 
-            data = client.graphql(FIND_HOSTS_QUERY, variables)
-            connection = data.get("physicalHosts", {})
-
-            for edge in connection.get("edges", []):
-                node = edge.get("node", {})
-                cluster = node.get("cluster", {})
-                all_hosts.append({
-                    "host_id": node.get("id"),
-                    "hostname": node.get("name", ""),
-                    "cluster_id": cluster.get("id"),
-                    "cluster_name": cluster.get("name", ""),
-                })
-
-            page_info = connection.get("pageInfo", {})
-            if page_info.get("hasNextPage") and page_info.get("endCursor"):
-                after = page_info["endCursor"]
-            else:
-                break
+        for node in connection.get("nodes", []):
+            cluster = node.get("cluster", {})
+            all_hosts.append({
+                "host_id": node.get("id"),
+                "hostname": node.get("name", ""),
+                "cluster_id": cluster.get("id"),
+                "cluster_name": cluster.get("name", ""),
+            })
 
     return all_hosts
 
@@ -347,30 +318,18 @@ def get_host_filesets(client, host_id):
     Returns a list of fileset dicts.
     """
     filesets = []
-    after = None
+    variables = {"id": host_id, "first": 200, "sortBy": "NAME", "sortOrder": "ASC"}
 
-    while True:
-        variables = {"id": host_id, "first": 200, "sortBy": "NAME", "sortOrder": "ASC"}
-        if after:
-            variables["after"] = after
+    data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
+    host_data = data.get("physicalHost", {})
+    connection = host_data.get("physicalChildConnection", {})
 
-        data = client.graphql(FIND_HOST_FILESETS_QUERY, variables)
-        host_data = data.get("physicalHost", {})
-        connection = host_data.get("physicalChildConnection", {})
-
-        for edge in connection.get("edges", []):
-            node = edge.get("node", {})
-            filesets.append({
-                "id": node.get("id"),
-                "name": node.get("name"),
-                "objectType": node.get("objectType"),
-            })
-
-        page_info = connection.get("pageInfo", {})
-        if page_info.get("hasNextPage") and page_info.get("endCursor"):
-            after = page_info["endCursor"]
-        else:
-            break
+    for node in connection.get("nodes", []):
+        filesets.append({
+            "id": node.get("id"),
+            "name": node.get("name"),
+            "objectType": node.get("objectType"),
+        })
 
     return filesets
 
