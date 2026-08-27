@@ -185,6 +185,20 @@ RUNNING IT
     --host_inventory linux_host_inventory_20260826_143012.csv \
     --force
 
+  # Slow environment -- increase timeout, reduce parallelism
+  python3 rsc_delete_filesets.py \
+    --svc_json rsc-sa.json \
+    --csv hosts.csv \
+    --timeout 300 --parallel 2 \
+    --force
+
+  # High throughput -- max parallelism
+  python3 rsc_delete_filesets.py \
+    --svc_json rsc-sa.json \
+    --csv hosts.csv \
+    --parallel 8 \
+    --force
+
 CLI arguments:
 
   Authentication:
@@ -202,11 +216,12 @@ CLI arguments:
                           script directory.
 
   Tuning:
-    --batch-size N        Fileset IDs per delete call (default 50)
-    --batch-delay SEC     Delay between batches (default 2s)
+    --parallel N          Max concurrent delete calls (default 4)
+    --retries N           Max retries per fileset on timeout/5xx (default 3)
+    --timeout SEC         HTTP timeout per API call (default 120s)
 
   Other:
-    --force, -f           Skip confirmation and use default timings
+    --force, -f           Skip confirmation and use defaults
     --preserve-snapshots  Preserve snapshots (default: expire immediately)
 
 What it does:
@@ -216,13 +231,21 @@ What it does:
        linux_host_inventory_<timestamp>.csv
        windows_host_inventory_<timestamp>.csv
      If --host_inventory is provided, loads the inventory from that CSV
-     instead (skips the RSC lookup).
+     instead (skips the RSC lookup). Hosts already marked DELETED in the
+     inventory are automatically skipped.
   3. Matches inventory hosts against the input CSV by hostname + cluster name,
-     then queries RSC for each matched host's filesets.
+     then queries RSC for each matched host's filesets. The inventory CSV
+     is enriched with fileset_ids and fileset_names columns.
   4. Previews all matched hosts and filesets, then asks for confirmation.
-  5. Deletes all matched filesets in batches via the bulkDeleteFileset
-     GraphQL mutation. If a batch fails, falls back to individual deletes.
-  6. Writes output files:
+  5. Deletes filesets in parallel (default 4 concurrent workers) via the
+     bulkDeleteFileset GraphQL mutation (single ID per call). On timeout/5xx
+     errors, retries up to 3 times (configurable) with 2s between retries.
+     Ctrl+C saves partial results before exiting.
+  6. Updates the inventory CSV with deletion status per host:
+       DELETED  - all filesets for the host were successfully deleted
+       PARTIAL  - some filesets deleted, some failed or not yet processed
+     On re-run, DELETED hosts are skipped automatically.
+  7. Writes output files:
        linux_host_inventory_<timestamp>.csv     - Linux host inventory (script dir)
        windows_host_inventory_<timestamp>.csv   - Windows host inventory (script dir)
        logs/fileset_delete_results_<timestamp>.csv  - per-fileset results

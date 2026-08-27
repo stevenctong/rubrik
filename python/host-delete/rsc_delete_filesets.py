@@ -39,21 +39,28 @@ Usage examples:
 
   # Re-run using a previously-saved host inventory (skips RSC host lookup)
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --host_inventory linux_host_inventory_20260826_143012.csv --force
+
+  # Slow environment -- increase timeout, reduce parallelism
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --timeout 300 --parallel 2 --force
+
+  # High throughput -- max parallelism
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --parallel 8 --force
 """
 
 import argparse
+import concurrent.futures
 import csv
 import json
 import os
+import socket
 import ssl
 import sys
+import threading
 import time
 import urllib.request
 import urllib.parse
 import urllib.error
 from datetime import datetime
-
-from cdm_client import run_in_batches, clean_input
 
 
 # ---------------------------------------------------------------------------
@@ -63,13 +70,14 @@ from cdm_client import run_in_batches, clean_input
 class RSCClient:
     """RSC GraphQL API client, authenticated via Service Account credentials."""
 
-    def __init__(self, rsc_url, client_id, client_secret, debug=False):
+    def __init__(self, rsc_url, client_id, client_secret, debug=False, timeout=120):
         if not rsc_url.startswith("http"):
             rsc_url = f"https://{rsc_url}"
         rsc_url = rsc_url.rstrip("/")
 
         self.graphql_url = f"{rsc_url}/api/graphql"
         self.debug = debug
+        self.timeout = timeout
         token_uri = f"{rsc_url}/api/client_token"
         self.token = None
         self._authenticate(token_uri, client_id, client_secret)
@@ -90,11 +98,13 @@ class RSCClient:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, context=ctx) as response:
+            with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
             raise Exception(f"RSC auth failed (HTTP {e.code}): {error_body}") from e
+        except (urllib.error.URLError, socket.timeout) as e:
+            raise Exception(f"RSC auth connection error: {e}") from e
 
         self.token = result.get("access_token")
         if not self.token:
@@ -123,13 +133,19 @@ class RSCClient:
             self.graphql_url, data=body, headers=headers, method="POST",
         )
         try:
-            with urllib.request.urlopen(req, context=ctx) as response:
+            with urllib.request.urlopen(req, context=ctx, timeout=self.timeout) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
             if self.debug:
                 print(f"[DEBUG] <<< HTTP {e.code} error: {error_body}")
+            if e.code in (502, 503, 504):
+                raise TimeoutError(f"Server timeout (HTTP {e.code}): {error_body}") from e
             raise Exception(f"GraphQL error (HTTP {e.code}): {error_body}") from e
+        except (socket.timeout, urllib.error.URLError) as e:
+            if self.debug:
+                print(f"[DEBUG] <<< Connection error: {e}")
+            raise TimeoutError(f"Connection timeout: {e}") from e
 
         if self.debug:
             print(f"[DEBUG] <<< Response: {json.dumps(result, indent=2)[:3000]}")
@@ -261,12 +277,14 @@ def parse_args():
                         help="Previously-saved host inventory CSV (skips RSC host lookup)")
     parser.add_argument("--preserve-snapshots", action="store_true",
                         help="Keep snapshots (default: expire immediately)")
-    parser.add_argument("--batch-size", type=int, default=None, metavar="N",
-                        help="Fileset IDs per delete call (default: 50)")
-    parser.add_argument("--batch-delay", type=int, default=None, metavar="SEC",
-                        help="Delay between batches in seconds (default: 2)")
+    parser.add_argument("--parallel", type=int, default=None, metavar="N",
+                        help="Max concurrent delete calls (default: 4)")
+    parser.add_argument("--retries", type=int, default=None, metavar="N",
+                        help="Max retries per fileset on timeout/5xx (default: 3)")
+    parser.add_argument("--timeout", type=int, default=None, metavar="SEC",
+                        help="HTTP timeout per API call in seconds (default: 120)")
     parser.add_argument("--force", "-f", action="store_true",
-                        help="Skip confirmation and use default timings (batch-size=50, batch-delay=2)")
+                        help="Skip confirmation and use defaults")
     parser.add_argument("--debug", action="store_true",
                         help="Print full GraphQL requests and responses")
     return parser.parse_args()
@@ -316,7 +334,10 @@ def read_csv_entries(csv_file):
     return entries
 
 
-INVENTORY_FIELDS = ["hostname", "host_id", "cluster_name", "cluster_id", "host_root"]
+INVENTORY_FIELDS = [
+    "hostname", "host_id", "cluster_name", "cluster_id", "host_root",
+    "fileset_ids", "fileset_names", "status",
+]
 
 
 def fetch_all_hosts(client, save_dir):
@@ -390,20 +411,39 @@ def fetch_all_hosts(client, save_dir):
 
 def load_inventory_csv(csv_path):
     hosts = []
+    skipped = 0
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
         for row in reader:
             hostname = row.get("hostname") or row.get("Hostname") or row.get("name") or ""
             host_id = row.get("host_id") or row.get("id") or ""
-            if hostname.strip() and host_id.strip():
-                hosts.append({
-                    "hostname": hostname.strip(),
-                    "host_id": host_id.strip(),
-                    "cluster_name": (row.get("cluster_name") or row.get("cluster") or "").strip(),
-                    "cluster_id": (row.get("cluster_id") or "").strip(),
-                    "host_root": (row.get("host_root") or "").strip(),
-                })
+            if not (hostname.strip() and host_id.strip()):
+                continue
+            status = (row.get("status") or "").strip()
+            if status == "DELETED":
+                skipped += 1
+                continue
+            hosts.append({
+                "hostname": hostname.strip(),
+                "host_id": host_id.strip(),
+                "cluster_name": (row.get("cluster_name") or row.get("cluster") or "").strip(),
+                "cluster_id": (row.get("cluster_id") or "").strip(),
+                "host_root": (row.get("host_root") or "").strip(),
+                "fileset_ids": (row.get("fileset_ids") or "").strip(),
+                "fileset_names": (row.get("fileset_names") or "").strip(),
+                "status": status,
+            })
+    if skipped:
+        print(f"  Skipped {skipped} host(s) already marked DELETED.")
     return hosts
+
+
+def save_inventory_csv(hosts, csv_path):
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=INVENTORY_FIELDS)
+        writer.writeheader()
+        for host in hosts:
+            writer.writerow({k: host.get(k, "") for k in INVENTORY_FIELDS})
 
 
 def get_host_filesets(client, host_id):
@@ -440,50 +480,72 @@ def get_host_filesets(client, host_id):
     return filesets
 
 
-def delete_filesets(client, fileset_ids, preserve_snapshots, batch_size, delay_seconds):
-    def process_batch(batch):
-        ids = [fs["id"] for fs in batch]
-        results = []
+RETRY_DELAY = 2
+
+_print_lock = threading.Lock()
+
+
+def _tprint(*args, **kwargs):
+    with _print_lock:
+        print(*args, **kwargs)
+
+
+def delete_filesets(client, filesets, preserve_snapshots, max_retries,
+                    max_workers, results):
+    total = len(filesets)
+    completed = [0]
+
+    def _worker(fs):
+        result = _delete_single(client, fs, preserve_snapshots, max_retries,
+                                total, completed)
+        results.append(result)
+        return result
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_worker, fs): fs for fs in filesets}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
+        except KeyboardInterrupt:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+
+
+def _delete_single(client, fs, preserve_snapshots, max_retries,
+                   total, completed):
+    last_error = None
+    for attempt in range(1 + max_retries):
         try:
             data = client.graphql(DELETE_FILESETS_MUTATION, {
-                "ids": ids,
+                "ids": [fs["id"]],
                 "preserveSnapshots": preserve_snapshots,
             })
             success = data.get("bulkDeleteFileset", {}).get("success", False)
             if success:
-                print(f"  Batch successful ({len(ids)} filesets)")
-                for fs in batch:
-                    results.append({**fs, "status": "Deleted", "message": "OK"})
+                with _print_lock:
+                    completed[0] += 1
+                    print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- OK")
+                return {**fs, "status": "Deleted", "message": "OK"}
             else:
-                print(f"  Batch returned success=false, falling back to individual deletes...")
-                for fs in batch:
-                    results.append(_delete_single(client, fs, preserve_snapshots))
+                with _print_lock:
+                    completed[0] += 1
+                    print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: API returned success=false")
+                return {**fs, "status": "Failed", "message": "API returned success=false"}
+        except TimeoutError as e:
+            last_error = str(e)
+            if attempt < max_retries:
+                _tprint(f"    {fs['hostname']} / {fs['name']} -- timeout (attempt {attempt + 1}/{1 + max_retries}), retrying in {RETRY_DELAY}s...")
+                time.sleep(RETRY_DELAY)
+            continue
         except Exception as e:
-            print(f"  Batch failed: {e}")
-            print("  Falling back to individual deletions...")
-            for fs in batch:
-                results.append(_delete_single(client, fs, preserve_snapshots))
-        return results
-
-    return run_in_batches(fileset_ids, batch_size, delay_seconds, process_batch, label="Delete batch")
-
-
-def _delete_single(client, fs, preserve_snapshots):
-    try:
-        data = client.graphql(DELETE_FILESETS_MUTATION, {
-            "ids": [fs["id"]],
-            "preserveSnapshots": preserve_snapshots,
-        })
-        success = data.get("bulkDeleteFileset", {}).get("success", False)
-        if success:
-            print(f"    OK  {fs['hostname']} / {fs['name']}")
-            return {**fs, "status": "Deleted", "message": "OK"}
-        else:
-            print(f"    FAIL {fs['hostname']} / {fs['name']}: success=false")
-            return {**fs, "status": "Failed", "message": "API returned success=false"}
-    except Exception as e:
-        print(f"    FAIL {fs['hostname']} / {fs['name']}: {e}")
-        return {**fs, "status": "Failed", "message": str(e)}
+            with _print_lock:
+                completed[0] += 1
+                print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: {e}")
+            return {**fs, "status": "Failed", "message": str(e)}
+    with _print_lock:
+        completed[0] += 1
+        print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: timed out after {1 + max_retries} attempts")
+    return {**fs, "status": "Failed", "message": f"Timed out after {1 + max_retries} attempts: {last_error}"}
 
 
 # ---------------------------------------------------------------------------
@@ -522,19 +584,13 @@ def main():
     csv_file = prompt_if_missing(args.csv, "CSV file path (hostname,cluster): ", required=True)
     csv_file = os.path.expanduser(csv_file)
 
-    if args.force:
-        batch_size = args.batch_size if args.batch_size is not None else 50
-        delay_seconds = args.batch_delay if args.batch_delay is not None else 2
-    else:
-        batch_size = prompt_int_if_missing(
-            args.batch_size, "Batch size (default 50): ", default=50, min_val=1, max_val=100)
-        delay_seconds = prompt_int_if_missing(
-            args.batch_delay, "Delay between batches in seconds (default 2): ", default=2)
-    batch_size = max(1, min(100, batch_size))
+    parallel_workers = args.parallel if args.parallel is not None else 4
+    max_retries = args.retries if args.retries is not None else 3
+    http_timeout = args.timeout if args.timeout is not None else 120
 
     print(f"\nConnecting to RSC...")
     try:
-        client = RSCClient(rsc_url, client_id, client_secret, debug=args.debug)
+        client = RSCClient(rsc_url, client_id, client_secret, debug=args.debug, timeout=http_timeout)
     except Exception as e:
         print(f"ERROR: {e}")
         sys.exit(1)
@@ -596,7 +652,11 @@ def main():
     matched_filesets = []
     for host in matched_hosts:
         filesets = get_host_filesets(client, host["host_id"])
+        fs_ids = []
+        fs_names = []
         for fs in filesets:
+            fs_ids.append(fs["id"])
+            fs_names.append(fs["name"])
             matched_filesets.append({
                 "hostname": host["hostname"],
                 "cluster": host["cluster_name"],
@@ -604,6 +664,8 @@ def main():
                 "name": fs["name"],
                 "objectType": fs["objectType"],
             })
+        host["fileset_ids"] = ";".join(fs_ids)
+        host["fileset_names"] = ";".join(fs_names)
 
     print(f"  Total filesets found:  {len(matched_filesets)}")
 
@@ -651,12 +713,42 @@ def main():
     print(f"\n{'=' * 60}")
     print("DELETING FILESETS")
     print(f"{'=' * 60}")
+    print(f"  Parallel: {parallel_workers} workers, retries: {max_retries} (delay {RETRY_DELAY}s), timeout: {http_timeout}s\n")
 
-    results = delete_filesets(
-        client, matched_filesets, args.preserve_snapshots, batch_size, delay_seconds)
+    results = []
+    interrupted = False
+    try:
+        delete_filesets(
+            client, matched_filesets, args.preserve_snapshots,
+            max_retries, parallel_workers, results)
+    except KeyboardInterrupt:
+        interrupted = True
+        print(f"\n\n  Interrupted -- saving partial results ({len(results)}/{len(matched_filesets)} processed)...")
 
     success_count = sum(1 for r in results if r["status"] == "Deleted")
     fail_count = sum(1 for r in results if r["status"] == "Failed")
+
+    # --- Update host statuses based on deletion results ---
+    deleted_ids = {r["id"] for r in results if r["status"] == "Deleted"}
+    for host in matched_hosts:
+        host_fs_ids = set(host.get("fileset_ids", "").split(";")) if host.get("fileset_ids") else set()
+        if not host_fs_ids:
+            continue
+        if host_fs_ids.issubset(deleted_ids):
+            host["status"] = "DELETED"
+        elif host_fs_ids & deleted_ids:
+            host["status"] = "PARTIAL"
+
+    # --- Update inventory CSV ---
+    if args.host_inventory:
+        save_inventory_csv(all_rsc_hosts, inv_path)
+        print(f"\n  Inventory updated: {inv_path}")
+    else:
+        for inv_file in inv_files:
+            root_key = "LINUX_HOST_ROOT" if "linux_" in os.path.basename(inv_file) else "WINDOWS_HOST_ROOT"
+            root_hosts = [h for h in all_rsc_hosts if h.get("host_root") == root_key]
+            save_inventory_csv(root_hosts, inv_file)
+        print(f"\n  Inventory updated: {', '.join(inv_files)}")
 
     # --- Write output ---
     os.makedirs(log_dir, exist_ok=True)
@@ -677,18 +769,21 @@ def main():
             writer.writerows(not_found)
 
     print(f"\n{'=' * 60}")
-    print("SUMMARY")
+    print("SUMMARY" + (" (PARTIAL - interrupted)" if interrupted else ""))
     print(f"{'=' * 60}")
     print(f"  CSV entries:           {len(entries)}")
     print(f"  Entries not found:     {len(not_found)}")
     print(f"  Hosts matched:         {len(matched_hosts)}")
-    print(f"  Filesets processed:    {len(matched_filesets)}")
+    print(f"  Filesets processed:    {len(results)}/{len(matched_filesets)}")
     print(f"  Deleted:               {success_count}")
     print(f"  Failed:                {fail_count}")
     print(f"  Snapshots:             {'Preserved' if args.preserve_snapshots else 'Expired immediately'}")
     print(f"\n  Results saved to: {results_file}")
     if not_found_file:
         print(f"  Hosts not found saved to: {not_found_file}")
+
+    if interrupted:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
