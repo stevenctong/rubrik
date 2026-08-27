@@ -11,12 +11,15 @@ Pass --preserve-snapshots to keep snapshots in Unmanaged Objects instead.
 
 Host Inventory CSV:
   On each run the script pulls the full host inventory from RSC (all Linux
-  and Windows hosts, paginated) and saves it to:
-    logs/rsc_host_inventory_<timestamp>.csv
+  and Windows hosts, paginated) and saves separate CSVs to the script
+  directory:
+    linux_host_inventory_<timestamp>.csv
+    windows_host_inventory_<timestamp>.csv
 
-  This inventory CSV contains: hostname, host_id, cluster_name, cluster_id,
-  host_root. It can be reused on subsequent runs via --host_inventory to
+  These inventory CSVs contain: hostname, host_id, cluster_name, cluster_id,
+  host_root. They can be reused on subsequent runs via --host_inventory to
   skip the RSC host lookup (which can be slow on large environments).
+  Pass either file (or both runs with separate --host_inventory calls).
 
   The script still needs RSC auth even with --host_inventory because
   fileset lookups and delete mutations require API access.
@@ -35,7 +38,7 @@ Usage examples:
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --preserve-snapshots --force
 
   # Re-run using a previously-saved host inventory (skips RSC host lookup)
-  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --host_inventory logs/rsc_host_inventory_20260826_143012.csv --force
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --host_inventory linux_host_inventory_20260826_143012.csv --force
 """
 
 import argparse
@@ -313,15 +316,21 @@ def read_csv_entries(csv_file):
     return entries
 
 
-def fetch_all_hosts(client):
+INVENTORY_FIELDS = ["hostname", "host_id", "cluster_name", "cluster_id", "host_root"]
+
+
+def fetch_all_hosts(client, save_dir):
     """
     Paginate the full RSC host inventory (Linux + Windows roots).
-    Returns every host as a list of dicts -- no client-side filtering.
+    Saves a separate CSV per host root to save_dir and returns all hosts.
     """
     all_hosts = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved_files = []
 
     for host_root in ["LINUX_HOST_ROOT", "WINDOWS_HOST_ROOT"]:
-        root_label = "Linux" if "LINUX" in host_root else "Windows"
+        root_label = "linux" if "LINUX" in host_root else "windows"
+        root_hosts = []
         after = None
         page = 0
         total_scanned = 0
@@ -348,7 +357,7 @@ def fetch_all_hosts(client):
             for edge in edges:
                 node = edge.get("node", {})
                 cluster = node.get("cluster", {})
-                all_hosts.append({
+                root_hosts.append({
                     "hostname": node.get("name", ""),
                     "host_id": node.get("id"),
                     "cluster_name": cluster.get("name", ""),
@@ -360,28 +369,23 @@ def fetch_all_hosts(client):
             if page_info.get("hasNextPage") and page_info.get("endCursor"):
                 after = page_info["endCursor"]
                 page += 1
-                print(f"  {root_label} hosts: scanned {total_scanned} (page {page + 1})...")
+                print(f"  {root_label.capitalize()} hosts: scanned {total_scanned} (page {page + 1})...")
             else:
-                print(f"  {root_label} hosts: {total_scanned} total" +
+                print(f"  {root_label.capitalize()} hosts: {total_scanned} total" +
                       (f" across {page + 1} pages" if page > 0 else ""))
                 break
 
-    return all_hosts
+        path = os.path.join(save_dir, f"{root_label}_host_inventory_{timestamp}.csv")
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=INVENTORY_FIELDS)
+            writer.writeheader()
+            for host in root_hosts:
+                writer.writerow({k: host.get(k, "") for k in INVENTORY_FIELDS})
+        saved_files.append(path)
+        print(f"  Saved to: {path}")
+        all_hosts.extend(root_hosts)
 
-
-INVENTORY_FIELDS = ["hostname", "host_id", "cluster_name", "cluster_id", "host_root"]
-
-
-def save_inventory_csv(hosts, log_dir):
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(log_dir, f"rsc_host_inventory_{timestamp}.csv")
-    with open(path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=INVENTORY_FIELDS)
-        writer.writeheader()
-        for host in hosts:
-            writer.writerow({k: host.get(k, "") for k in INVENTORY_FIELDS})
-    return path
+    return all_hosts, saved_files
 
 
 def load_inventory_csv(csv_path):
@@ -545,7 +549,8 @@ def main():
     print(f"Found {len(entries)} hostname+cluster entries in CSV.\n")
 
     # --- Get host inventory (from RSC or cached CSV) ---
-    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(script_dir, "logs")
     if args.host_inventory:
         inv_path = os.path.expanduser(args.host_inventory)
         print(f"Loading host inventory from: {inv_path}")
@@ -553,10 +558,8 @@ def main():
         print(f"Loaded {len(all_rsc_hosts)} hosts from inventory CSV.\n")
     else:
         print("Fetching full host inventory from RSC...")
-        all_rsc_hosts = fetch_all_hosts(client)
-        inv_path = save_inventory_csv(all_rsc_hosts, log_dir)
-        print(f"  Total hosts in RSC: {len(all_rsc_hosts)}")
-        print(f"  Inventory saved to: {inv_path}\n")
+        all_rsc_hosts, inv_files = fetch_all_hosts(client, script_dir)
+        print(f"  Total hosts in RSC: {len(all_rsc_hosts)}\n")
 
     # --- Match CSV entries to inventory ---
     csv_lookup = {}

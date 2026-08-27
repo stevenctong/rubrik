@@ -182,7 +182,7 @@ RUNNING IT
   python3 rsc_delete_filesets.py \
     --svc_json rsc-sa.json \
     --csv hosts.csv \
-    --host_inventory logs/rsc_host_inventory_20260826_143012.csv \
+    --host_inventory linux_host_inventory_20260826_143012.csv \
     --force
 
 CLI arguments:
@@ -197,7 +197,9 @@ CLI arguments:
     --csv FILE            CSV file with hostname and cluster columns
     --host_inventory FILE Previously-saved host inventory CSV (skips RSC
                           host lookup). Generated automatically on each run
-                          in logs/rsc_host_inventory_<timestamp>.csv.
+                          as linux_host_inventory_<timestamp>.csv and
+                          windows_host_inventory_<timestamp>.csv in the
+                          script directory.
 
   Tuning:
     --batch-size N        Fileset IDs per delete call (default 50)
@@ -210,7 +212,9 @@ CLI arguments:
 What it does:
   1. Authenticates to RSC using the Service Account JSON or direct credentials.
   2. Pulls the full host inventory from RSC (Linux + Windows host roots)
-     with pagination and saves it to logs/rsc_host_inventory_<timestamp>.csv.
+     with pagination and saves separate CSVs to the script directory:
+       linux_host_inventory_<timestamp>.csv
+       windows_host_inventory_<timestamp>.csv
      If --host_inventory is provided, loads the inventory from that CSV
      instead (skips the RSC lookup).
   3. Matches inventory hosts against the input CSV by hostname + cluster name,
@@ -218,7 +222,8 @@ What it does:
   4. Previews all matched hosts and filesets, then asks for confirmation.
   5. Deletes all matched filesets in batches via the bulkDeleteFileset
      GraphQL mutation. If a batch fails, falls back to individual deletes.
-  6. Writes output files to logs/:
-       rsc_host_inventory_<timestamp>.csv      - full host inventory from RSC
-       fileset_delete_results_<timestamp>.csv   - per-fileset results
-       hosts_not_found_<timestamp>.csv          - unmatched CSV entries
+  6. Writes output files:
+       linux_host_inventory_<timestamp>.csv     - Linux host inventory (script dir)
+       windows_host_inventory_<timestamp>.csv   - Windows host inventory (script dir)
+       logs/fileset_delete_results_<timestamp>.csv  - per-fileset results
+       logs/hosts_not_found_<timestamp>.csv         - unmatched CSV entries
