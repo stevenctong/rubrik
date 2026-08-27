@@ -185,18 +185,18 @@ RUNNING IT
     --host_inventory linux_host_inventory_20260826_143012.csv \
     --force
 
-  # Slow environment -- increase timeout, reduce parallelism
+  # Slow environment -- increase timeout, reduce parallelism, wider stagger
   python3 rsc_delete_filesets.py \
     --svc_json rsc-sa.json \
     --csv hosts.csv \
-    --timeout 300 --parallel 2 \
+    --timeout 300 --parallel 2 --stagger 10 \
     --force
 
-  # High throughput -- max parallelism
+  # High throughput -- max parallelism, no stagger
   python3 rsc_delete_filesets.py \
     --svc_json rsc-sa.json \
     --csv hosts.csv \
-    --parallel 8 \
+    --parallel 8 --stagger 0 \
     --force
 
 CLI arguments:
@@ -217,6 +217,7 @@ CLI arguments:
 
   Tuning:
     --parallel N          Max concurrent delete calls (default 4)
+    --stagger SEC         Delay between launching each parallel worker (default 5s)
     --retries N           Max retries per fileset on timeout/5xx (default 3)
     --timeout SEC         HTTP timeout per API call (default 120s)
 
@@ -237,10 +238,12 @@ What it does:
      then queries RSC for each matched host's filesets. The inventory CSV
      is enriched with fileset_ids and fileset_names columns.
   4. Previews all matched hosts and filesets, then asks for confirmation.
-  5. Deletes filesets in parallel (default 4 concurrent workers) via the
-     bulkDeleteFileset GraphQL mutation (single ID per call). On timeout/5xx
-     errors, retries up to 3 times (configurable) with 2s between retries.
-     Ctrl+C saves partial results before exiting.
+  5. Deletes filesets in parallel (default 4 concurrent workers, staggered
+     5s apart) via the bulkDeleteFileset GraphQL mutation (single ID per
+     call). On timeout/5xx errors, retries up to 3 times (configurable)
+     with 2s between retries. Results log and inventory CSV are updated
+     incrementally as each deletion completes, so partial progress is
+     preserved even on crash or Ctrl+C.
   6. Updates the inventory CSV with deletion status per host:
        DELETED  - all filesets for the host were successfully deleted
        PARTIAL  - some filesets deleted, some failed or not yet processed

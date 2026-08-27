@@ -40,11 +40,11 @@ Usage examples:
   # Re-run using a previously-saved host inventory (skips RSC host lookup)
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --host_inventory linux_host_inventory_20260826_143012.csv --force
 
-  # Slow environment -- increase timeout, reduce parallelism
-  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --timeout 300 --parallel 2 --force
+  # Slow environment -- increase timeout, reduce parallelism, wider stagger
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --timeout 300 --parallel 2 --stagger 10 --force
 
-  # High throughput -- max parallelism
-  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --parallel 8 --force
+  # High throughput -- max parallelism, no stagger
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --parallel 8 --stagger 0 --force
 """
 
 import argparse
@@ -279,6 +279,8 @@ def parse_args():
                         help="Keep snapshots (default: expire immediately)")
     parser.add_argument("--parallel", type=int, default=None, metavar="N",
                         help="Max concurrent delete calls (default: 4)")
+    parser.add_argument("--stagger", type=int, default=None, metavar="SEC",
+                        help="Delay between launching each parallel worker (default: 5)")
     parser.add_argument("--retries", type=int, default=None, metavar="N",
                         help="Max retries per fileset on timeout/5xx (default: 3)")
     parser.add_argument("--timeout", type=int, default=None, metavar="SEC",
@@ -491,23 +493,35 @@ def _tprint(*args, **kwargs):
 
 
 def delete_filesets(client, filesets, preserve_snapshots, max_retries,
-                    max_workers, results):
+                    max_workers, stagger_delay, results, on_result=None):
     total = len(filesets)
     completed = [0]
+    stop_event = threading.Event()
 
     def _worker(fs):
+        if stop_event.is_set():
+            return None
         result = _delete_single(client, fs, preserve_snapshots, max_retries,
                                 total, completed)
         results.append(result)
+        if on_result:
+            on_result(result)
         return result
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = {pool.submit(_worker, fs): fs for fs in filesets}
+        futures = []
         try:
+            for i, fs in enumerate(filesets):
+                if stop_event.is_set():
+                    break
+                futures.append(pool.submit(_worker, fs))
+                if stagger_delay > 0 and i < len(filesets) - 1:
+                    time.sleep(stagger_delay)
             for future in concurrent.futures.as_completed(futures):
                 future.result()
         except KeyboardInterrupt:
-            pool.shutdown(wait=False, cancel_futures=True)
+            stop_event.set()
+            pool.shutdown(wait=True)
             raise
 
 
@@ -524,28 +538,28 @@ def _delete_single(client, fs, preserve_snapshots, max_retries,
             if success:
                 with _print_lock:
                     completed[0] += 1
-                    print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- OK")
-                return {**fs, "status": "Deleted", "message": "OK"}
+                    print("  [%d/%d] %s / %s -- OK" % (completed[0], total, fs['hostname'], fs['name']))
+                return dict(fs, status="Deleted", message="OK")
             else:
                 with _print_lock:
                     completed[0] += 1
-                    print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: API returned success=false")
-                return {**fs, "status": "Failed", "message": "API returned success=false"}
+                    print("  [%d/%d] %s / %s -- FAILED: API returned success=false" % (completed[0], total, fs['hostname'], fs['name']))
+                return dict(fs, status="Failed", message="API returned success=false")
         except TimeoutError as e:
             last_error = str(e)
             if attempt < max_retries:
-                _tprint(f"    {fs['hostname']} / {fs['name']} -- timeout (attempt {attempt + 1}/{1 + max_retries}), retrying in {RETRY_DELAY}s...")
+                _tprint("    %s / %s -- timeout (attempt %d/%d), retrying in %ds..." % (fs['hostname'], fs['name'], attempt + 1, 1 + max_retries, RETRY_DELAY))
                 time.sleep(RETRY_DELAY)
             continue
         except Exception as e:
             with _print_lock:
                 completed[0] += 1
-                print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: {e}")
-            return {**fs, "status": "Failed", "message": str(e)}
+                print("  [%d/%d] %s / %s -- FAILED: %s" % (completed[0], total, fs['hostname'], fs['name'], e))
+            return dict(fs, status="Failed", message=str(e))
     with _print_lock:
         completed[0] += 1
-        print(f"  [{completed[0]}/{total}] {fs['hostname']} / {fs['name']} -- FAILED: timed out after {1 + max_retries} attempts")
-    return {**fs, "status": "Failed", "message": f"Timed out after {1 + max_retries} attempts: {last_error}"}
+        print("  [%d/%d] %s / %s -- FAILED: timed out after %d attempts" % (completed[0], total, fs['hostname'], fs['name'], 1 + max_retries))
+    return dict(fs, status="Failed", message="Timed out after %d attempts: %s" % (1 + max_retries, last_error))
 
 
 # ---------------------------------------------------------------------------
@@ -585,6 +599,7 @@ def main():
     csv_file = os.path.expanduser(csv_file)
 
     parallel_workers = args.parallel if args.parallel is not None else 4
+    stagger_delay = args.stagger if args.stagger is not None else 5
     max_retries = args.retries if args.retries is not None else 3
     http_timeout = args.timeout if args.timeout is not None else 120
 
@@ -710,55 +725,68 @@ def main():
             return
 
     # --- Delete ---
-    print(f"\n{'=' * 60}")
+    print("\n" + "=" * 60)
     print("DELETING FILESETS")
-    print(f"{'=' * 60}")
-    print(f"  Parallel: {parallel_workers} workers, retries: {max_retries} (delay {RETRY_DELAY}s), timeout: {http_timeout}s\n")
+    print("=" * 60)
+    print("  Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds\n" % (
+        parallel_workers, stagger_delay, max_retries, RETRY_DELAY, http_timeout))
+
+    os.makedirs(log_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_file = os.path.join(log_dir, "fileset_delete_results_%s.csv" % timestamp)
+    results_fields = ["hostname", "cluster", "id", "name", "objectType", "status", "message"]
+
+    results_lock = threading.Lock()
+    with open(results_file, "w", newline="") as rf:
+        results_writer = csv.DictWriter(rf, fieldnames=results_fields)
+        results_writer.writeheader()
+        rf.flush()
+
+    host_by_fs_id = {}
+    for host in matched_hosts:
+        for fs_id in (host.get("fileset_ids") or "").split(";"):
+            if fs_id:
+                host_by_fs_id[fs_id] = host
+
+    def _on_result(result):
+        with results_lock:
+            with open(results_file, "a", newline="") as rf:
+                writer = csv.DictWriter(rf, fieldnames=results_fields)
+                writer.writerow({k: result.get(k, "") for k in results_fields})
+
+            host = host_by_fs_id.get(result["id"])
+            if host:
+                deleted_ids = set()
+                for r in results:
+                    if r["status"] == "Deleted":
+                        deleted_ids.add(r["id"])
+                host_fs_ids = set(host.get("fileset_ids", "").split(";")) if host.get("fileset_ids") else set()
+                if host_fs_ids and host_fs_ids.issubset(deleted_ids):
+                    host["status"] = "DELETED"
+                elif host_fs_ids & deleted_ids:
+                    host["status"] = "PARTIAL"
+
+                if args.host_inventory:
+                    save_inventory_csv(all_rsc_hosts, inv_path)
+                else:
+                    for inv_file in inv_files:
+                        root_key = "LINUX_HOST_ROOT" if "linux_" in os.path.basename(inv_file) else "WINDOWS_HOST_ROOT"
+                        root_hosts = [h for h in all_rsc_hosts if h.get("host_root") == root_key]
+                        save_inventory_csv(root_hosts, inv_file)
 
     results = []
     interrupted = False
     try:
         delete_filesets(
             client, matched_filesets, args.preserve_snapshots,
-            max_retries, parallel_workers, results)
+            max_retries, parallel_workers, stagger_delay, results,
+            on_result=_on_result)
     except KeyboardInterrupt:
         interrupted = True
-        print(f"\n\n  Interrupted -- saving partial results ({len(results)}/{len(matched_filesets)} processed)...")
+        print("\n\n  Interrupted -- saving partial results (%d/%d processed)..." % (len(results), len(matched_filesets)))
 
     success_count = sum(1 for r in results if r["status"] == "Deleted")
     fail_count = sum(1 for r in results if r["status"] == "Failed")
-
-    # --- Update host statuses based on deletion results ---
-    deleted_ids = {r["id"] for r in results if r["status"] == "Deleted"}
-    for host in matched_hosts:
-        host_fs_ids = set(host.get("fileset_ids", "").split(";")) if host.get("fileset_ids") else set()
-        if not host_fs_ids:
-            continue
-        if host_fs_ids.issubset(deleted_ids):
-            host["status"] = "DELETED"
-        elif host_fs_ids & deleted_ids:
-            host["status"] = "PARTIAL"
-
-    # --- Update inventory CSV ---
-    if args.host_inventory:
-        save_inventory_csv(all_rsc_hosts, inv_path)
-        print(f"\n  Inventory updated: {inv_path}")
-    else:
-        for inv_file in inv_files:
-            root_key = "LINUX_HOST_ROOT" if "linux_" in os.path.basename(inv_file) else "WINDOWS_HOST_ROOT"
-            root_hosts = [h for h in all_rsc_hosts if h.get("host_root") == root_key]
-            save_inventory_csv(root_hosts, inv_file)
-        print(f"\n  Inventory updated: {', '.join(inv_files)}")
-
-    # --- Write output ---
-    os.makedirs(log_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_file = os.path.join(log_dir, f"fileset_delete_results_{timestamp}.csv")
-    with open(results_file, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "hostname", "cluster", "id", "name", "objectType", "status", "message"])
-        writer.writeheader()
-        writer.writerows(results)
 
     not_found_file = None
     if not_found:
