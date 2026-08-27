@@ -9,6 +9,18 @@ in RSC, discovers all its filesets (Linux and Windows), and deletes them.
 By default, snapshots are expired immediately (preserveSnapshots=false).
 Pass --preserve-snapshots to keep snapshots in Unmanaged Objects instead.
 
+Host Inventory CSV:
+  On each run the script pulls the full host inventory from RSC (all Linux
+  and Windows hosts, paginated) and saves it to:
+    logs/rsc_host_inventory_<timestamp>.csv
+
+  This inventory CSV contains: hostname, host_id, cluster_name, cluster_id,
+  host_root. It can be reused on subsequent runs via --host_inventory to
+  skip the RSC host lookup (which can be slow on large environments).
+
+  The script still needs RSC auth even with --host_inventory because
+  fileset lookups and delete mutations require API access.
+
 Usage examples:
   # Fully interactive (prompts for everything)
   python3 rsc_delete_filesets.py
@@ -21,6 +33,9 @@ Usage examples:
 
   # Preserve snapshots instead of expiring immediately
   python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --preserve-snapshots --force
+
+  # Re-run using a previously-saved host inventory (skips RSC host lookup)
+  python3 rsc_delete_filesets.py --svc_json rsc-sa.json --csv hosts.csv --host_inventory logs/rsc_host_inventory_20260826_143012.csv --force
 """
 
 import argparse
