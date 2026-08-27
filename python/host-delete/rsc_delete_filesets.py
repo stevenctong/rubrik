@@ -413,7 +413,7 @@ def fetch_all_hosts(client, save_dir):
 
 def load_inventory_csv(csv_path):
     hosts = []
-    skipped = 0
+    deleted_count = 0
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -423,8 +423,7 @@ def load_inventory_csv(csv_path):
                 continue
             status = (row.get("status") or "").strip()
             if status == "DELETED":
-                skipped += 1
-                continue
+                deleted_count += 1
             hosts.append({
                 "hostname": hostname.strip(),
                 "host_id": host_id.strip(),
@@ -435,8 +434,8 @@ def load_inventory_csv(csv_path):
                 "fileset_names": (row.get("fileset_names") or "").strip(),
                 "status": status,
             })
-    if skipped:
-        print(f"  Skipped {skipped} host(s) already marked DELETED.")
+    if deleted_count:
+        print(f"  {deleted_count} host(s) already marked DELETED (will be skipped).")
     return hosts
 
 
@@ -503,9 +502,10 @@ def delete_filesets(client, filesets, preserve_snapshots, max_retries,
             return None
         result = _delete_single(client, fs, preserve_snapshots, max_retries,
                                 total, completed)
-        results.append(result)
         if on_result:
-            on_result(result)
+            on_result(result, results)
+        else:
+            results.append(result)
         return result
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -640,9 +640,13 @@ def main():
 
     matched_hosts = []
     matched_keys = set()
+    skipped_deleted = 0
     for host in all_rsc_hosts:
         key = (host["hostname"].lower(), host["cluster_name"].lower())
         if key in csv_lookup:
+            if host.get("status") == "DELETED":
+                skipped_deleted += 1
+                continue
             matched_keys.add(key)
             matched_hosts.append(host)
 
@@ -652,6 +656,8 @@ def main():
             not_found.append(entry)
 
     print(f"  CSV entries matched:   {len(matched_hosts)}")
+    if skipped_deleted:
+        print(f"  Already DELETED:       {skipped_deleted} (skipped)")
     print(f"  CSV entries not found: {len(not_found)}")
 
     if not matched_hosts:
@@ -736,10 +742,13 @@ def main():
     results_file = os.path.join(log_dir, "fileset_delete_results_%s.csv" % timestamp)
     results_fields = ["hostname", "cluster", "id", "name", "objectType", "status", "message"]
 
+    print("  Results log: %s" % results_file)
+    print()
+
     results_lock = threading.Lock()
     with open(results_file, "w", newline="") as rf:
-        results_writer = csv.DictWriter(rf, fieldnames=results_fields)
-        results_writer.writeheader()
+        writer = csv.DictWriter(rf, fieldnames=results_fields)
+        writer.writeheader()
         rf.flush()
 
     host_by_fs_id = {}
@@ -748,8 +757,10 @@ def main():
             if fs_id:
                 host_by_fs_id[fs_id] = host
 
-    def _on_result(result):
+    def _on_result(result, results_list):
         with results_lock:
+            results_list.append(result)
+
             with open(results_file, "a", newline="") as rf:
                 writer = csv.DictWriter(rf, fieldnames=results_fields)
                 writer.writerow({k: result.get(k, "") for k in results_fields})
@@ -757,7 +768,7 @@ def main():
             host = host_by_fs_id.get(result["id"])
             if host:
                 deleted_ids = set()
-                for r in results:
+                for r in results_list:
                     if r["status"] == "Deleted":
                         deleted_ids.add(r["id"])
                 host_fs_ids = set(host.get("fileset_ids", "").split(";")) if host.get("fileset_ids") else set()
