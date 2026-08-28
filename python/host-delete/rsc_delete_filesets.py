@@ -225,6 +225,23 @@ mutation DeleteFilesets($ids: [String!]!, $preserveSnapshots: Boolean) {
 }
 """
 
+CHECK_FILESET_QUERY = """
+query CheckFileset($id: UUID!) {
+  physicalHost(fid: $id) {
+    id
+    name
+  }
+}
+"""
+
+
+def _fileset_exists(client, fileset_id):
+    try:
+        data = client.graphql(CHECK_FILESET_QUERY, {"id": fileset_id})
+        return data.get("physicalHost") is not None
+    except Exception:
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -338,7 +355,7 @@ def read_csv_entries(csv_file):
 
 INVENTORY_FIELDS = [
     "hostname", "host_id", "cluster_name", "cluster_id", "host_root",
-    "fileset_ids", "fileset_names", "status",
+    "fileset_ids", "fileset_names", "status", "last_updated",
 ]
 
 
@@ -481,27 +498,42 @@ def get_host_filesets(client, host_id):
     return filesets
 
 
-RETRY_DELAY = 2
+RETRY_DELAY = 5
 
 _print_lock = threading.Lock()
+_log_file = None
 
 
-def _tprint(*args, **kwargs):
+def _now():
+    return datetime.now().strftime("%H:%M")
+
+
+def _log(msg):
     with _print_lock:
-        print(*args, **kwargs)
+        print(msg)
+        if _log_file:
+            try:
+                _log_file.write(msg + "\n")
+                _log_file.flush()
+            except Exception:
+                pass
 
 
 def delete_filesets(client, filesets, preserve_snapshots, max_retries,
                     max_workers, stagger_delay, results, on_result=None):
     total = len(filesets)
+    started = [0]
     completed = [0]
     stop_event = threading.Event()
 
     def _worker(fs):
         if stop_event.is_set():
             return None
+        with _print_lock:
+            started[0] += 1
+            seq = started[0]
         result = _delete_single(client, fs, preserve_snapshots, max_retries,
-                                total, completed)
+                                total, seq, completed)
         if on_result:
             on_result(result, results)
         else:
@@ -526,9 +558,31 @@ def delete_filesets(client, filesets, preserve_snapshots, max_retries,
 
 
 def _delete_single(client, fs, preserve_snapshots, max_retries,
-                   total, completed):
+                   total, seq, completed):
+    prefix = "  [%d/%d]" % (seq, total)
+    label = "%s / %s" % (fs['hostname'], fs['name'])
     last_error = None
+
+    def _complete(status, message):
+        with _print_lock:
+            completed[0] += 1
+            c = completed[0]
+        _log("(%s) Completed %d of %d" % (_now(), c, total))
+        return dict(fs, status=status, message=message)
+
+    def _verify_gone():
+        _log("%s (%s) %s - Verifying fileset still exists..." % (prefix, _now(), label))
+        if not _fileset_exists(client, fs["id"]):
+            _log("%s (%s) %s - Fileset gone (prior delete succeeded)" % (prefix, _now(), label))
+            return True
+        return False
+
     for attempt in range(1 + max_retries):
+        if attempt == 0:
+            _log("%s (%s) %s - Issuing Delete..." % (prefix, _now(), label))
+        else:
+            _log("%s (%s) %s - Issuing Delete (retry %d of %d)..." % (prefix, _now(), label, attempt, max_retries))
+
         try:
             data = client.graphql(DELETE_FILESETS_MUTATION, {
                 "ids": [fs["id"]],
@@ -536,30 +590,29 @@ def _delete_single(client, fs, preserve_snapshots, max_retries,
             })
             success = data.get("bulkDeleteFileset", {}).get("success", False)
             if success:
-                with _print_lock:
-                    completed[0] += 1
-                    print("  [%d/%d] %s / %s -- OK" % (completed[0], total, fs['hostname'], fs['name']))
-                return dict(fs, status="Deleted", message="OK")
+                _log("%s (%s) %s - Deleted OK" % (prefix, _now(), label))
+                return _complete("Deleted", "OK")
             else:
-                with _print_lock:
-                    completed[0] += 1
-                    print("  [%d/%d] %s / %s -- FAILED: API returned success=false" % (completed[0], total, fs['hostname'], fs['name']))
-                return dict(fs, status="Failed", message="API returned success=false")
+                if attempt > 0 and _verify_gone():
+                    return _complete("Deleted", "OK (verified gone after retry)")
+                _log("%s (%s) %s - FAILED: API returned success=false" % (prefix, _now(), label))
+                return _complete("Failed", "API returned success=false")
         except TimeoutError as e:
             last_error = str(e)
             if attempt < max_retries:
-                _tprint("    %s / %s -- timeout (attempt %d/%d), retrying in %ds..." % (fs['hostname'], fs['name'], attempt + 1, 1 + max_retries, RETRY_DELAY))
+                _log("%s (%s) %s - timeout (%d of %d), retrying in %ds..." % (prefix, _now(), label, attempt + 1, max_retries, RETRY_DELAY))
                 time.sleep(RETRY_DELAY)
             continue
         except Exception as e:
-            with _print_lock:
-                completed[0] += 1
-                print("  [%d/%d] %s / %s -- FAILED: %s" % (completed[0], total, fs['hostname'], fs['name'], e))
-            return dict(fs, status="Failed", message=str(e))
-    with _print_lock:
-        completed[0] += 1
-        print("  [%d/%d] %s / %s -- FAILED: timed out after %d attempts" % (completed[0], total, fs['hostname'], fs['name'], 1 + max_retries))
-    return dict(fs, status="Failed", message="Timed out after %d attempts: %s" % (1 + max_retries, last_error))
+            if attempt > 0 and _verify_gone():
+                return _complete("Deleted", "OK (verified gone after retry)")
+            _log("%s (%s) %s - FAILED: %s" % (prefix, _now(), label, e))
+            return _complete("Failed", str(e))
+
+    if _verify_gone():
+        return _complete("Deleted", "OK (verified gone after timeout)")
+    _log("%s (%s) %s - FAILED: timed out after %d attempts" % (prefix, _now(), label, 1 + max_retries))
+    return _complete("Failed", "Timed out after %d attempts: %s" % (1 + max_retries, last_error))
 
 
 # ---------------------------------------------------------------------------
@@ -599,9 +652,9 @@ def main():
     csv_file = os.path.expanduser(csv_file)
 
     parallel_workers = args.parallel if args.parallel is not None else 4
-    stagger_delay = args.stagger if args.stagger is not None else 5
+    stagger_delay = args.stagger if args.stagger is not None else 10
     max_retries = args.retries if args.retries is not None else 3
-    http_timeout = args.timeout if args.timeout is not None else 120
+    http_timeout = args.timeout if args.timeout is not None else 150
 
     print(f"\nConnecting to RSC...")
     try:
@@ -734,16 +787,28 @@ def main():
     print("\n" + "=" * 60)
     print("DELETING FILESETS")
     print("=" * 60)
-    print("  Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds\n" % (
+    print("  Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds" % (
         parallel_workers, stagger_delay, max_retries, RETRY_DELAY, http_timeout))
 
     os.makedirs(log_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     results_file = os.path.join(log_dir, "fileset_delete_results_%s.csv" % timestamp)
     results_fields = ["hostname", "cluster", "id", "name", "objectType", "status", "message"]
+    activity_log_file = os.path.join(log_dir, "fileset_delete_log_%s.log" % timestamp)
 
-    print("  Results log: %s" % results_file)
+    print("  Results CSV: %s" % results_file)
+    print("  Activity log: %s" % activity_log_file)
     print()
+
+    global _log_file
+    _log_file = open(activity_log_file, "w")
+    _log_file.write("Fileset Delete Activity Log - %s\n" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    _log_file.write("Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds\n" % (
+        parallel_workers, stagger_delay, max_retries, RETRY_DELAY, http_timeout))
+    _log_file.write("Total filesets: %d\n\n" % len(matched_filesets))
+    _log_file.flush()
+
+    delete_start = time.time()
 
     results_lock = threading.Lock()
     with open(results_file, "w", newline="") as rf:
@@ -772,10 +837,14 @@ def main():
                     if r["status"] == "Deleted":
                         deleted_ids.add(r["id"])
                 host_fs_ids = set(host.get("fileset_ids", "").split(";")) if host.get("fileset_ids") else set()
+                new_status = None
                 if host_fs_ids and host_fs_ids.issubset(deleted_ids):
-                    host["status"] = "DELETED"
+                    new_status = "DELETED"
                 elif host_fs_ids & deleted_ids:
-                    host["status"] = "PARTIAL"
+                    new_status = "PARTIAL"
+                if new_status and host.get("status") != new_status:
+                    host["status"] = new_status
+                    host["last_updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
 
                 if args.host_inventory:
                     save_inventory_csv(all_rsc_hosts, inv_path)
@@ -796,6 +865,10 @@ def main():
         interrupted = True
         print("\n\n  Interrupted -- saving partial results (%d/%d processed)..." % (len(results), len(matched_filesets)))
 
+    elapsed = time.time() - delete_start
+    elapsed_min = int(elapsed // 60)
+    elapsed_sec = int(elapsed % 60)
+
     success_count = sum(1 for r in results if r["status"] == "Deleted")
     fail_count = sum(1 for r in results if r["status"] == "Failed")
 
@@ -807,19 +880,32 @@ def main():
             writer.writeheader()
             writer.writerows(not_found)
 
-    print(f"\n{'=' * 60}")
-    print("SUMMARY" + (" (PARTIAL - interrupted)" if interrupted else ""))
-    print(f"{'=' * 60}")
-    print(f"  CSV entries:           {len(entries)}")
-    print(f"  Entries not found:     {len(not_found)}")
-    print(f"  Hosts matched:         {len(matched_hosts)}")
-    print(f"  Filesets processed:    {len(results)}/{len(matched_filesets)}")
-    print(f"  Deleted:               {success_count}")
-    print(f"  Failed:                {fail_count}")
-    print(f"  Snapshots:             {'Preserved' if args.preserve_snapshots else 'Expired immediately'}")
-    print(f"\n  Results saved to: {results_file}")
+    summary_header = "SUMMARY" + (" (PARTIAL - interrupted)" if interrupted else "")
+    summary_lines = [
+        "",
+        "=" * 60,
+        summary_header,
+        "=" * 60,
+        "  CSV entries:           %d" % len(entries),
+        "  Entries not found:     %d" % len(not_found),
+        "  Hosts matched:         %d" % len(matched_hosts),
+        "  Filesets processed:    %d/%d" % (len(results), len(matched_filesets)),
+        "  Deleted:               %d" % success_count,
+        "  Failed:                %d" % fail_count,
+        "  Snapshots:             %s" % ("Preserved" if args.preserve_snapshots else "Expired immediately"),
+        "  Total run time:        %dm %ds" % (elapsed_min, elapsed_sec),
+        "",
+        "  Results CSV:     %s" % results_file,
+        "  Activity log:    %s" % activity_log_file,
+    ]
     if not_found_file:
-        print(f"  Hosts not found saved to: {not_found_file}")
+        summary_lines.append("  Hosts not found: %s" % not_found_file)
+
+    for line in summary_lines:
+        _log(line)
+
+    if _log_file:
+        _log_file.close()
 
     if interrupted:
         sys.exit(1)
