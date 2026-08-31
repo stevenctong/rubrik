@@ -4,9 +4,12 @@ Shared CDM (Cluster Data Management) REST API client and helpers.
 
 Used by cdm_delete_hosts.py to talk directly to a CDM cluster's local REST
 API instead of RSC/Polaris GraphQL.
+
+Updated: 8/31/26
 """
 
 import json
+import socket
 import ssl
 import time
 import urllib.request
@@ -17,9 +20,10 @@ import urllib.error
 class CDMClient:
     """Simple CDM REST API client, authenticated via a service account."""
 
-    def __init__(self, fqdn, service_account_id, secret):
+    def __init__(self, fqdn, service_account_id, secret, timeout=150):
         self.fqdn = fqdn
         self.base_url = f"https://{fqdn}"
+        self.timeout = timeout
         self.token = None
         # CDM clusters commonly run self-signed certs.
         self.ssl_context = ssl.create_default_context()
@@ -50,14 +54,18 @@ class CDMClient:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         try:
-            with urllib.request.urlopen(req, context=self.ssl_context) as response:
+            with urllib.request.urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
                 raw = response.read()
                 if not raw:
                     return {}
                 return json.loads(raw.decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8")
-            raise Exception(f"HTTP {e.code} on {method} {path}: {error_body}") from e
+            if e.code in (502, 503, 504):
+                raise TimeoutError("Server timeout (HTTP %d) on %s %s: %s" % (e.code, method, path, error_body)) from e
+            raise Exception("HTTP %d on %s %s: %s" % (e.code, method, path, error_body)) from e
+        except (socket.timeout, urllib.error.URLError) as e:
+            raise TimeoutError("Connection timeout on %s %s: %s" % (method, path, e)) from e
 
     def get(self, path, params=None):
         return self._request("GET", path, params=params)

@@ -78,6 +78,14 @@ provided on the command line will be prompted for.
   # Hybrid -- provide some args, prompt for the rest
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --csv hosts.csv
 
+  # Slow environment -- increase timeout, reduce parallelism, wider stagger
+  python3 cdm_delete_hosts.py \
+    --svc_json rsc-sa.json \
+    --cluster 10.8.48.104 \
+    --csv hosts.csv \
+    --timeout 300 --parallel 2 --stagger 15 \
+    --force
+
 CLI arguments:
 
   Authentication:
@@ -90,16 +98,16 @@ CLI arguments:
     --csv FILE            CSV file with hostnames
 
   Tuning:
-    --batch-size N        Hosts per batch (default 50, max 100)
-    --batch-delay SEC     Delay between batches (default 2s)
+    --parallel N          Max concurrent delete calls (default 4)
+    --stagger SEC         Delay between launching each parallel worker (default 10s)
+    --retries N           Max retries per host on timeout/5xx (default 3)
+    --timeout SEC         HTTP timeout per API call (default 150s)
     --verify-retries N    Max verification retries (default 3)
-    --verify-delay SEC    Delay between retries (default 10s)
+    --verify-delay SEC    Delay between verification retries (default 10s)
     --initial-wait SEC    Wait before verification (default 10s)
 
   Other:
-    --force, -f           Skip confirmation and all timing prompts
-                          (uses defaults: batch-size=50, batch-delay=2,
-                          verify-retries=3, verify-delay=10, initial-wait=10)
+    --force, -f           Skip confirmation and use defaults
 
 What it does:
   1. Connects and fetches the full host list from the cluster once, then
@@ -107,16 +115,20 @@ What it does:
      found on the cluster are skipped and written to a separate CSV.
   2. Prints a preview of matched hosts and requires you to type "yes" to
      confirm before deleting anything (unless --force is used).
-  3. Deletes hosts in batches via the CDM bulk-delete endpoint. If a
-     batch fails, it falls back to deleting that batch's hosts one at a
-     time. (Batch size is capped at 100 because the bulk-delete call
-     waits up to ~300s for all jobs in a batch and fails the whole batch
-     if any single host ID in it is invalid.)
+  3. Deletes hosts in parallel (default 4 concurrent workers, staggered
+     10s apart) via the CDM REST API (single host per call). On
+     timeout/5xx errors, retries up to 3 times (configurable) with 5s
+     between retries. After retry errors, verifies whether the host was
+     actually removed before marking as failed. Results CSV is updated
+     incrementally as each deletion completes, so partial progress is
+     preserved even on crash or Ctrl+C.
   4. Waits, then re-checks the cluster's host list to verify each host
      was actually removed, retrying a few times for hosts still pending.
   5. Writes output files to logs/:
        host_delete_results_<timestamp>.csv  - id, name, status, message,
                                                verified
+       host_delete_log_<timestamp>.log      - detailed activity log with
+                                               timestamps (mirrors console)
        hosts_not_found_<timestamp>.csv      - hostnames from your input
                                                CSV that didn't match any
                                                host on the cluster (only
@@ -217,9 +229,9 @@ CLI arguments:
 
   Tuning:
     --parallel N          Max concurrent delete calls (default 4)
-    --stagger SEC         Delay between launching each parallel worker (default 5s)
+    --stagger SEC         Delay between launching each parallel worker (default 10s)
     --retries N           Max retries per fileset on timeout/5xx (default 3)
-    --timeout SEC         HTTP timeout per API call (default 120s)
+    --timeout SEC         HTTP timeout per API call (default 150s)
 
   Other:
     --force, -f           Skip confirmation and use defaults
@@ -236,14 +248,15 @@ What it does:
      inventory are automatically skipped.
   3. Matches inventory hosts against the input CSV by hostname + cluster name,
      then queries RSC for each matched host's filesets. The inventory CSV
-     is enriched with fileset_ids and fileset_names columns.
+     is enriched with fileset_ids, fileset_names, and last_updated columns.
   4. Previews all matched hosts and filesets, then asks for confirmation.
   5. Deletes filesets in parallel (default 4 concurrent workers, staggered
-     5s apart) via the bulkDeleteFileset GraphQL mutation (single ID per
+     10s apart) via the bulkDeleteFileset GraphQL mutation (single ID per
      call). On timeout/5xx errors, retries up to 3 times (configurable)
-     with 2s between retries. Results log and inventory CSV are updated
-     incrementally as each deletion completes, so partial progress is
-     preserved even on crash or Ctrl+C.
+     with 5s between retries. After retry errors, verifies whether the
+     fileset was actually deleted before marking as failed. Results log
+     and inventory CSV are updated incrementally as each deletion
+     completes, so partial progress is preserved even on crash or Ctrl+C.
   6. Updates the inventory CSV with deletion status per host:
        DELETED  - all filesets for the host were successfully deleted
        PARTIAL  - some filesets deleted, some failed or not yet processed
@@ -252,4 +265,6 @@ What it does:
        linux_host_inventory_<timestamp>.csv     - Linux host inventory (script dir)
        windows_host_inventory_<timestamp>.csv   - Windows host inventory (script dir)
        logs/fileset_delete_results_<timestamp>.csv  - per-fileset results
+       logs/fileset_delete_log_<timestamp>.log      - detailed activity log
+                                                       (mirrors console output)
        logs/hosts_not_found_<timestamp>.csv         - unmatched CSV entries
