@@ -5,7 +5,7 @@ Shared CDM (Cluster Data Management) REST API client and helpers.
 Used by cdm_delete_hosts.py to talk directly to a CDM cluster's local REST
 API instead of RSC/Polaris GraphQL.
 
-Updated: 8/31/26
+Updated: 8/31/26 - per-call timeout override
 """
 
 import json
@@ -41,7 +41,7 @@ class CDMClient:
         if not self.token:
             raise Exception(f"Failed to authenticate: no token in response: {result}")
 
-    def _request(self, method, path, params=None, body=None, auth=True):
+    def _request(self, method, path, params=None, body=None, auth=True, timeout=None):
         url = f"{self.base_url}{path}"
         if params:
             url = f"{url}?{urllib.parse.urlencode(params)}"
@@ -54,7 +54,7 @@ class CDMClient:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
 
         try:
-            with urllib.request.urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with urllib.request.urlopen(req, context=self.ssl_context, timeout=timeout or self.timeout) as response:
                 raw = response.read()
                 if not raw:
                     return {}
@@ -67,8 +67,8 @@ class CDMClient:
         except (socket.timeout, urllib.error.URLError) as e:
             raise TimeoutError("Connection timeout on %s %s: %s" % (method, path, e)) from e
 
-    def get(self, path, params=None):
-        return self._request("GET", path, params=params)
+    def get(self, path, params=None, timeout=None):
+        return self._request("GET", path, params=params, timeout=timeout)
 
     def post(self, path, body=None):
         return self._request("POST", path, body=body)

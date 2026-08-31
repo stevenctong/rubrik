@@ -83,7 +83,7 @@ provided on the command line will be prompted for.
     --svc_json rsc-sa.json \
     --cluster 10.8.48.104 \
     --csv hosts.csv \
-    --timeout 300 --parallel 2 --stagger 15 \
+    --timeout 300 --retry-delay 60 --parallel 2 --stagger 15 \
     --force
 
 CLI arguments:
@@ -101,10 +101,11 @@ CLI arguments:
     --parallel N          Max concurrent delete calls (default 4)
     --stagger SEC         Delay between launching each parallel worker (default 10s)
     --retries N           Max retries per host on timeout/5xx (default 3)
-    --timeout SEC         HTTP timeout per API call (default 150s)
+    --timeout SEC         HTTP timeout for DELETE calls (default 150s)
+    --retry-delay SEC     Wait between DELETE timeout and GET check (default 30s)
     --verify-retries N    Max verification retries (default 3)
-    --verify-delay SEC    Delay between verification retries (default 10s)
-    --initial-wait SEC    Wait before verification (default 10s)
+    --verify-delay SEC    Delay between verification retries (default 30s)
+    --initial-wait SEC    Wait before verification (default 30s)
 
   Other:
     --force, -f           Skip confirmation and use defaults
@@ -116,14 +117,20 @@ What it does:
   2. Prints a preview of matched hosts and requires you to type "yes" to
      confirm before deleting anything (unless --force is used).
   3. Deletes hosts in parallel (default 4 concurrent workers, staggered
-     10s apart) via the CDM REST API (single host per call). On
-     timeout/5xx errors, retries up to 3 times (configurable) with 5s
-     between retries. After retry errors, verifies whether the host was
-     actually removed before marking as failed. Results CSV is updated
-     incrementally as each deletion completes, so partial progress is
-     preserved even on crash or Ctrl+C.
-  4. Waits, then re-checks the cluster's host list to verify each host
-     was actually removed, retrying a few times for hosts still pending.
+     10s apart) via the CDM REST API (single host per call). On DELETE
+     timeout, waits --retry-delay seconds (default 30s), then issues a
+     GET to check whether the host was actually deleted (30s GET timeout).
+     CDM returns HTTP 400 "Invalid ManagedId" when a host ID no longer
+     exists -- this is treated as confirmed deletion. If the host still
+     exists (HTTP 200), the next DELETE retry is issued. Retries up to
+     --retries times (default 3). Results CSV is updated incrementally
+     as each deletion completes, so partial progress is preserved even
+     on crash or Ctrl+C.
+  4. Waits (default 30s), then re-checks the cluster's host list to
+     verify each host was actually removed, retrying a few times for
+     hosts still pending. If verification itself times out (common on
+     large clusters), it is skipped and the incremental results are
+     preserved.
   5. Writes output files to logs/:
        host_delete_results_<timestamp>.csv  - id, name, status, message,
                                                verified

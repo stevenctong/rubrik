@@ -30,7 +30,7 @@ Usage examples:
   # Slow environment -- increase timeout, reduce parallelism, wider stagger
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --timeout 300 --parallel 2 --stagger 15 --force
 
-Updated: 8/31/26
+Updated: 8/31/26 - timeout handling, per-retry GET check, verbose output
 """
 
 import argparse
@@ -50,7 +50,7 @@ from cdm_client import CDMClient, clean_input
 # Logging infrastructure (mirrors rsc_delete_filesets.py)
 # ---------------------------------------------------------------------------
 
-RETRY_DELAY = 5
+VERIFY_TIMEOUT = 30
 
 _print_lock = threading.Lock()
 _log_file = None
@@ -76,19 +76,24 @@ def _log(msg):
 # ---------------------------------------------------------------------------
 
 def _host_still_exists(client, host_id):
+    """Check if a host still exists. Returns True/False/None (unknown)."""
     try:
-        client.get("/api/v1/host/%s" % host_id)
+        client.get("/api/v1/host/%s" % host_id, timeout=VERIFY_TIMEOUT)
         return True
-    except Exception:
-        return False
+    except TimeoutError:
+        return None
+    except Exception as e:
+        if "Invalid ManagedId" in str(e):
+            return False
+        return None
 
 
 # ---------------------------------------------------------------------------
 # Deletion engine
 # ---------------------------------------------------------------------------
 
-def delete_hosts(client, hosts, max_retries, max_workers, stagger_delay,
-                 results, on_result=None):
+def delete_hosts(client, hosts, max_retries, retry_delay, max_workers,
+                 stagger_delay, results, on_result=None):
     total = len(hosts)
     started = [0]
     completed = [0]
@@ -100,7 +105,8 @@ def delete_hosts(client, hosts, max_retries, max_workers, stagger_delay,
         with _print_lock:
             started[0] += 1
             seq = started[0]
-        result = _delete_single_host(client, host, max_retries, total, seq, completed)
+        result = _delete_single_host(client, host, max_retries, retry_delay,
+                                     total, seq, completed)
         if on_result:
             on_result(result, results)
         else:
@@ -124,9 +130,11 @@ def delete_hosts(client, hosts, max_retries, max_workers, stagger_delay,
             raise
 
 
-def _delete_single_host(client, host, max_retries, total, seq, completed):
+def _delete_single_host(client, host, max_retries, retry_delay, total, seq,
+                        completed):
     prefix = "  [%d/%d]" % (seq, total)
     label = host["name"]
+    host_id = host["id"]
     last_error = None
 
     def _complete(status, message):
@@ -134,40 +142,51 @@ def _delete_single_host(client, host, max_retries, total, seq, completed):
             completed[0] += 1
             c = completed[0]
         _log("(%s) Completed %d of %d" % (_now(), c, total))
-        return {"id": host["id"], "name": host["name"], "status": status, "message": message}
+        return {"id": host_id, "name": host["name"], "status": status, "message": message}
 
-    def _verify_gone():
-        _log("%s (%s) %s - Verifying host still exists..." % (prefix, _now(), label))
-        if not _host_still_exists(client, host["id"]):
-            _log("%s (%s) %s - Host gone (prior delete succeeded)" % (prefix, _now(), label))
-            return True
-        return False
+    def _check_host():
+        _log("%s (%s) %s - Checking host (GET /api/v1/host/{id})..." % (prefix, _now(), label))
+        result = _host_still_exists(client, host_id)
+        if result is False:
+            _log("%s (%s) %s - GET returned 400 Invalid ManagedId - confirmed deleted" % (prefix, _now(), label))
+        elif result is True:
+            _log("%s (%s) %s - GET returned 200 - host still exists" % (prefix, _now(), label))
+        else:
+            _log("%s (%s) %s - GET timed out (%ds) - status unknown" % (prefix, _now(), label, VERIFY_TIMEOUT))
+        return result
 
     for attempt in range(1 + max_retries):
         if attempt == 0:
-            _log("%s (%s) %s - Issuing Delete..." % (prefix, _now(), label))
+            _log("%s (%s) %s - Issuing DELETE..." % (prefix, _now(), label))
         else:
-            _log("%s (%s) %s - Issuing Delete (retry %d of %d)..." % (prefix, _now(), label, attempt, max_retries))
+            _log("%s (%s) %s - Issuing DELETE (retry %d of %d)..." % (prefix, _now(), label, attempt, max_retries))
 
         try:
-            client.delete("/api/v1/host/%s" % host["id"])
-            _log("%s (%s) %s - Deleted OK" % (prefix, _now(), label))
+            client.delete("/api/v1/host/%s" % host_id)
+            _log("%s (%s) %s - DELETE returned OK" % (prefix, _now(), label))
             return _complete("Removed", "OK")
         except TimeoutError as e:
             last_error = str(e)
+            _log("%s (%s) %s - DELETE timed out (%ds), waiting %ds..." % (prefix, _now(), label, client.timeout, retry_delay))
+            time.sleep(retry_delay)
+            status = _check_host()
+            if status is False:
+                return _complete("Removed", "OK (confirmed deleted after timeout)")
             if attempt < max_retries:
-                _log("%s (%s) %s - timeout (%d of %d), retrying in %ds..." % (prefix, _now(), label, attempt + 1, max_retries, RETRY_DELAY))
-                time.sleep(RETRY_DELAY)
+                if status is True:
+                    pass
+                else:
+                    _log("%s (%s) %s - Will retry DELETE" % (prefix, _now(), label))
             continue
         except Exception as e:
-            if attempt > 0 and _verify_gone():
-                return _complete("Removed", "OK (verified gone after retry)")
-            _log("%s (%s) %s - FAILED: %s" % (prefix, _now(), label, e))
+            last_error = str(e)
+            if "Invalid ManagedId" in str(e):
+                _log("%s (%s) %s - DELETE returned 400 Invalid ManagedId - already deleted" % (prefix, _now(), label))
+                return _complete("Removed", "OK (already deleted)")
+            _log("%s (%s) %s - DELETE FAILED: %s" % (prefix, _now(), label, e))
             return _complete("Failed", str(e))
 
-    if _verify_gone():
-        return _complete("Removed", "OK (verified gone after timeout)")
-    _log("%s (%s) %s - FAILED: timed out after %d attempts" % (prefix, _now(), label, 1 + max_retries))
+    _log("%s (%s) %s - FAILED after %d attempts" % (prefix, _now(), label, 1 + max_retries))
     return _complete("Failed", "Timed out after %d attempts: %s" % (1 + max_retries, last_error))
 
 
@@ -238,13 +257,15 @@ def parse_args():
     parser.add_argument("--retries", type=int, default=None, metavar="N",
                         help="Max retries per host on timeout/5xx (default: 3)")
     parser.add_argument("--timeout", type=int, default=None, metavar="SEC",
-                        help="HTTP timeout per API call in seconds (default: 150)")
+                        help="HTTP timeout for DELETE calls in seconds (default: 150)")
+    parser.add_argument("--retry-delay", type=int, default=None, metavar="SEC",
+                        help="Wait between DELETE timeout and GET check (default: 30)")
     parser.add_argument("--verify-retries", type=int, default=None, metavar="N",
                         help="Max verification retries (default: 3)")
     parser.add_argument("--verify-delay", type=int, default=None, metavar="SEC",
-                        help="Delay between verification retries in seconds (default: 10)")
+                        help="Delay between verification retries in seconds (default: 30)")
     parser.add_argument("--initial-wait", type=int, default=None, metavar="SEC",
-                        help="Initial wait before verification in seconds (default: 10)")
+                        help="Initial wait before verification in seconds (default: 30)")
     parser.add_argument("--force", "-f", action="store_true",
                         help="Skip confirmation and use default timings")
 
@@ -344,20 +365,21 @@ def main():
     stagger_delay = args.stagger if args.stagger is not None else 10
     max_retries = args.retries if args.retries is not None else 3
     http_timeout = args.timeout if args.timeout is not None else 150
+    retry_delay = args.retry_delay if args.retry_delay is not None else 30
 
     if args.force:
         verify_retries = args.verify_retries if args.verify_retries is not None else 3
-        verify_delay = args.verify_delay if args.verify_delay is not None else 10
-        initial_wait = args.initial_wait if args.initial_wait is not None else 10
+        verify_delay = args.verify_delay if args.verify_delay is not None else 30
+        initial_wait = args.initial_wait if args.initial_wait is not None else 30
     else:
         if args.verify_retries is None and args.verify_delay is None and args.initial_wait is None:
             print("\nVerification settings (for slow clusters):")
         verify_retries = prompt_int_if_missing(
             args.verify_retries, "  Max verification retries (default 3): ", default=3, min_val=1, max_val=10)
         verify_delay = prompt_int_if_missing(
-            args.verify_delay, "  Delay between verification retries in seconds (default 10): ", default=10, min_val=5, max_val=60)
+            args.verify_delay, "  Delay between verification retries in seconds (default 30): ", default=30, min_val=5, max_val=120)
         initial_wait = prompt_int_if_missing(
-            args.initial_wait, "  Initial wait before verification in seconds (default 10): ", default=10, min_val=5, max_val=120)
+            args.initial_wait, "  Initial wait before verification in seconds (default 30): ", default=30, min_val=5, max_val=120)
 
     # --- Connect ---
     print("\nConnecting to %s..." % fqdn)
@@ -417,8 +439,8 @@ def main():
     print("\n" + "=" * 60)
     print("DELETING HOSTS")
     print("=" * 60)
-    print("  Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds" % (
-        parallel_workers, stagger_delay, max_retries, RETRY_DELAY, http_timeout))
+    print("  Parallel: %d workers (stagger %ds), retries: %d, timeout: %ds DELETE / %ds GET, retry-delay: %ds" % (
+        parallel_workers, stagger_delay, max_retries, http_timeout, VERIFY_TIMEOUT, retry_delay))
 
     log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)
@@ -435,8 +457,8 @@ def main():
     _log_file = open(activity_log_file, "w")
     _log_file.write("Host Delete Activity Log - %s\n" % datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     _log_file.write("Cluster: %s\n" % fqdn)
-    _log_file.write("Parallel: %d workers (stagger %ds), retries: %d (delay %ds), timeout: %ds\n" % (
-        parallel_workers, stagger_delay, max_retries, RETRY_DELAY, http_timeout))
+    _log_file.write("Parallel: %d workers (stagger %ds), retries: %d, timeout: %ds DELETE / %ds GET, retry-delay: %ds\n" % (
+        parallel_workers, stagger_delay, max_retries, http_timeout, VERIFY_TIMEOUT, retry_delay))
     _log_file.write("Total hosts: %d\n\n" % len(hosts))
     _log_file.flush()
 
@@ -459,13 +481,16 @@ def main():
     interrupted = False
     try:
         delete_hosts(
-            client, hosts, max_retries, parallel_workers, stagger_delay,
-            results, on_result=_on_result)
+            client, hosts, max_retries, retry_delay, parallel_workers,
+            stagger_delay, results, on_result=_on_result)
     except KeyboardInterrupt:
         interrupted = True
         print("\n\n  Interrupted -- saving partial results (%d/%d processed)..." % (len(results), len(hosts)))
 
     # --- Verify ---
+    skip_verify = False
+    removed_ids = []
+    still_exists_ids = []
     if not interrupted:
         _log("\n" + "=" * 60)
         _log("VALIDATING REMOVALS")
@@ -476,36 +501,43 @@ def main():
 
         host_ids = [h["id"] for h in hosts]
         _log("Verifying %d hosts were removed (max %d retries, %ds delay)..." % (len(host_ids), verify_retries, verify_delay))
-        removed_ids, still_exists_ids = verify_hosts_removed(client, host_ids, verify_retries, verify_delay)
-
-        for r in results:
-            if r["id"] in removed_ids:
-                r["verified"] = "Yes"
-            elif r["id"] in still_exists_ids:
-                r["verified"] = "No - Still exists"
-            else:
-                r["verified"] = "Unknown"
-
-        _log("")
-        _log("  Verified removed: %d" % len(removed_ids))
-        _log("  Still exists:     %d" % len(still_exists_ids))
-
-        if still_exists_ids:
+        try:
+            removed_ids, still_exists_ids = verify_hosts_removed(client, host_ids, verify_retries, verify_delay)
+        except Exception as e:
             _log("")
-            _log("  Hosts that still exist (may need more time or manual check):")
-            for host_id in still_exists_ids[:5]:
-                host_name = next((h["name"] for h in hosts if h["id"] == host_id), "Unknown")
-                _log("    - %s (%s)" % (host_name, host_id))
-            if len(still_exists_ids) > 5:
-                _log("    ... and %d more" % (len(still_exists_ids) - 5))
+            _log("  WARNING: Verification failed: %s" % e)
+            _log("  Skipping verification -- results CSV will not have verified column.")
+            skip_verify = True
 
-        # Rewrite results CSV with verified column
-        verified_fields = ["id", "name", "status", "message", "verified"]
-        with open(results_file, "w", newline="") as rf:
-            writer = csv.DictWriter(rf, fieldnames=verified_fields)
-            writer.writeheader()
+        if not skip_verify:
             for r in results:
-                writer.writerow({k: r.get(k, "") for k in verified_fields})
+                if r["id"] in removed_ids:
+                    r["verified"] = "Yes"
+                elif r["id"] in still_exists_ids:
+                    r["verified"] = "No - Still exists"
+                else:
+                    r["verified"] = "Unknown"
+
+            _log("")
+            _log("  Verified removed: %d" % len(removed_ids))
+            _log("  Still exists:     %d" % len(still_exists_ids))
+
+            if still_exists_ids:
+                _log("")
+                _log("  Hosts that still exist (may need more time or manual check):")
+                for host_id in still_exists_ids[:5]:
+                    host_name = next((h["name"] for h in hosts if h["id"] == host_id), "Unknown")
+                    _log("    - %s (%s)" % (host_name, host_id))
+                if len(still_exists_ids) > 5:
+                    _log("    ... and %d more" % (len(still_exists_ids) - 5))
+
+            # Rewrite results CSV with verified column
+            verified_fields = ["id", "name", "status", "message", "verified"]
+            with open(results_file, "w", newline="") as rf:
+                writer = csv.DictWriter(rf, fieldnames=verified_fields)
+                writer.writeheader()
+                for r in results:
+                    writer.writerow({k: r.get(k, "") for k in verified_fields})
 
     elapsed = time.time() - delete_start
     elapsed_min = int(elapsed // 60)
@@ -536,8 +568,11 @@ def main():
         "  Deletion failed:           %d" % fail_count,
     ]
     if not interrupted:
-        summary_lines.append("  Verified removed:          %d" % len(removed_ids))
-        summary_lines.append("  Still exists:              %d" % len(still_exists_ids))
+        if skip_verify:
+            summary_lines.append("  Verification:              skipped (timeout)")
+        else:
+            summary_lines.append("  Verified removed:          %d" % len(removed_ids))
+            summary_lines.append("  Still exists:              %d" % len(still_exists_ids))
     summary_lines.extend([
         "  Total run time:            %dm %ds" % (elapsed_min, elapsed_sec),
         "",
