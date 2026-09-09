@@ -76,13 +76,11 @@ class CDMClient:
     def delete(self, path):
         return self._request("DELETE", path)
 
-    def list_all_hosts(self):
+    def list_all_hosts(self, retries=3, retry_delay=15):
         """
-        Fetch every host on the cluster once and return a dict keyed by
-        lowercased hostname -> host summary dict (id, name, operatingSystemType, ...).
-
-        Avoids doing one lookup call per hostname when checking existence
-        for thousands of hosts.
+        Fetch every host on the cluster once (paginated) and return a dict
+        keyed by lowercased hostname -> host summary dict. Used only by
+        --build_inventory. Retries a timed-out page before giving up.
         """
         hosts_by_name = {}
         params = {"primary_cluster_id": "local", "limit": 1000}
@@ -91,7 +89,18 @@ class CDMClient:
         while True:
             if cursor:
                 params["cursor"] = cursor
-            result = self.get("/api/v1/host", params=params)
+            attempt = 0
+            while True:
+                try:
+                    result = self.get("/api/v1/host", params=params)
+                    break
+                except TimeoutError:
+                    attempt += 1
+                    if attempt > retries:
+                        raise TimeoutError(
+                            "list_all_hosts: page timed out %d/%d times after "
+                            "collecting %d hosts" % (attempt, retries, len(hosts_by_name)))
+                    time.sleep(retry_delay)
             for host in result.get("data", []):
                 name = (host.get("name") or "").strip().lower()
                 if name:
@@ -103,6 +112,21 @@ class CDMClient:
                 break
 
         return hosts_by_name
+
+    def get_host_by_name(self, name):
+        """
+        Resolve a single hostname to its host summary dict via a filtered
+        GET (not a bulk listing). Returns None if no exact (case-insensitive)
+        match is found. Used as a fallback when a hostname isn't present in
+        a --host_inventory file.
+        """
+        params = {"primary_cluster_id": "local", "hostname": name}
+        result = self.get("/api/v1/host", params=params)
+        target = name.strip().lower()
+        for host in result.get("data", []):
+            if (host.get("name") or "").strip().lower() == target:
+                return host
+        return None
 
 
 def run_in_batches(items, batch_size, delay_seconds, fn, label="batch"):

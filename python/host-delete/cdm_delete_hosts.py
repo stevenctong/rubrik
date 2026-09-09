@@ -30,7 +30,15 @@ Usage examples:
   # Slow environment -- increase timeout, reduce parallelism, wider stagger
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --timeout 300 --parallel 2 --stagger 15 --force
 
-Updated: 8/31/26 - timeout handling, per-retry GET check, verbose output
+  # Build a host inventory CSV (name,id) from the cluster and exit
+  python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --host_inventory
+
+  # Delete using a previously-built host inventory (required for deletion --
+  # avoids the bulk host list call, which can time out on large clusters)
+  python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --host_inventory host_inventory_20260909_120000.csv --force
+
+Updated: 9/9/26 - mandatory host inventory CSV, removes bulk list_all_hosts
+from delete + verify paths (avoids timeouts on large clusters)
 """
 
 import argparse
@@ -206,15 +214,14 @@ def verify_hosts_removed(client, host_ids, max_retries=3, retry_delay=10):
             _log("  Retry %d/%d: waiting %ds before re-checking %d host(s)..." % (attempt, max_retries - 1, retry_delay, len(pending)))
             time.sleep(retry_delay)
 
-        hosts_by_name = client.list_all_hosts()
-        existing_ids = {h.get("id") for h in hosts_by_name.values()}
-
         still_pending = []
         for host_id in pending:
-            if host_id in existing_ids:
-                still_pending.append(host_id)
-            else:
+            status = _host_still_exists(client, host_id)
+            if status is False:
                 removed.append(host_id)
+            else:
+                # True (still exists) or None (unknown/timeout) -- keep checking
+                still_pending.append(host_id)
         pending = still_pending
 
         if pending and attempt < max_retries - 1:
@@ -233,8 +240,9 @@ def parse_args():
                     "Any argument not provided will be prompted for interactively.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Examples:\n"
-               "  %(prog)s --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --force\n"
-               "  %(prog)s --cluster 10.8.48.104 --svc_client_id ABC --svc_secret XYZ --csv hosts.csv --force\n"
+               "  %(prog)s --svc_json rsc-sa.json --cluster 10.8.48.104 --host_inventory\n"
+               "  %(prog)s --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --host_inventory inv.csv --force\n"
+               "  %(prog)s --cluster 10.8.48.104 --svc_client_id ABC --svc_secret XYZ --csv hosts.csv --host_inventory inv.csv --force\n"
                "  %(prog)s   (fully interactive)\n",
     )
 
@@ -250,6 +258,13 @@ def parse_args():
 
     parser.add_argument("--csv", metavar="FILE",
                         help="CSV file with hostnames (must have a 'name' or 'hostname' column)")
+    parser.add_argument("--host_inventory", nargs="?", const="__BUILD__", default=None,
+                        metavar="FILE",
+                        help="Host inventory CSV (name,id). Pass with no value to build one "
+                             "now from the cluster and exit. Pass with a file path to use it "
+                             "for hostname->id lookup during deletion (required for deletion "
+                             "runs -- avoids a bulk cluster-wide host lookup that can time out "
+                             "on large clusters).")
     parser.add_argument("--parallel", type=int, default=None, metavar="N",
                         help="Max concurrent delete calls (default: 4)")
     parser.add_argument("--stagger", type=int, default=None, metavar="SEC",
@@ -327,6 +342,27 @@ def read_hostnames_from_csv(csv_file):
     return hostnames
 
 
+def load_host_inventory_csv(csv_file):
+    """Load a name,id host inventory CSV into a lowercased name -> id dict."""
+    inventory = {}
+    with open(csv_file, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = (row.get("name") or row.get("Name") or "").strip()
+            host_id = (row.get("id") or row.get("Id") or row.get("ID") or "").strip()
+            if name and host_id:
+                inventory[name.lower()] = host_id
+    return inventory
+
+
+def write_host_inventory_csv(out_path, hosts_by_name):
+    with open(out_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "id"])
+        for host in hosts_by_name.values():
+            writer.writerow([host.get("name", ""), host.get("id", "")])
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -358,13 +394,34 @@ def main():
             args.svc_client_id, "Service Account Client ID: ", clean=True, required=True)
         secret = prompt_if_missing(
             args.svc_secret, "Service Account Secret: ", clean=True, required=True)
+    http_timeout = args.timeout if args.timeout is not None else 150
+
+    # --- Connect ---
+    print("\nConnecting to %s..." % fqdn)
+    try:
+        client = CDMClient(fqdn, service_account_id, secret, timeout=http_timeout)
+    except Exception as e:
+        print("ERROR: Failed to authenticate: %s" % e)
+        sys.exit(1)
+    print("Connected!\n")
+
+    # --- Build-inventory mode: fetch host list, write CSV, exit ---
+    if args.host_inventory == "__BUILD__":
+        print("Fetching full host inventory from cluster...")
+        hosts_by_name = client.list_all_hosts()
+        out_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "host_inventory_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+        write_host_inventory_csv(out_path, hosts_by_name)
+        print("Wrote %d hosts to %s" % (len(hosts_by_name), out_path))
+        sys.exit(0)
+
     csv_file = prompt_if_missing(args.csv, "CSV file path with hostnames: ", required=True)
     csv_file = os.path.expanduser(csv_file)
 
     parallel_workers = args.parallel if args.parallel is not None else 4
     stagger_delay = args.stagger if args.stagger is not None else 10
     max_retries = args.retries if args.retries is not None else 3
-    http_timeout = args.timeout if args.timeout is not None else 150
     retry_delay = args.retry_delay if args.retry_delay is not None else 30
 
     if args.force:
@@ -381,14 +438,30 @@ def main():
         initial_wait = prompt_int_if_missing(
             args.initial_wait, "  Initial wait before verification in seconds (default 30): ", default=30, min_val=5, max_val=120)
 
-    # --- Connect ---
-    print("\nConnecting to %s..." % fqdn)
-    try:
-        client = CDMClient(fqdn, service_account_id, secret, timeout=http_timeout)
-    except Exception as e:
-        print("ERROR: Failed to authenticate: %s" % e)
-        sys.exit(1)
-    print("Connected!\n")
+    # --- Resolve mandatory host inventory (name -> id dict) ---
+    inventory_path = args.host_inventory
+    if inventory_path is None:
+        if args.force:
+            print("ERROR: --host_inventory is required (pass a file path, or run with "
+                  "--host_inventory alone first to build one).")
+            sys.exit(1)
+        inventory_path = input(
+            "Host inventory CSV path (leave blank to build one now from the cluster): ").strip()
+
+    if inventory_path:
+        inventory_path = os.path.expanduser(inventory_path)
+        print("Loading host inventory from: %s" % inventory_path)
+        host_inventory = load_host_inventory_csv(inventory_path)
+        print("Loaded %d hosts from inventory CSV.\n" % len(host_inventory))
+    else:
+        print("Fetching full host inventory from cluster...")
+        hosts_by_name = client.list_all_hosts()
+        host_inventory = {name: h.get("id") for name, h in hosts_by_name.items() if h.get("id")}
+        inv_out_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "host_inventory_%s.csv" % datetime.now().strftime("%Y%m%d_%H%M%S"))
+        write_host_inventory_csv(inv_out_path, hosts_by_name)
+        print("Wrote %d hosts to %s\n" % (len(hosts_by_name), inv_out_path))
 
     # --- Read and resolve hostnames ---
     hostnames = read_hostnames_from_csv(csv_file)
@@ -398,14 +471,15 @@ def main():
         sys.exit(1)
     print("Found %d hostnames in input CSV.\n" % len(hostnames))
 
-    print("Fetching full host list from cluster (single bulk lookup)...")
-    hosts_by_name = client.list_all_hosts()
-    print("Cluster reports %d total hosts.\n" % len(hosts_by_name))
-
     hosts = []
     not_found = []
     for hostname in hostnames:
-        host = hosts_by_name.get(hostname.lower())
+        host_id = host_inventory.get(hostname.lower())
+        if host_id:
+            hosts.append({"id": host_id, "name": hostname})
+            continue
+        print("  %s - not in host inventory, falling back to individual lookup..." % hostname)
+        host = client.get_host_by_name(hostname)
         if host and host.get("id"):
             hosts.append({"id": host["id"], "name": hostname})
         else:

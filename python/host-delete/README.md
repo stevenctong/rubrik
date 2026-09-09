@@ -86,6 +86,21 @@ provided on the command line will be prompted for.
     --timeout 300 --retry-delay 60 --parallel 2 --stagger 15 \
     --force
 
+  # Build a host inventory CSV (name,id) from the cluster and exit
+  python3 cdm_delete_hosts.py \
+    --svc_json rsc-sa.json \
+    --cluster 10.8.48.104 \
+    --host_inventory
+
+  # Delete using a previously-built host inventory (required for deletion --
+  # avoids the bulk host list call, which can time out on large clusters)
+  python3 cdm_delete_hosts.py \
+    --svc_json rsc-sa.json \
+    --cluster 10.8.48.104 \
+    --csv hosts.csv \
+    --host_inventory host_inventory_20260909_120000.csv \
+    --force
+
 CLI arguments:
 
   Authentication:
@@ -96,6 +111,12 @@ CLI arguments:
 
   Input:
     --csv FILE            CSV file with hostnames
+    --host_inventory FILE Host inventory CSV (name,id). Pass with no value to
+                          build one now from the cluster and exit. Pass with
+                          a file path to use it for hostname->id lookup
+                          during deletion. Required for deletion runs -- if
+                          omitted, you'll be prompted (blank input builds one
+                          inline and continues).
 
   Tuning:
     --parallel N          Max concurrent delete calls (default 4)
@@ -111,9 +132,13 @@ CLI arguments:
     --force, -f           Skip confirmation and use defaults
 
 What it does:
-  1. Connects and fetches the full host list from the cluster once, then
-     resolves each hostname in your CSV to its host ID. Hostnames not
-     found on the cluster are skipped and written to a separate CSV.
+  1. Connects, then loads a host inventory CSV (name,id) to resolve each
+     hostname in your CSV to its host ID. The inventory is mandatory: pass
+     an existing one via --host_inventory, or leave it blank when prompted
+     to build one from the cluster now and continue. Any hostname not found
+     in the inventory falls back to an individual GET lookup on the
+     cluster; hostnames not found by either are skipped and written to a
+     separate CSV.
   2. Prints a preview of matched hosts and requires you to type "yes" to
      confirm before deleting anything (unless --force is used).
   3. Deletes hosts in parallel (default 4 concurrent workers, staggered
@@ -126,10 +151,10 @@ What it does:
      --retries times (default 3). Results CSV is updated incrementally
      as each deletion completes, so partial progress is preserved even
      on crash or Ctrl+C.
-  4. Waits (default 30s), then re-checks the cluster's host list to
-     verify each host was actually removed, retrying a few times for
-     hosts still pending. If verification itself times out (common on
-     large clusters), it is skipped and the incremental results are
+  4. Waits (default 30s), then issues a per-host GET to verify each host
+     was actually removed, retrying a few times for hosts still pending.
+     If an individual check times out (common on large clusters), it is
+     skipped and the incremental results are
      preserved.
   5. Writes output files to logs/:
        host_delete_results_<timestamp>.csv  - id, name, status, message,
