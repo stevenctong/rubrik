@@ -37,8 +37,8 @@ Usage examples:
   # avoids the bulk host list call, which can time out on large clusters)
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --host_inventory host_inventory_20260909_120000.csv --force
 
-Updated: 9/9/26 - mandatory host inventory CSV, removes bulk list_all_hosts
-from delete + verify paths (avoids timeouts on large clusters)
+Updated: 9/9/26 - fallback host lookup no longer crashes the run on timeout;
+shorter dedicated timeout; diagnostic output on naming mismatches
 """
 
 import argparse
@@ -479,7 +479,13 @@ def main():
             hosts.append({"id": host_id, "name": hostname})
             continue
         print("  %s - not in host inventory, falling back to individual lookup..." % hostname)
-        host = client.get_host_by_name(hostname)
+        try:
+            # Reuse VERIFY_TIMEOUT: this is a small filtered GET, not a bulk
+            # listing, so it shouldn't wait on the full --timeout DELETE setting.
+            host = client.get_host_by_name(hostname, timeout=VERIFY_TIMEOUT)
+        except TimeoutError:
+            print("  %s - fallback lookup timed out, marking as not found" % hostname)
+            host = None
         if host and host.get("id"):
             hosts.append({"id": host["id"], "name": hostname})
         else:
@@ -489,6 +495,12 @@ def main():
     print("  Hostnames not found:      %d" % len(not_found))
     if not_found:
         print("  Not found (first 5): " + ", ".join(not_found[:5]))
+        print("\n  Sample inventory names (from cluster):")
+        for n in list(host_inventory.keys())[:3]:
+            print("    - %s" % n)
+        print("  Sample unmatched input hostnames:")
+        for n in not_found[:3]:
+            print("    - %s" % n)
 
     if not hosts:
         print("\nNo matching hosts to delete. Exiting.")

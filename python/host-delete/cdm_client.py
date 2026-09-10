@@ -113,7 +113,7 @@ class CDMClient:
 
         return hosts_by_name
 
-    def get_host_by_name(self, name):
+    def get_host_by_name(self, name, timeout=None):
         """
         Resolve a single hostname to its host summary dict via a filtered
         GET (not a bulk listing). Returns None if no exact (case-insensitive)
@@ -121,7 +121,7 @@ class CDMClient:
         a --host_inventory file.
         """
         params = {"primary_cluster_id": "local", "hostname": name}
-        result = self.get("/api/v1/host", params=params)
+        result = self.get("/api/v1/host", params=params, timeout=timeout)
         target = name.strip().lower()
         for host in result.get("data", []):
             if (host.get("name") or "").strip().lower() == target:
