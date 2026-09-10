@@ -138,9 +138,6 @@ CLI arguments:
     --retries N           Max retries per host on timeout/5xx (default 3)
     --timeout SEC         HTTP timeout for DELETE calls (default 150s)
     --retry-delay SEC     Wait between DELETE timeout and GET check (default 30s)
-    --verify-retries N    Max verification retries (default 3)
-    --verify-delay SEC    Delay between verification retries (default 30s)
-    --initial-wait SEC    Wait before verification (default 30s)
 
   Other:
     --force, -f           Skip confirmation and use defaults
@@ -165,14 +162,8 @@ What it does:
      --retries times (default 3). Results CSV is updated incrementally
      as each deletion completes, so partial progress is preserved even
      on crash or Ctrl+C.
-  4. Waits (default 30s), then issues a per-host GET to verify each host
-     was actually removed, retrying a few times for hosts still pending.
-     If an individual check times out (common on large clusters), it is
-     skipped and the incremental results are
-     preserved.
-  5. Writes output files to logs/:
-       host_delete_results_<timestamp>.csv  - id, name, status, message,
-                                               verified
+  4. Writes output files to logs/:
+       host_delete_results_<timestamp>.csv  - id, name, status, message
        host_delete_log_<timestamp>.log      - detailed activity log with
                                                timestamps (mirrors console)
        hosts_not_found_<timestamp>.csv      - hostnames from your input

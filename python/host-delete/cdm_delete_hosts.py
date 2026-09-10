@@ -37,9 +37,9 @@ Usage examples:
   # avoids the bulk host list call, which can time out on large clusters)
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --host_inventory host_inventory_20260909_120000.csv --force
 
-Updated: 9/9/26 - fallback host lookup no longer crashes the run on timeout;
-shorter dedicated timeout; diagnostic output on naming mismatches;
---skip_unmatched to bypass the fallback lookup entirely
+Updated: 9/9/26 - removed the post-deletion verification pass; a "Removed"
+status (clean DELETE, timeout-then-confirmed, or already-deleted) is already
+a confirmed outcome, so the separate re-check was redundant
 """
 
 import argparse
@@ -200,38 +200,6 @@ def _delete_single_host(client, host, max_retries, retry_delay, total, seq,
 
 
 # ---------------------------------------------------------------------------
-# Post-deletion verification pass
-# ---------------------------------------------------------------------------
-
-def verify_hosts_removed(client, host_ids, max_retries=3, retry_delay=10):
-    removed = []
-    pending = list(host_ids)
-
-    for attempt in range(max_retries):
-        if not pending:
-            break
-
-        if attempt > 0:
-            _log("  Retry %d/%d: waiting %ds before re-checking %d host(s)..." % (attempt, max_retries - 1, retry_delay, len(pending)))
-            time.sleep(retry_delay)
-
-        still_pending = []
-        for host_id in pending:
-            status = _host_still_exists(client, host_id)
-            if status is False:
-                removed.append(host_id)
-            else:
-                # True (still exists) or None (unknown/timeout) -- keep checking
-                still_pending.append(host_id)
-        pending = still_pending
-
-        if pending and attempt < max_retries - 1:
-            _log("  Check %d: %d removed, %d still pending..." % (attempt + 1, len(removed), len(pending)))
-
-    return removed, pending
-
-
-# ---------------------------------------------------------------------------
 # CLI helpers
 # ---------------------------------------------------------------------------
 
@@ -280,12 +248,6 @@ def parse_args():
                         help="HTTP timeout for DELETE calls in seconds (default: 150)")
     parser.add_argument("--retry-delay", type=int, default=None, metavar="SEC",
                         help="Wait between DELETE timeout and GET check (default: 30)")
-    parser.add_argument("--verify-retries", type=int, default=None, metavar="N",
-                        help="Max verification retries (default: 3)")
-    parser.add_argument("--verify-delay", type=int, default=None, metavar="SEC",
-                        help="Delay between verification retries in seconds (default: 30)")
-    parser.add_argument("--initial-wait", type=int, default=None, metavar="SEC",
-                        help="Initial wait before verification in seconds (default: 30)")
     parser.add_argument("--force", "-f", action="store_true",
                         help="Skip confirmation and use default timings")
 
@@ -429,20 +391,6 @@ def main():
     max_retries = args.retries if args.retries is not None else 3
     retry_delay = args.retry_delay if args.retry_delay is not None else 30
 
-    if args.force:
-        verify_retries = args.verify_retries if args.verify_retries is not None else 3
-        verify_delay = args.verify_delay if args.verify_delay is not None else 30
-        initial_wait = args.initial_wait if args.initial_wait is not None else 30
-    else:
-        if args.verify_retries is None and args.verify_delay is None and args.initial_wait is None:
-            print("\nVerification settings (for slow clusters):")
-        verify_retries = prompt_int_if_missing(
-            args.verify_retries, "  Max verification retries (default 3): ", default=3, min_val=1, max_val=10)
-        verify_delay = prompt_int_if_missing(
-            args.verify_delay, "  Delay between verification retries in seconds (default 30): ", default=30, min_val=5, max_val=120)
-        initial_wait = prompt_int_if_missing(
-            args.initial_wait, "  Initial wait before verification in seconds (default 30): ", default=30, min_val=5, max_val=120)
-
     # --- Resolve mandatory host inventory (name -> id dict) ---
     inventory_path = args.host_inventory
     if inventory_path is None:
@@ -581,58 +529,6 @@ def main():
         interrupted = True
         print("\n\n  Interrupted -- saving partial results (%d/%d processed)..." % (len(results), len(hosts)))
 
-    # --- Verify ---
-    skip_verify = False
-    removed_ids = []
-    still_exists_ids = []
-    if not interrupted:
-        _log("\n" + "=" * 60)
-        _log("VALIDATING REMOVALS")
-        _log("=" * 60)
-        _log("")
-        _log("Waiting %ds for deletions to process..." % initial_wait)
-        time.sleep(initial_wait)
-
-        host_ids = [h["id"] for h in hosts]
-        _log("Verifying %d hosts were removed (max %d retries, %ds delay)..." % (len(host_ids), verify_retries, verify_delay))
-        try:
-            removed_ids, still_exists_ids = verify_hosts_removed(client, host_ids, verify_retries, verify_delay)
-        except Exception as e:
-            _log("")
-            _log("  WARNING: Verification failed: %s" % e)
-            _log("  Skipping verification -- results CSV will not have verified column.")
-            skip_verify = True
-
-        if not skip_verify:
-            for r in results:
-                if r["id"] in removed_ids:
-                    r["verified"] = "Yes"
-                elif r["id"] in still_exists_ids:
-                    r["verified"] = "No - Still exists"
-                else:
-                    r["verified"] = "Unknown"
-
-            _log("")
-            _log("  Verified removed: %d" % len(removed_ids))
-            _log("  Still exists:     %d" % len(still_exists_ids))
-
-            if still_exists_ids:
-                _log("")
-                _log("  Hosts that still exist (may need more time or manual check):")
-                for host_id in still_exists_ids[:5]:
-                    host_name = next((h["name"] for h in hosts if h["id"] == host_id), "Unknown")
-                    _log("    - %s (%s)" % (host_name, host_id))
-                if len(still_exists_ids) > 5:
-                    _log("    ... and %d more" % (len(still_exists_ids) - 5))
-
-            # Rewrite results CSV with verified column
-            verified_fields = ["id", "name", "status", "message", "verified"]
-            with open(results_file, "w", newline="") as rf:
-                writer = csv.DictWriter(rf, fieldnames=verified_fields)
-                writer.writeheader()
-                for r in results:
-                    writer.writerow({k: r.get(k, "") for k in verified_fields})
-
     elapsed = time.time() - delete_start
     elapsed_min = int(elapsed // 60)
     elapsed_sec = int(elapsed % 60)
@@ -658,15 +554,9 @@ def main():
         "  Total hostnames in input:  %d" % len(hostnames),
         "  Hostnames not found:       %d" % len(not_found),
         "  Total hosts processed:     %d/%d" % (len(results), len(hosts)),
-        "  Deletion requested:        %d" % success_count,
+        "  Deletion confirmed:        %d" % success_count,
         "  Deletion failed:           %d" % fail_count,
     ]
-    if not interrupted:
-        if skip_verify:
-            summary_lines.append("  Verification:              skipped (timeout)")
-        else:
-            summary_lines.append("  Verified removed:          %d" % len(removed_ids))
-            summary_lines.append("  Still exists:              %d" % len(still_exists_ids))
     summary_lines.extend([
         "  Total run time:            %dm %ds" % (elapsed_min, elapsed_sec),
         "",
