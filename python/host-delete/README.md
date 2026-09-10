@@ -101,6 +101,16 @@ provided on the command line will be prompted for.
     --host_inventory host_inventory_20260909_120000.csv \
     --force
 
+  # Large cluster with many hostnames not in the inventory -- skip the
+  # per-host fallback GET instead of waiting on it for each miss
+  python3 cdm_delete_hosts.py \
+    --svc_json rsc-sa.json \
+    --cluster 10.8.48.104 \
+    --csv hosts.csv \
+    --host_inventory host_inventory_20260909_120000.csv \
+    --skip_unmatched \
+    --force
+
 CLI arguments:
 
   Authentication:
@@ -117,6 +127,10 @@ CLI arguments:
                           during deletion. Required for deletion runs -- if
                           omitted, you'll be prompted (blank input builds one
                           inline and continues).
+    --skip_unmatched      Skip the individual GET fallback lookup for
+                          hostnames not found in the host inventory -- mark
+                          them as not found immediately instead. Use on
+                          large clusters to avoid slow per-host lookups.
 
   Tuning:
     --parallel N          Max concurrent delete calls (default 4)
@@ -137,8 +151,8 @@ What it does:
      an existing one via --host_inventory, or leave it blank when prompted
      to build one from the cluster now and continue. Any hostname not found
      in the inventory falls back to an individual GET lookup on the
-     cluster; hostnames not found by either are skipped and written to a
-     separate CSV.
+     cluster (skipped entirely if --skip_unmatched is set); hostnames not
+     found by either are skipped and written to a separate CSV.
   2. Prints a preview of matched hosts and requires you to type "yes" to
      confirm before deleting anything (unless --force is used).
   3. Deletes hosts in parallel (default 4 concurrent workers, staggered

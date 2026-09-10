@@ -38,7 +38,8 @@ Usage examples:
   python3 cdm_delete_hosts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --csv hosts.csv --host_inventory host_inventory_20260909_120000.csv --force
 
 Updated: 9/9/26 - fallback host lookup no longer crashes the run on timeout;
-shorter dedicated timeout; diagnostic output on naming mismatches
+shorter dedicated timeout; diagnostic output on naming mismatches;
+--skip_unmatched to bypass the fallback lookup entirely
 """
 
 import argparse
@@ -265,6 +266,10 @@ def parse_args():
                              "for hostname->id lookup during deletion (required for deletion "
                              "runs -- avoids a bulk cluster-wide host lookup that can time out "
                              "on large clusters).")
+    parser.add_argument("--skip_unmatched", action="store_true",
+                        help="Skip the individual GET fallback lookup for hostnames not found "
+                             "in the host inventory -- mark them as not found immediately "
+                             "instead. Use on large clusters to avoid slow per-host lookups.")
     parser.add_argument("--parallel", type=int, default=None, metavar="N",
                         help="Max concurrent delete calls (default: 4)")
     parser.add_argument("--stagger", type=int, default=None, metavar="SEC",
@@ -477,6 +482,9 @@ def main():
         host_id = host_inventory.get(hostname.lower())
         if host_id:
             hosts.append({"id": host_id, "name": hostname})
+            continue
+        if args.skip_unmatched:
+            not_found.append(hostname)
             continue
         print("  %s - not in host inventory, falling back to individual lookup..." % hostname)
         try:
