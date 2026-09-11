@@ -1,0 +1,1664 @@
+<title>Azure VHD Mass Recovery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+:root {
+  --ground:      #fbfcfc;
+  --surface:     #f1f5f5;
+  --surface-2:   #e7eeee;
+  --line:        #d4dfdf;
+  --line-strong: #b5c6c6;
+  --ink:         #10262a;
+  --ink-2:       #3d5457;
+  --ink-3:       #64797b;
+  --accent:      #00b2a9;
+  --accent-deep: #00736d;
+  --accent-wash: #e2f5f3;
+  --warn:        #a35c06;
+  --warn-wash:   #fbf0dd;
+  --warn-line:   #e0be86;
+  --stop:        #a8291f;
+  --stop-wash:   #fbe9e7;
+  --stop-line:   #e5b0a9;
+  --shadow:      0 1px 2px rgba(16,38,42,.05), 0 6px 20px rgba(16,38,42,.05);
+
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:      #0a1618;
+    --surface:     #102427;
+    --surface-2:   #173135;
+    --line:        #21403f;
+    --line-strong: #2f5654;
+    --ink:         #e2eded;
+    --ink-2:       #a7bebe;
+    --ink-3:       #7b9394;
+    --accent:      #2fd7cc;
+    --accent-deep: #6fe8df;
+    --accent-wash: #0d3330;
+    --warn:        #e0a955;
+    --warn-wash:   #33260f;
+    --warn-line:   #614821;
+    --stop:        #f0918a;
+    --stop-wash:   #33150f;
+    --stop-line:   #63302a;
+    --shadow:      0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:      #0a1618;
+  --surface:     #102427;
+  --surface-2:   #173135;
+  --line:        #21403f;
+  --line-strong: #2f5654;
+  --ink:         #e2eded;
+  --ink-2:       #a7bebe;
+  --ink-3:       #7b9394;
+  --accent:      #2fd7cc;
+  --accent-deep: #6fe8df;
+  --accent-wash: #0d3330;
+  --warn:        #e0a955;
+  --warn-wash:   #33260f;
+  --warn-line:   #614821;
+  --stop:        #f0918a;
+  --stop-wash:   #33150f;
+  --stop-line:   #63302a;
+  --shadow:      0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 56px;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 32px 120px;
+  align-items: start;
+}
+
+/* ---------- nav ---------- */
+
+nav {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 40px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13.5px;
+}
+nav .navhead {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 18px 0 4px;
+}
+nav .navhead:first-child { margin-top: 0; }
+nav a {
+  color: var(--ink-2);
+  text-decoration: none;
+  padding: 3px 0 3px 12px;
+  border-left: 2px solid var(--line);
+  transition: color .12s, border-color .12s;
+}
+nav a:hover, nav a:focus-visible { color: var(--accent-deep); border-left-color: var(--accent); }
+nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- masthead ---------- */
+
+header {
+  padding: 64px 0 40px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 48px;
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+h1 {
+  font-size: clamp(34px, 5vw, 50px);
+  line-height: 1.08;
+  letter-spacing: -.024em;
+  font-weight: 700;
+  margin: 0 0 18px;
+  text-wrap: balance;
+}
+.standfirst {
+  font-size: 18.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  max-width: 62ch;
+  margin: 0;
+}
+.meta {
+  margin-top: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+.meta b { color: var(--ink-2); font-weight: 500; }
+
+/* ---------- sections ---------- */
+
+section { scroll-margin-top: 24px; margin-bottom: 60px; }
+
+h2 {
+  font-size: 27px;
+  letter-spacing: -.016em;
+  font-weight: 600;
+  margin: 0 0 6px;
+  text-wrap: balance;
+}
+h3 {
+  font-size: 18.5px;
+  font-weight: 600;
+  letter-spacing: -.008em;
+  margin: 38px 0 10px;
+  text-wrap: balance;
+}
+h4 {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 500;
+  margin: 30px 0 10px;
+}
+p { margin: 0 0 15px; max-width: 72ch; }
+ul, ol { max-width: 72ch; padding-left: 22px; margin: 0 0 15px; }
+li { margin-bottom: 6px; }
+
+.phase-tag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+  background: var(--accent-wash);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 4px 10px;
+  margin-bottom: 14px;
+}
+.phase-tag b { font-size: 14px; font-weight: 600; letter-spacing: 0; }
+
+.lede { font-size: 17px; color: var(--ink-2); max-width: 68ch; margin-bottom: 22px; }
+
+code {
+  font-family: var(--mono);
+  font-size: .88em;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: .08em .34em;
+  white-space: nowrap;
+}
+pre {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.62;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 3px;
+  padding: 15px 18px;
+  overflow-x: auto;
+  margin: 0 0 18px;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; white-space: pre; }
+pre .c { color: var(--ink-3); }
+pre .k { color: var(--accent-deep); font-weight: 500; }
+
+/* ---------- tables ---------- */
+
+.tscroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin: 0 0 20px;
+  background: var(--ground);
+  box-shadow: var(--shadow);
+}
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-3);
+  background: var(--surface);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  line-height: 1.5;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface); }
+td code { white-space: nowrap; }
+.col-name { font-family: var(--mono); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ---------- badges ---------- */
+
+.b {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 2px;
+  border: 1px solid;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.b-user { color: var(--accent-deep); background: var(--accent-wash); border-color: var(--line-strong); }
+.b-auto { color: var(--ink-3);      background: var(--surface);    border-color: var(--line); }
+.b-req  { color: var(--warn);       background: var(--warn-wash);  border-color: var(--warn-line); }
+.b-opt  { color: var(--ink-3);      background: none;              border-color: var(--line); }
+
+/* ---------- callouts ---------- */
+
+.note {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 3px;
+  padding: 14px 18px;
+  margin: 0 0 20px;
+  max-width: 76ch;
+}
+.note.warn { border-left-color: var(--warn); background: var(--warn-wash); border-color: var(--warn-line); }
+.note.stop { border-left-color: var(--stop); background: var(--stop-wash); border-color: var(--stop-line); }
+.note .label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--accent-deep);
+  display: block;
+  margin-bottom: 5px;
+}
+.note.warn .label { color: var(--warn); }
+.note.stop .label { color: var(--stop); }
+.note p { margin: 0; font-size: 15px; }
+.note p + p { margin-top: 10px; }
+
+/* ---------- figures ---------- */
+
+figure {
+  margin: 0 0 26px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--ground);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.figbody { overflow-x: auto; padding: 22px; }
+figure svg { display: block; min-width: 640px; width: 100%; height: auto; }
+figcaption {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  padding: 11px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* svg type roles */
+.s-box   { fill: var(--surface);    stroke: var(--line-strong); stroke-width: 1; }
+.s-acc   { fill: var(--accent-wash); stroke: var(--accent);      stroke-width: 1.25; }
+.s-band  { fill: none;              stroke: var(--line);        stroke-width: 1; stroke-dasharray: 3 3; }
+.s-t     { font-family: var(--sans); font-size: 12px; fill: var(--ink); }
+.s-tb    { font-family: var(--sans); font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+.s-m     { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-2); }
+.s-lbl   { font-family: var(--mono); font-size: 9.5px; letter-spacing: .11em; fill: var(--ink-3); text-transform: uppercase; }
+.s-acct  { font-family: var(--mono); font-size: 10px; letter-spacing: .11em; fill: var(--accent-deep); }
+.s-line  { stroke: var(--line-strong); stroke-width: 1.4; fill: none; }
+.s-lined { stroke: var(--line-strong); stroke-width: 1.4; fill: none; stroke-dasharray: 4 3; }
+
+/* ---------- misc ---------- */
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 22px; }
+.card {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 18px 20px;
+  background: var(--ground);
+  box-shadow: var(--shadow);
+}
+.card h5 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.card p { font-size: 14.5px; color: var(--ink-2); margin: 0; }
+.card .k {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: block;
+  margin-bottom: 7px;
+}
+
+hr { border: 0; border-top: 1px solid var(--line); margin: 46px 0; }
+
+footer {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  font-size: 13px;
+  color: var(--ink-3);
+  max-width: 72ch;
+}
+footer code { font-size: 12px; }
+
+@media (max-width: 940px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 22px 80px; }
+  nav {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 24px 0 0;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 20px;
+  }
+  nav .navhead { width: 100%; margin: 8px 0 0; }
+  nav a { border-left: 0; padding: 0; }
+  header { padding-top: 36px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="wrap">
+
+<nav aria-label="Contents">
+  <div class="navhead">Start</div>
+  <a href="#overview">Overview</a>
+  <a href="#two-csvs">The two CSVs</a>
+  <a href="#flow">End-to-end flow</a>
+  <a href="#inventory">Script inventory</a>
+  <div class="navhead">Phase 1</div>
+  <a href="#p1">Conversion</a>
+  <a href="#p1-steps">Runbook steps</a>
+  <a href="#p1-stages">What each stage does</a>
+  <a href="#p1-resume">Resume &amp; retry</a>
+  <div class="navhead">Phase 2</div>
+  <a href="#p2">Drive rebuild</a>
+  <a href="#p2-match">How disks are matched</a>
+  <div class="navhead">Phase 3</div>
+  <a href="#p3">Data recovery</a>
+  <a href="#p3-flr">Path A &middot; FLR</a>
+  <a href="#p3-sql">Path B &middot; SQL</a>
+  <div class="navhead">Reference</div>
+  <a href="#csv1">VM list CSV</a>
+  <a href="#csv2">Drive info CSV</a>
+  <a href="#prereqs">Prerequisites</a>
+  <a href="#gotchas">Gotchas</a>
+</nav>
+
+<main>
+
+<header>
+  <p class="eyebrow">Rubrik &middot; Field Runbook</p>
+  <h1>Azure VHD Mass Recovery</h1>
+  <p class="standfirst">Recover VMware VMs from Rubrik into Azure as native VMs, rebuild in-guest drive
+  layout, then restore application data by file-level recovery or MSSQL export. Every stage is driven
+  by CSV columns you fill in.</p>
+  <div class="meta">
+    <span><b>Scope</b> cloud/azurevhd</span>
+    <span><b>Phases</b> 3</span>
+    <span><b>Scripts</b> 11</span>
+    <span><b>Audience</b> Field SE / operator</span>
+  </div>
+</header>
+
+<!-- ============================= OVERVIEW ============================= -->
+
+<section id="overview">
+  <h2>Overview</h2>
+  <p class="lede">Three phases, run in order. Each has its own orchestrator, its own state file, and
+  its own resume behavior.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Phase</th><th>What it does</th><th>Where it runs</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="nowrap"><b>1 &middot; Conversion</b></td>
+        <td>Download VMDKs from Rubrik, convert to fixed VHD, upload to Azure as managed disks, create the VM</td>
+        <td>Staging Windows host with the Hyper-V role</td>
+      </tr>
+      <tr>
+        <td class="nowrap"><b>2 &middot; Drive rebuild</b></td>
+        <td>Recreate partitions, file systems, labels and drive letters on the raw disks</td>
+        <td>Source VM to capture, then target Azure VM to apply</td>
+      </tr>
+      <tr>
+        <td class="nowrap"><b>3 &middot; Data recovery</b></td>
+        <td>Restore application data by file-level recovery or MSSQL bulk export</td>
+        <td>Any host with RSC access</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Phase 3 branches. A given server goes down the FLR path, the SQL path, or both. The branch is
+  selected purely by which CSV columns you fill in &mdash; there is no flag or switch.</p>
+</section>
+
+<!-- ============================= TWO CSVS ============================= -->
+
+<section id="two-csvs">
+  <h2>There are two CSVs, not one</h2>
+  <p class="lede">This is the single most common point of confusion. They come from different scripts,
+  have different schemas, and are read by different phases.</p>
+
+  <div class="grid2">
+    <div class="card">
+      <span class="k">CSV 1 &middot; master control file</span>
+      <h5><code>rubrik_vm_list-&lt;timestamp&gt;.csv</code></h5>
+      <p>Produced by <code>Get-RubrikVMDKList.ps1</code>. One row per <b>VMDK</b>, so a four-disk VM
+      produces four rows. Drives <b>Phase 1 and Phase 3</b>. 36 columns, roughly 22 of them yours to fill.</p>
+    </div>
+    <div class="card">
+      <span class="k">CSV 2 &middot; per-server disk capture</span>
+      <h5><code>drive_info-&lt;COMPUTERNAME&gt;.csv</code></h5>
+      <p>Produced by <code>Get-DriveInfo.ps1</code> on the source VM before migration. One row per
+      <b>lettered volume</b>. Drives <b>Phase 2 only</b>. 17 columns, all auto-captured.</p>
+    </div>
+  </div>
+
+  <div class="note warn">
+    <span class="label">Timing</span>
+    <p>CSV 2 must be captured while the source VM is still running. Once the VM is gone the information
+    cannot be recovered from Azure, because the raw managed disks carry no partition table. Save it
+    somewhere outside the VM.</p>
+  </div>
+</section>
+
+<!-- ============================= FLOW ============================= -->
+
+<section id="flow">
+  <h2>End-to-end flow</h2>
+
+  <figure>
+    <div class="figbody">
+      <svg viewBox="0 0 980 480" role="img" aria-label="Three phase bands. CSV 1 drives phases 1 and 3; CSV 2 drives phase 2.">
+        <defs>
+          <marker id="ah" markerWidth="9" markerHeight="9" refX="7.5" refY="3.2" orient="auto">
+            <path d="M0,0 L7.5,3.2 L0,6.4 z" fill="var(--line-strong)"/>
+          </marker>
+          <marker id="aha" markerWidth="9" markerHeight="9" refX="7.5" refY="3.2" orient="auto">
+            <path d="M0,0 L7.5,3.2 L0,6.4 z" fill="var(--accent)"/>
+          </marker>
+        </defs>
+
+        <!-- CSV rail -->
+        <text x="14" y="24" class="s-lbl">Inputs</text>
+
+        <rect x="14" y="40" width="152" height="66" rx="3" class="s-acc"/>
+        <text x="28" y="62" class="s-acct">CSV 1</text>
+        <text x="28" y="80" class="s-m">rubrik_vm_list</text>
+        <text x="28" y="96" class="s-m">-*.csv</text>
+
+        <rect x="14" y="216" width="152" height="66" rx="3" class="s-acc"/>
+        <text x="28" y="238" class="s-acct">CSV 2</text>
+        <text x="28" y="256" class="s-m">drive_info</text>
+        <text x="28" y="272" class="s-m">-HOST.csv</text>
+
+        <!-- CSV1 -> band1 -->
+        <path d="M166,73 H196" class="s-line" marker-end="url(#aha)" stroke="var(--accent)"/>
+        <!-- CSV1 -> band3 (long connector down the left) -->
+        <path d="M90,106 V366 H196" class="s-lined" stroke="var(--accent)" marker-end="url(#aha)"/>
+        <!-- CSV2 -> band2 -->
+        <path d="M166,249 H196" class="s-line" marker-end="url(#aha)" stroke="var(--accent)"/>
+
+        <!-- BAND 1 -->
+        <rect x="206" y="28" width="760" height="90" rx="4" class="s-band"/>
+        <text x="220" y="20" class="s-lbl">Phase 1 &#183; Conversion &#183; staging host</text>
+
+        <rect x="222" y="46" width="128" height="54" rx="3" class="s-box"/>
+        <text x="286" y="68" class="s-tb" text-anchor="middle">Download</text>
+        <text x="286" y="86" class="s-m" text-anchor="middle">aria2c</text>
+
+        <path d="M350,73 H382" class="s-line" marker-end="url(#ah)"/>
+
+        <rect x="382" y="46" width="128" height="54" rx="3" class="s-box"/>
+        <text x="446" y="68" class="s-tb" text-anchor="middle">Convert</text>
+        <text x="446" y="86" class="s-m" text-anchor="middle">qemu-img &#8594; VHD</text>
+
+        <path d="M510,73 H542" class="s-line" marker-end="url(#ah)"/>
+
+        <rect x="542" y="46" width="146" height="54" rx="3" class="s-box"/>
+        <text x="615" y="68" class="s-tb" text-anchor="middle">Upload</text>
+        <text x="615" y="86" class="s-m" text-anchor="middle">AzCopy &#8594; disk</text>
+
+        <path d="M688,73 H720" class="s-line" marker-end="url(#ah)"/>
+
+        <rect x="720" y="46" width="230" height="54" rx="3" class="s-acc"/>
+        <text x="835" y="68" class="s-tb" text-anchor="middle">Azure VM created</text>
+        <text x="835" y="86" class="s-m" text-anchor="middle">New-AzVM, all disks attached</text>
+
+        <!-- band1 -> band2 -->
+        <path d="M835,100 V150 H430 V206" class="s-line" marker-end="url(#ah)"/>
+        <text x="600" y="143" class="s-m">VM boots, CreateOnly disks are raw</text>
+
+        <!-- BAND 2 -->
+        <rect x="206" y="206" width="760" height="86" rx="4" class="s-band"/>
+        <text x="220" y="198" class="s-lbl">Phase 2 &#183; Drive rebuild &#183; in-guest</text>
+
+        <rect x="222" y="222" width="196" height="54" rx="3" class="s-box"/>
+        <text x="320" y="244" class="s-tb" text-anchor="middle">Get-DriveInfo</text>
+        <text x="320" y="262" class="s-m" text-anchor="middle">on SOURCE VM, pre-migration</text>
+
+        <path d="M418,249 H452" class="s-line" marker-end="url(#ah)"/>
+
+        <rect x="452" y="222" width="212" height="54" rx="3" class="s-box"/>
+        <text x="558" y="244" class="s-tb" text-anchor="middle">Initialize-VMDrives</text>
+        <text x="558" y="262" class="s-m" text-anchor="middle">inside the Azure VM</text>
+
+        <path d="M664,249 H698" class="s-line" marker-end="url(#ah)"/>
+
+        <rect x="698" y="222" width="252" height="54" rx="3" class="s-acc"/>
+        <text x="824" y="244" class="s-tb" text-anchor="middle">Letters, labels, file systems</text>
+        <text x="824" y="262" class="s-m" text-anchor="middle">restored to match the source</text>
+
+        <!-- band2 -> band3 -->
+        <path d="M824,276 V320 H430 V352" class="s-line" marker-end="url(#ah)"/>
+
+        <!-- BAND 3 -->
+        <rect x="206" y="352" width="760" height="108" rx="4" class="s-band"/>
+        <text x="220" y="344" class="s-lbl">Phase 3 &#183; Data recovery &#183; branch on CSV columns</text>
+
+        <rect x="222" y="368" width="196" height="36" rx="3" class="s-box"/>
+        <text x="320" y="391" class="s-tb" text-anchor="middle">Start-FLR.ps1</text>
+        <text x="234" y="424" class="s-m">gated on sourceHostname</text>
+        <text x="234" y="440" class="s-m">+ sourceFlrDrive</text>
+
+        <rect x="452" y="368" width="212" height="36" rx="3" class="s-box"/>
+        <text x="558" y="391" class="s-tb" text-anchor="middle">Start-SQLRestore.ps1</text>
+        <text x="464" y="424" class="s-m">gated on srcSqlInstance</text>
+
+        <rect x="698" y="368" width="252" height="54" rx="3" class="s-acc"/>
+        <text x="824" y="390" class="s-tb" text-anchor="middle">Data restored into the VM</text>
+        <text x="824" y="408" class="s-m" text-anchor="middle">fire and forget, poll for status</text>
+
+        <path d="M418,386 H452" class="s-line" stroke-dasharray="3 3"/>
+        <path d="M664,386 H698" class="s-line" marker-end="url(#ah)"/>
+      </svg>
+    </div>
+    <figcaption>CSV 1 drives Phase 1 and Phase 3. CSV 2 drives Phase 2 only. Both Phase 3 paths can run
+    for the same server; they are independent and order does not matter.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================= INVENTORY ============================= -->
+
+<section id="inventory">
+  <h2>Script inventory</h2>
+
+  <h4>Phase 1 &middot; Conversion</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Script</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Get-RubrikVMDKList.ps1</td><td>Generates the master VM list CSV from RSC. Merges your edits forward on re-run.</td></tr>
+      <tr><td class="col-name">Start-VMConversion.ps1</td><td><b>Orchestrator.</b> Groups VMDKs by VM, runs N VMs in parallel through download, convert and upload. Tracks state for resume and retry.</td></tr>
+      <tr><td class="col-name">Download-RubrikVMDK.ps1</td><td>Called by the orchestrator. Triggers the export and pulls files with aria2c.</td></tr>
+      <tr><td class="col-name">Convert-VMDK-to-VHD.ps1</td><td>Called by the orchestrator. qemu-img conversion, alignment, boot disk and partition style detection.</td></tr>
+      <tr><td class="col-name">Upload-VHD-Create-AzureVM.ps1</td><td>Called by the orchestrator. AzCopy upload to a managed disk. Can create a VM standalone too.</td></tr>
+      <tr><td class="col-name">conversion_config.psd1</td><td>Shared pipeline settings: paths, throttle, Azure subscription and region.</td></tr>
+      <tr><td class="col-name">upload_config.psd1</td><td>Only needed for standalone manual uploads, not for the orchestrated flow.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Phase 2 &middot; Drive rebuild</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Script</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Get-DriveInfo.ps1</td><td>Run on the <b>source</b> VM before migration. Captures volume, partition and disk layout.</td></tr>
+      <tr><td class="col-name">Initialize-VMDrives.ps1</td><td>Run <b>inside</b> the target Azure VM after first boot. Matches raw disks to the CSV and initializes them.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Phase 3 &middot; Data recovery</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Script</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Start-FLR.ps1</td><td><b>Use this one.</b> Volume group file-level recovery with state tracking, resume and status checking.</td></tr>
+      <tr><td class="col-name">Start-SQLRestore.ps1</td><td>MSSQL bulk database export with state tracking, resume and status checking.</td></tr>
+      <tr><td class="col-name">Invoke-FLR.ps1</td><td>Earlier single-shot FLR script. Same GraphQL logic but no state file, no status polling, no resume. <b>Superseded.</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Legacy</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Script</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Main-Conversion-Script.ps1</td><td>Original serial wrapper. Reads the <code>Notes</code> column instead of <code>Convert</code>, no parallelism, no state tracking. Superseded by <code>Start-VMConversion.ps1</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<hr>
+
+<!-- ============================= PHASE 1 ============================= -->
+
+<section id="p1">
+  <span class="phase-tag"><b>1</b> Conversion</span>
+  <h2>VMware to Azure conversion</h2>
+  <p class="lede">Takes VMDKs from a Rubrik snapshot and produces a running Azure VM with all disks
+  attached. Runs on a staging Windows host with the Hyper-V role installed.</p>
+
+  <figure>
+    <div class="figbody">
+      <svg viewBox="0 0 940 210" role="img" aria-label="Phase 1 pipeline showing artifacts produced between each stage.">
+        <defs>
+          <marker id="ah2" markerWidth="9" markerHeight="9" refX="7.5" refY="3.2" orient="auto">
+            <path d="M0,0 L7.5,3.2 L0,6.4 z" fill="var(--line-strong)"/>
+          </marker>
+        </defs>
+
+        <text x="14" y="20" class="s-lbl">Stage</text>
+        <text x="14" y="150" class="s-lbl">Artifact on disk</text>
+
+        <rect x="14" y="34" width="150" height="52" rx="3" class="s-acc"/>
+        <text x="89" y="56" class="s-tb" text-anchor="middle">Rubrik snapshot</text>
+        <text x="89" y="74" class="s-m" text-anchor="middle">LatestBackupID</text>
+
+        <path d="M164,60 H204" class="s-line" marker-end="url(#ah2)"/>
+
+        <rect x="204" y="34" width="150" height="52" rx="3" class="s-box"/>
+        <text x="279" y="56" class="s-tb" text-anchor="middle">1 &#183; Download</text>
+        <text x="279" y="74" class="s-m" text-anchor="middle">aria2c</text>
+        <path d="M279,86 V128" class="s-lined"/>
+        <text x="279" y="164" class="s-m" text-anchor="middle">vmname.vmdk</text>
+        <text x="279" y="180" class="s-m" text-anchor="middle">vmname-flat.vmdk</text>
+
+        <path d="M354,60 H394" class="s-line" marker-end="url(#ah2)"/>
+
+        <rect x="394" y="34" width="150" height="52" rx="3" class="s-box"/>
+        <text x="469" y="56" class="s-tb" text-anchor="middle">2 &#183; Convert</text>
+        <text x="469" y="74" class="s-m" text-anchor="middle">qemu-img</text>
+        <path d="M469,86 V128" class="s-lined"/>
+        <text x="469" y="164" class="s-m" text-anchor="middle">vmname.vhd (fixed)</text>
+        <text x="469" y="180" class="s-m" text-anchor="middle">conversion_report.json</text>
+
+        <path d="M544,60 H584" class="s-line" marker-end="url(#ah2)"/>
+
+        <rect x="584" y="34" width="150" height="52" rx="3" class="s-box"/>
+        <text x="659" y="56" class="s-tb" text-anchor="middle">3 &#183; Upload</text>
+        <text x="659" y="74" class="s-m" text-anchor="middle">AzCopy</text>
+        <path d="M659,86 V128" class="s-lined"/>
+        <text x="659" y="164" class="s-m" text-anchor="middle">Azure managed disk</text>
+        <text x="659" y="180" class="s-m" text-anchor="middle">{tgtVMName}-{DiskSuffix}</text>
+
+        <path d="M734,60 H774" class="s-line" marker-end="url(#ah2)"/>
+
+        <rect x="774" y="34" width="152" height="52" rx="3" class="s-acc"/>
+        <text x="850" y="56" class="s-tb" text-anchor="middle">Azure VM</text>
+        <text x="850" y="74" class="s-m" text-anchor="middle">running</text>
+      </svg>
+    </div>
+    <figcaption>Each stage writes to <code>&lt;workingDir&gt;\&lt;VMName&gt;\</code>. Budget roughly 2x the total
+    provisioned size, since the VMDK download and the fixed VHD coexist on disk.</figcaption>
+  </figure>
+</section>
+
+<section id="p1-steps">
+  <h3>Runbook steps</h3>
+
+  <h4>Step 1 &mdash; Generate the CSV</h4>
+<pre><code>./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc-service-account.json'
+
+<span class="c"># Only VMs with snapshots on one cluster</span>
+./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc.json' -RecoveryCluster 'vault-r-madison'
+
+<span class="c"># Fresh CSV, discard prior edits</span>
+./Get-RubrikVMDKList.ps1 -RscServiceAccountJson './rsc.json' -SkipMerge</code></pre>
+
+  <p>Output is <code>./rubrik_vm_list-&lt;yyyy-MM-dd_HHmm&gt;.csv</code>, covering both primary and replica
+  objects. Only VMs with at least one snapshot appear.</p>
+
+  <h4>Step 2 &mdash; Fill in the CSV</h4>
+  <p>Per <b>VMDK row</b>, pick an action:</p>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Goal</th><th>Mark</th></tr></thead>
+    <tbody>
+      <tr><td>Transfer this disk's data to Azure</td><td><code>Convert</code> = <code>x</code></td></tr>
+      <tr><td>Create an empty disk of the same size, repopulate later via Phase 3</td><td><code>CreateOnly</code> = <code>x</code></td></tr>
+      <tr><td>Ignore this disk</td><td>leave both blank</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Per <b>VM</b>, mark exactly one row <code>BootDisk</code> = <code>x</code>. That row is also where
+  the per-VM Azure settings are read from, so put <code>ResourceGroup</code>, <code>VNetRG</code>,
+  <code>VNetName</code>, <code>SubnetName</code> and <code>VMSize</code> on it.</p>
+
+  <div class="note">
+    <span class="label">Why CreateOnly exists</span>
+    <p>For data volumes where you want the disk present and correctly sized in Azure but intend to
+    repopulate the contents via Phase 3 rather than transferring the full VMDK. It skips download,
+    conversion and upload entirely, which is the difference between minutes and hours on a large
+    data volume.</p>
+  </div>
+
+  <h4>Step 3 &mdash; Configure the pipeline</h4>
+<pre><code><span class="c"># conversion_config.psd1</span>
+@{
+    RscServiceAccountJson = './rsc-service-account-rr.json'
+    workingDir            = 'F:\conversions'
+    throttleLimit         = 5
+    aria2cPath            = 'F:\aria2\aria2c.exe'
+    qemuPath              = 'C:\Program Files\qemu\qemu-img.exe'
+    azcopyPath            = 'F:\azcopy\azcopy.exe'
+    timeoutMinutes        = 60
+
+    RunDownload = $true
+    RunConvert  = $true
+    RunUpload   = $true
+
+    subscription = 'RR-PRD'
+    location     = 'eastus2'
+    osType       = 'Windows'
+    skuName      = 'StandardSSD_LRS'
+
+    useStorageAccount    = $false
+    storageAccountName   = 'rrtonglighthouse101'
+    storageContainerName = 'vhds'
+    storageAccountRG     = 'rr-tong'
+}</code></pre>
+  <p><code>vmCsvFile</code> is commented out in the shipped config. Either uncomment it or pass
+  <code>-vmCsvFile</code>. Command-line parameters override config file values.</p>
+
+  <h4>Step 4 &mdash; Run</h4>
+<pre><code>./Start-VMConversion.ps1 -pipelineConfig './conversion_config.psd1' `
+  -vmCsvFile './rubrik_vm_list-2026-08-18_1317.csv'
+
+<span class="c"># Test download and convert without touching Azure</span>
+./Start-VMConversion.ps1 -pipelineConfig './conversion_config.psd1' -RunUpload $false
+
+<span class="c"># Retry VMs that failed on a prior run</span>
+./Start-VMConversion.ps1 -pipelineConfig './conversion_config.psd1' -RetryFailed</code></pre>
+
+  <h4>Pre-flight checks before any work starts</h4>
+  <ol>
+    <li>PowerShell 7+ present</li>
+    <li>RSC JSON, CSV, aria2c, qemu-img and azcopy all exist, for enabled stages only</li>
+    <li>No row has both <code>Convert</code> and <code>CreateOnly</code> &mdash; <b>hard error</b></li>
+    <li>No <code>CreateOnly</code> row is also <code>BootDisk</code> &mdash; <b>hard error</b></li>
+    <li>At least one actionable row exists</li>
+    <li>Disk space summary against the estimate &mdash; warning only, does not block</li>
+    <li>Per-VM required Azure columns present &mdash; <b>hard error</b>, listed per VM</li>
+    <li><code>Connect-AzAccount</code> against the configured subscription</li>
+  </ol>
+</section>
+
+<section id="p1-stages">
+  <h3>What each stage does</h3>
+
+  <h4>Stage 1 &mdash; Download</h4>
+  <p>Two paths. It first looks for a successful Recovery event on this VM in the <b>last 24 hours</b>
+  and scrapes download links from the event messages. If every requested VMDK is covered, it reuses
+  those links and skips the export entirely.</p>
+  <p>Otherwise it fires <code>downloadVsphereVirtualMachineFiles</code>, waits 15 seconds, finds the
+  matching recovery event, and polls every 60 seconds until SUCCESS. Then it opens a CDM session
+  directly against the cluster and pulls each URL with aria2c. Both the <code>.vmdk</code> descriptor
+  and the <code>-flat.vmdk</code> data file land in the download directory.</p>
+
+  <div class="note warn">
+    <span class="label">Timeout behavior</span>
+    <p><code>timeoutMinutes</code> (default 60) applies <b>only to the export preparation poll</b>, not
+    to the transfer. The transfer has no wall-clock limit. Instead it polls file size every 30 seconds,
+    and if the size is unchanged for three consecutive polls (90 seconds) it kills aria2c, deletes the
+    partial file, and restarts. Up to three attempts per URL.</p>
+    <p>A non-zero aria2c exit code is <b>not</b> retried. Only stalls are.</p>
+  </div>
+
+  <h4>Stage 2 &mdash; Convert</h4>
+  <p>For each <code>.vmdk</code> descriptor in the download directory:</p>
+  <ol>
+    <li><b>Rewrite the descriptor in place.</b> Every <code>RW &lt;n&gt; VMFS</code> extent line becomes
+    <code>RW &lt;n&gt; FLAT</code>, because qemu-img cannot read the VMFS extent type Rubrik exports.
+    Note this mutates the downloaded file, it is not a copy.</li>
+    <li><b>Detect partition style and boot disk</b> by reading the first 2048 bytes of the flat file.
+    <code>EFI PART</code> at offset 512 means GPT, then it scans the first eight GPT entries for the
+    EFI System Partition type GUID. Otherwise <code>0x55AA</code> at offset 510 means MBR, then it
+    checks the four primary entries for the <code>0x80</code> active flag.</li>
+    <li><b>Size gate.</b> Anything over 2 TiB is skipped with a warning and produces no report entry.</li>
+    <li><b>Convert:</b> <code>qemu-img convert -f vmdk -O vpc -o subformat=fixed</code></li>
+    <li><b>Clear the NTFS sparse flag.</b> Windows can mark the qemu output sparse, which breaks the
+    fully-allocated guarantee Azure requires.</li>
+    <li><b>Align to 1 MB</b> with <code>Resize-VHD</code>. Azure rejects unaligned VHDs on direct upload.</li>
+  </ol>
+
+  <p>Writes <code>conversion_report.json</code>, an array of successfully converted disks:</p>
+<pre><code>[
+  {
+    "sourceFile":       "vmname.vmdk",
+    "targetFile":       "vmname.vhd",
+    "partitionStyle":   "GPT",
+    "isBootDisk":       true,
+    "virtualSizeBytes": 96636764160
+  }
+]</code></pre>
+  <p>Skipped and failed disks produce no entry. When exactly one disk converts, PowerShell emits a bare
+  object rather than an array.</p>
+
+  <h4>Stage 3 &mdash; Upload and VM creation</h4>
+  <ol>
+    <li>Read <code>conversion_report.json</code> for the boot disk and derive the Hyper-V generation:
+    MBR gives <code>V1</code>, GPT gives <code>V2</code>. Falls back to the CSV <code>BootDisk</code>
+    marking, then to the first converted file with a warning.</li>
+    <li>Upload the boot disk as a managed disk named <code>{tgtVMName}-{DiskSuffix}</code>.</li>
+    <li>Upload each remaining VHD as a data disk.</li>
+    <li>Create empty managed disks for every <code>CreateOnly</code> row, sized from
+    <code>vmdkSizeGiB</code> rounded up.</li>
+    <li>Create NIC <code>{tgtVMName}-nic-01</code> with accelerated networking.</li>
+    <li>Call <code>New-AzVM</code> <b>once</b> with every disk attached. Data disks get sequential LUNs
+    from 0.</li>
+    <li>Poll power state up to five minutes for <code>VM running</code>.</li>
+  </ol>
+</section>
+
+<section id="p1-resume">
+  <h3>Resume, retry and idempotency</h3>
+  <p>State lives in <code>&lt;workingDir&gt;\conversion_state.csv</code>, one row per VM keyed on the RSC
+  VM FID, with independent <code>DownloadStatus</code>, <code>ConvertStatus</code> and
+  <code>UploadStatus</code> columns.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Prior state</th><th>Behavior on re-run</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap">All three stages <code>Complete</code></td><td>Skipped entirely</td></tr>
+      <tr><td class="nowrap"><code>Stage</code> = <code>Failed</code></td><td>Skipped unless <code>-RetryFailed</code></td></tr>
+      <tr><td class="nowrap">Anything else</td><td>Resumes, running only the incomplete stages</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Azure resources are reused rather than recreated when they already exist with the expected name
+  and a <code>ProvisioningState</code> of <code>Succeeded</code>: managed disks, the NIC, and the VM
+  itself. If the target VM already exists and is running, upload is marked complete and skipped. If
+  the VM name is taken in the resource group, the orchestrator prefixes it with <code>az-</code> and
+  continues.</p>
+
+  <p>A <code>Partial</code> result means the pipeline finished without error but one or more stages
+  were switched off via the <code>Run*</code> flags.</p>
+
+  <h4>Outputs</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>File</th><th>Contents</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">conversion_state.csv</td><td>Per-VM stage status, Azure VM name, Hyper-V generation, error stage and message</td></tr>
+      <tr><td class="col-name">logs\conversion_master-&lt;ts&gt;.log</td><td>Full orchestrator transcript</td></tr>
+      <tr><td class="col-name">logs\conversion_stats.csv</td><td>Appended per VM: per-stage minutes, total GiB, status</td></tr>
+      <tr><td class="col-name">&lt;VMName&gt;\conversion.log</td><td>Per-VM transcript. This is where you look when a VM fails.</td></tr>
+      <tr><td class="col-name">&lt;VMName&gt;\conversion_report.json</td><td>Boot disk and partition style detection results</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<hr>
+
+<!-- ============================= PHASE 2 ============================= -->
+
+<section id="p2">
+  <span class="phase-tag"><b>2</b> Drive rebuild</span>
+  <h2>In-guest drive rebuild</h2>
+  <p class="lede">Recreates the source VM's drive letters, labels, file systems and allocation unit
+  sizes on the raw disks attached to the recovered Azure VM.</p>
+
+  <p><code>CreateOnly</code> disks arrive in Azure raw and uninitialized. Without this step they have
+  no partition table and no drive letters, so a Phase 3 restore has nowhere to land.</p>
+
+  <h4>Step 1 &mdash; Capture on the source VM</h4>
+<pre><code><span class="c"># Elevated PowerShell on the SOURCE VM, before migration</span>
+./Get-DriveInfo.ps1
+
+<span class="c"># Custom output path</span>
+./Get-DriveInfo.ps1 -OutputPath 'C:\temp\drives.csv'</code></pre>
+
+  <p>Produces <code>./drive_info-&lt;COMPUTERNAME&gt;.csv</code> plus a table and warnings on screen.</p>
+
+  <div class="note warn">
+    <span class="label">Read the warnings before you migrate</span>
+    <p><b>Dynamic disk</b> &mdash; will be skipped by <code>Initialize-VMDrives.ps1</code>. Plan manual
+    configuration.<br>
+    <b>Multi-partition disk</b> &mdash; handled automatically, but verify partition sizes afterwards.<br>
+    <b>Mount point volume</b> &mdash; <b>never written to the CSV at all.</b> Fully manual after migration.</p>
+  </div>
+
+  <h4>Step 2 &mdash; Apply on the target Azure VM</h4>
+<pre><code><span class="c"># Always preview first. -WhatIf prints the match plan and exits.</span>
+./Initialize-VMDrives.ps1 -CsvFile '.\drive_info-SQLSERVER01.csv' -WhatIf
+
+<span class="c"># Then run for real</span>
+./Initialize-VMDrives.ps1 -CsvFile '.\drive_info-SQLSERVER01.csv'
+
+<span class="c"># CSV holds several servers</span>
+./Initialize-VMDrives.ps1 -CsvFile '.\drives.csv' -ServerName 'SQLSERVER01'
+
+<span class="c"># Unattended</span>
+./Initialize-VMDrives.ps1 -CsvFile '.\drives.csv' -SkipConfirmation</code></pre>
+</section>
+
+<section id="p2-match">
+  <h3>How disks are matched</h3>
+
+  <div class="note stop">
+    <span class="label">Matching is by size only</span>
+    <p>There is no LUN, SCSI target or disk number correlation, even though the CSV carries
+    <code>BusType</code> and <code>ScsiTarget</code>. The source <code>DiskNumber</code> is used only
+    as a grouping key for multi-partition detection &mdash; source and target disk numbers need not
+    correspond.</p>
+  </div>
+
+  <ol>
+    <li><b>Candidate pool</b> is every disk where <code>PartitionStyle -eq 'RAW'</code>. A disk that is
+    already initialized, even if empty, is invisible to the matcher.</li>
+    <li><b>Tolerance is 10 percent</b> of the CSV target size, either direction. Among all disks inside
+    tolerance, the smallest absolute difference wins. This absorbs Azure's fixed disk tiers, since a
+    500 GiB source volume lands on a 512 GiB managed disk.</li>
+    <li><b>Largest first, greedy.</b> Multi-partition groups are matched first by summed capacity
+    descending, then single-partition rows by capacity descending. Each raw disk is consumed once.</li>
+    <li><b>Target size used</b> is <code>TotalCapacityMB</code> for a single-partition row, or
+    <code>DiskSizeGB</code> &times; 1024 for a multi-partition group, falling back to summed volume
+    capacity plus 5 percent.</li>
+  </ol>
+
+  <div class="note warn">
+    <span class="label">Same-size disks are ambiguous</span>
+    <p>If two raw disks are the same size, which one gets which drive letter is effectively arbitrary,
+    determined by CSV row order. The script detects this and warns. It is harmless for empty disks
+    being formatted from scratch, but the disk-number to drive-letter mapping is not reproducible
+    run to run.</p>
+  </div>
+
+  <h4>Multi-partition disks</h4>
+  <p>Rows are grouped by the source <code>DiskNumber</code>. Partitions are created largest first;
+  every partition except the last is sized to its source volume capacity, and the <b>smallest</b>
+  volume in the group is created last with <code>-UseMaximumSize</code> to absorb leftover space.</p>
+  <p>One thing to watch: the partition style for the whole physical disk comes from the group's
+  <b>first CSV row in file order</b>, not per row. If rows in a group disagree, the first wins. File
+  system and allocation unit size are applied per row.</p>
+
+  <h4>What gets skipped</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Skipped</th><th>Rule</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap">Existing drive letters</td><td>The letter already exists on the target. This is what makes the script safe to re-run.</td></tr>
+      <tr><td class="nowrap">Dynamic disks</td><td><code>DiskType</code> is <code>Dynamic</code>. Cannot be recreated with <code>Initialize-Disk</code> / <code>New-Partition</code>.</td></tr>
+      <tr><td class="nowrap">Empty <code>Drive</code> cell</td><td>Silently skipped.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="label">The boot drive is not explicitly excluded</span>
+    <p><code>IsBoot</code> and <code>IsSystem</code> are never read by this script. <code>C:</code> is
+    skipped only incidentally, because it already exists on the target and hits the existing-letter
+    filter. If a CSV row's letter happened not to exist on the target, the script would try to create
+    it regardless of the flag.</p>
+  </div>
+
+  <h4>Defaults when CSV values are missing</h4>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Property</th><th>Default</th><th>CSV column</th></tr></thead>
+    <tbody>
+      <tr><td>File system</td><td><code>NTFS</code></td><td class="col-name">FileSystem</td></tr>
+      <tr><td>Allocation unit</td><td class="num">4096 bytes</td><td class="col-name">AllocationUnitSizeKB &times; 1024</td></tr>
+      <tr><td>Partition style</td><td><code>GPT</code></td><td class="col-name">PartitionStyle</td></tr>
+      <tr><td>Volume label</td><td>none, taken verbatim</td><td class="col-name">DriveType</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Required columns are <code>Drive</code>, <code>TotalCapacityMB</code> and <code>DriveType</code>.
+  The script exits if any is absent.</p>
+
+  <h4>Verify after the run</h4>
+<pre><code>Get-Volume | Sort-Object DriveLetter |
+  Format-Table DriveLetter, FileSystemLabel, FileSystem, Size, SizeRemaining
+
+Get-Disk | Format-Table Number, PartitionStyle, Size, OperationalStatus</code></pre>
+  <p>Cross-check letters and labels against the source CSV before moving to Phase 3. Errors are
+  per-drive, so one failure does not abort the rest.</p>
+</section>
+
+<hr>
+
+<!-- ============================= PHASE 3 ============================= -->
+
+<section id="p3">
+  <span class="phase-tag"><b>3</b> Data recovery</span>
+  <h2>FLR and SQL restore</h2>
+  <p class="lede">Two independent paths, both driven off the same VM list CSV. Which one runs is
+  decided entirely by which columns you filled in.</p>
+
+  <figure>
+    <div class="figbody">
+      <svg viewBox="0 0 900 268" role="img" aria-label="Phase 3 branch: FLR gated on sourceHostname plus sourceFlrDrive, SQL gated on srcSqlInstance.">
+        <defs>
+          <marker id="ah3" markerWidth="9" markerHeight="9" refX="7.5" refY="3.2" orient="auto">
+            <path d="M0,0 L7.5,3.2 L0,6.4 z" fill="var(--line-strong)"/>
+          </marker>
+        </defs>
+
+        <rect x="14" y="98" width="164" height="60" rx="3" class="s-acc"/>
+        <text x="96" y="124" class="s-tb" text-anchor="middle">CSV row</text>
+        <text x="96" y="142" class="s-m" text-anchor="middle">rubrik_vm_list-*.csv</text>
+
+        <path d="M178,128 H218" class="s-line"/>
+        <path d="M218,128 V44 H262" class="s-line" marker-end="url(#ah3)"/>
+        <path d="M218,128 H262" class="s-line" marker-end="url(#ah3)"/>
+        <path d="M218,128 V212 H262" class="s-line" marker-end="url(#ah3)"/>
+
+        <!-- FLR -->
+        <rect x="262" y="18" width="248" height="52" rx="3" class="s-box"/>
+        <text x="276" y="38" class="s-m">sourceHostname  AND</text>
+        <text x="276" y="56" class="s-m">sourceFlrDrive  both set</text>
+        <path d="M510,44 H548" class="s-line" marker-end="url(#ah3)"/>
+        <rect x="548" y="18" width="180" height="52" rx="3" class="s-acc"/>
+        <text x="638" y="40" class="s-tb" text-anchor="middle">Start-FLR.ps1</text>
+        <text x="638" y="58" class="s-m" text-anchor="middle">volume group FLR</text>
+        <path d="M728,44 H766" class="s-line" marker-end="url(#ah3)"/>
+        <rect x="766" y="26" width="120" height="36" rx="3" class="s-box"/>
+        <text x="826" y="49" class="s-m" text-anchor="middle">flr_state.csv</text>
+
+        <!-- SQL -->
+        <rect x="262" y="102" width="248" height="52" rx="3" class="s-box"/>
+        <text x="276" y="122" class="s-m">srcSqlInstance  set</text>
+        <text x="276" y="140" class="s-m">+ sqlDataPath / sqlLogPath</text>
+        <path d="M510,128 H548" class="s-line" marker-end="url(#ah3)"/>
+        <rect x="548" y="102" width="180" height="52" rx="3" class="s-acc"/>
+        <text x="638" y="124" class="s-tb" text-anchor="middle">Start-SQLRestore.ps1</text>
+        <text x="638" y="142" class="s-m" text-anchor="middle">MSSQL bulk export</text>
+        <path d="M728,128 H766" class="s-line" marker-end="url(#ah3)"/>
+        <rect x="766" y="110" width="120" height="36" rx="3" class="s-box"/>
+        <text x="826" y="133" class="s-m" text-anchor="middle">sql_state.csv</text>
+
+        <!-- neither -->
+        <rect x="262" y="192" width="248" height="40" rx="3" class="s-box"/>
+        <text x="276" y="217" class="s-m">neither set</text>
+        <path d="M510,212 H548" class="s-line" marker-end="url(#ah3)"/>
+        <text x="558" y="217" class="s-m">row ignored by Phase 3</text>
+
+        <text x="766" y="185" class="s-lbl">Re-run or -CheckOnly to poll</text>
+        <path d="M826,146 V196 H700" class="s-lined" marker-end="url(#ah3)"/>
+      </svg>
+    </div>
+    <figcaption>A single row can populate both a FLR job and a SQL job. Both scripts are fire and
+    forget: they initiate, record the async request ID, and exit.</figcaption>
+  </figure>
+
+  <p>Both share the same job key: <code>sourceHostname|targetHost</code>, where <code>targetHost</code>
+  is <code>targetRbsWinHost</code> falling back to <code>tgtVMName</code>.</p>
+
+  <div class="note">
+    <span class="label">Common prerequisite</span>
+    <p>The target Windows host must have Rubrik Backup Service installed and be registered on the
+    <b>same Rubrik cluster as the source</b>. Both scripts constrain the target lookup to the source's
+    cluster ID.</p>
+  </div>
+</section>
+
+<section id="p3-flr">
+  <h3>Path A &middot; File-level recovery</h3>
+  <p>Restores files from a Windows <b>volume group</b> backup of the source host onto the recovered
+  Azure VM.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Required</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">sourceHostname</td><td><span class="b b-req">Yes</span></td><td>Source Windows host in Rubrik holding the volume group backup.</td></tr>
+      <tr><td class="col-name">sourceFlrDrive</td><td><span class="b b-req">Yes</span></td><td>Source drive letter(s). Comma separated for multiple, e.g. <code>G,H</code>. Trailing colons are stripped.</td></tr>
+      <tr><td class="col-name">Cluster</td><td><span class="b b-req">In practice</span></td><td>Matched client side. A blank value fails the host lookup.</td></tr>
+      <tr><td class="col-name">targetRbsWinHost</td><td><span class="b b-opt">No</span></td><td>Target host. Defaults to <code>tgtVMName</code>.</td></tr>
+      <tr><td class="col-name">targetFlrDrive</td><td><span class="b b-opt">No</span></td><td>Target letter(s), positionally mapped. Count must match <code>sourceFlrDrive</code> or the row is skipped. Blank restores to the same letter.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+<pre><code>./Start-FLR.ps1 -RscServiceAccountJson './rsc-service-account.json' `
+  -vmCsvFile './rubrik_vm_list-2026-08-18_1317.csv' `
+  -workingDir './flr_work'
+
+<span class="c"># Poll status only, start nothing new</span>
+./Start-FLR.ps1 ... -CheckOnly
+
+<span class="c"># Reset failed jobs to Pending and re-initiate</span>
+./Start-FLR.ps1 ... -RetryFailed</code></pre>
+
+  <p>The status-check pass <b>always runs</b>, regardless of <code>-CheckOnly</code>.
+  <code>-CheckOnly</code> only suppresses initiation.</p>
+
+  <h4>What it actually does</h4>
+  <ol>
+    <li>Look up the source host, matched exactly on name <b>and</b> cluster name. It must have at least
+    one volume group.</li>
+    <li>Get volume group snapshots over the <b>last 90 days</b>, grouped by day.</li>
+    <li>Pick the snapshot by sorting all snapshots on the day-group end timestamp, descending, taking
+    the first.</li>
+    <li>Browse the snapshot root to validate each requested drive letter. A missing letter is a warning
+    and that drive is dropped; all drives missing fails the job.</li>
+    <li>For each valid drive, browse <code>/&lt;SRC&gt;:</code> <b>one level deep</b> and build one
+    restore config per top-level entry.</li>
+    <li>Look up the target host on the same cluster. Connectivity other than <code>CONNECTED</code> is
+    a warning, not a failure.</li>
+    <li>Fire <code>restoreVolumeGroupSnapshotFiles</code> with <code>shouldIgnoreError = true</code>.</li>
+  </ol>
+
+  <div class="note">
+    <span class="label">What lands where</span>
+    <p>Every top-level item of a source drive is restored to the <b>root of the target drive</b>. With
+    <code>sourceFlrDrive</code> = <code>C</code> and <code>targetFlrDrive</code> = <code>D</code>:</p>
+    <p><code>source C:\Data\file.txt</code> &nbsp;&#8594;&nbsp; <code>target D:\Data\file.txt</code></p>
+    <p>The top-level name is preserved under the target root; the source drive letter's own path
+    component is dropped. Directory recursion is handled by the Rubrik restore engine, not enumerated
+    by the script.</p>
+  </div>
+
+  <div class="note warn">
+    <span class="label">Snapshot selection caveats</span>
+    <p>Selection is by <b>day bucket</b>, not exact snapshot time. If several snapshots fall in the same
+    day, the tie resolves to whatever order the API returned. <code>isIndexed</code>,
+    <code>isUnindexable</code> and <code>isQuarantined</code> are queried but never used to filter, so
+    an unindexed snapshot can be selected.</p>
+  </div>
+
+  <h4><code>flr_state.csv</code></h4>
+  <p><b>Status values:</b> <code>Pending</code>, <code>Initiated</code>, <code>Success</code>,
+  <code>PartialSuccess</code>, <code>Failed</code>.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>From</th><th>Trigger</th><th>To</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap">new key</td><td>first run</td><td><code>Pending</code></td></tr>
+      <tr><td class="nowrap"><code>Pending</code></td><td>mutation succeeds</td><td><code>Initiated</code></td></tr>
+      <tr><td class="nowrap"><code>Pending</code></td><td>any exception</td><td><code>Failed</code></td></tr>
+      <tr><td class="nowrap"><code>Initiated</code></td><td>event status <code>Success</code></td><td><code>Success</code></td></tr>
+      <tr><td class="nowrap"><code>Initiated</code></td><td>event status <code>PARTIAL_SUCCESS</code></td><td><code>PartialSuccess</code></td></tr>
+      <tr><td class="nowrap"><code>Initiated</code></td><td><code>TaskFailed</code> / <code>Failure</code> / <code>Failed</code></td><td><code>Failed</code></td></tr>
+      <tr><td class="nowrap"><code>Failed</code></td><td><code>-RetryFailed</code></td><td><code>Pending</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Terminal states are sticky. Jobs dropped from the CSV keep their state untouched. Columns:
+  <code>JobKey</code>, <code>SourceHostname</code>, <code>TargetHost</code>, <code>Cluster</code>,
+  <code>Drives</code>, <code>Status</code>, <code>AsyncRequestId</code>, <code>SourceHostFid</code>,
+  <code>SnapshotId</code>, <code>ItemCount</code>, <code>StartTime</code>, <code>LastChecked</code>,
+  <code>LastMessage</code>, <code>ErrorMessage</code>.</p>
+
+  <div class="note warn">
+    <span class="label">Status polling correlates on the source host, not the job</span>
+    <p>The event query filters on <code>lastActivityType = Recovery</code> and
+    <code>objectFid = SourceHostFid</code>, then takes the newest event. <code>AsyncRequestId</code> is
+    recorded but never used for correlation. If more than one recovery runs against the same source
+    host, the status shown may belong to a different job.</p>
+    <p>Separately, <code>lastUpdatedTimeGt</code> is passed <code>StartTime</code> in <b>local</b> time
+    format here, while <code>Start-SQLRestore.ps1</code> correctly uses ISO-8601 UTC. On a non-UTC host
+    this can skew the event window.</p>
+  </div>
+</section>
+
+<section id="p3-sql">
+  <h3>Path B &middot; MSSQL bulk export</h3>
+  <p>Exports <b>all</b> databases from a source SQL instance to a target SQL instance.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Required</th><th>Behavior</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">srcSqlInstance</td><td><span class="b b-req">Yes</span></td><td>The only column that gates a row into the job list.</td></tr>
+      <tr><td class="col-name">sqlDataPath</td><td><span class="b b-req">Yes</span></td><td>Target path for data files, e.g. <code>E:\SQLData</code>.</td></tr>
+      <tr><td class="col-name">sqlLogPath</td><td><span class="b b-req">Yes</span></td><td>Target path for log files, e.g. <code>F:\SQLLogs</code>.</td></tr>
+      <tr><td class="col-name">sourceHostname</td><td><span class="b b-req">In practice</span></td><td>Used in the job key and the host lookup.</td></tr>
+      <tr><td class="col-name">Cluster</td><td><span class="b b-req">In practice</span></td><td>Matched client side.</td></tr>
+      <tr><td class="col-name">tgtSqlInstance</td><td><span class="b b-opt">No</span></td><td>Defaults to <code>srcSqlInstance</code>.</td></tr>
+      <tr><td class="col-name">targetRbsWinHost</td><td><span class="b b-opt">No</span></td><td>Defaults to <code>tgtVMName</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="label">Two silent behaviors to watch</span>
+    <p>A row missing <code>sqlDataPath</code> or <code>sqlLogPath</code> is <b>skipped with a warning</b>,
+    not a hard error. Watch for that message in the output.</p>
+    <p>Dedup is <b>first-row-wins</b>. Unlike FLR, only the first row for a given
+    <code>sourceHostname|targetHost</code> contributes settings. Keep SQL configuration on one row per
+    server pair.</p>
+  </div>
+
+<pre><code>./Start-SQLRestore.ps1 -RscServiceAccountJson './rsc-service-account.json' `
+  -vmCsvFile './rubrik_vm_list-2026-08-18_1317.csv' `
+  -workingDir './sql_work'
+
+./Start-SQLRestore.ps1 ... -CheckOnly
+./Start-SQLRestore.ps1 ... -RetryFailed</code></pre>
+
+  <h4>The mutation it fires</h4>
+<pre><code><span class="k">bulkExportMssqlDatabases</span>
+  finishRecovery     = true
+  recoveryPoint      = { timestampMs: &lt;now, epoch ms&gt; }
+  sourceInstanceIds  = [ SrcInstanceFid ]
+  allowOverwrite     = false
+  targetDataFilePath = sqlDataPath
+  targetLogFilePath  = sqlLogPath
+  targetInstanceId   = TgtInstanceFid</code></pre>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Setting</th><th>Consequence</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap"><code>recoveryPoint</code> = now</td><td>There is no snapshot lookup at all. Rubrik interprets "now" as the latest recoverable point per database, log-tail inclusive. You cannot target an earlier point without editing the script.</td></tr>
+      <tr><td class="nowrap"><code>sourceInstanceIds</code></td><td>This is the <b>instance</b> FID, so <b>all</b> databases on the instance are exported. There is no per-database selection.</td></tr>
+      <tr><td class="nowrap"><code>allowOverwrite</code> = false</td><td>The export fails if the databases already exist on the target instance. Drop them first on a re-attempt.</td></tr>
+      <tr><td class="nowrap"><code>finishRecovery</code> = true</td><td>Databases come online rather than staying in a restoring state.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Neither path is validated for format or existence. They pass through verbatim, so a malformed
+  path surfaces later as an RSC or SQL side failure in <code>ErrorMessage</code>.</p>
+
+  <h4><code>sql_state.csv</code></h4>
+  <p><b>Status values:</b> <code>Pending</code>, <code>Initiated</code>, <code>Success</code>,
+  <code>Failed</code>. There is no <code>PartialSuccess</code> on this path.</p>
+  <p>Status is aggregated by counting matching recovery events. Any failure count above zero sets the
+  <b>whole job</b> to <code>Failed</code>, with <code>ErrorMessage</code> recording
+  <code>Failed: N, Success: N, Running: N</code> &mdash; so some databases may still have restored
+  successfully. Otherwise any running count keeps it <code>Initiated</code>, else <code>Success</code>.</p>
+
+  <div class="note warn">
+    <span class="label">Status polling is not scoped to the job</span>
+    <p>The event query filters on <code>lastActivityType = Recovery</code> and
+    <code>objectType = Mssql</code> only, and caps at 50 events. It is <b>not</b> scoped to this job's
+    instance FID. If several SQL exports run concurrently, one job's status check will count another
+    job's events. Treat aggregate status as advisory when running more than one SQL job, and confirm
+    in the RSC activity log.</p>
+  </div>
+
+  <h4>Verify</h4>
+<pre><code><span class="c"># FLR: spot check restored content</span>
+Get-ChildItem D:\ | Select-Object -First 20
+
+<span class="c"># SQL: confirm databases are online</span>
+Invoke-Sqlcmd -Query "SELECT name, state_desc, recovery_model_desc FROM sys.databases"</code></pre>
+</section>
+
+<hr>
+
+<!-- ============================= CSV 1 ============================= -->
+
+<section id="csv1">
+  <h2>Reference &middot; VM list CSV</h2>
+  <p class="lede"><code>rubrik_vm_list-&lt;timestamp&gt;.csv</code> &mdash; one row per VMDK. Produced by
+  <code>Get-RubrikVMDKList.ps1</code>, consumed by Phase 1 and Phase 3.</p>
+
+  <p><span class="b b-user">User</span> you fill it in &nbsp;
+     <span class="b b-auto">Auto</span> populated from RSC, do not edit &nbsp;
+     <span class="b b-req">Req</span> required &nbsp;
+     <span class="b b-opt">Opt</span> optional</p>
+
+  <h3>Disk action columns</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Src</th><th>Scope</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Convert</td><td><span class="b b-user">User</span></td><td>Disk</td><td>Mark <code>x</code> or <code>y</code> to download, convert and upload this VMDK.</td></tr>
+      <tr><td class="col-name">CreateOnly</td><td><span class="b b-user">User</span></td><td>Disk</td><td>Mark <code>x</code> or <code>y</code> to create an <b>empty</b> managed disk of the same size instead of transferring data. Attached raw for Phase 2 to initialize.</td></tr>
+      <tr><td class="col-name">BootDisk</td><td><span class="b b-user">User</span></td><td>Disk</td><td><span class="b b-req">Exactly one per VM</span> Marks the OS disk. Determines the Hyper-V generation and is the row per-VM Azure settings are read from.</td></tr>
+      <tr><td class="col-name">DriveLetter</td><td><span class="b b-user">User</span></td><td>Disk</td><td>Planning note only. <b>Not consumed by any script.</b> Use it to record which letter this VMDK held so you can cross-check against the drive info CSV.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note stop">
+    <span class="label">Hard errors enforced before any work starts</span>
+    <p>A row cannot have both <code>Convert</code> and <code>CreateOnly</code> marked.<br>
+    A <code>CreateOnly</code> row cannot be a <code>BootDisk</code> &mdash; an empty disk cannot boot.</p>
+  </div>
+
+  <h3>Azure naming</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Scope</th><th>Req</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">tgtVMName</td><td>VM</td><td><span class="b b-opt">Opt</span></td><td>Target Azure VM name, read from the <code>BootDisk</code> row only. Defaults to the source VM name. Also the prefix for disk names and the NIC name.</td></tr>
+      <tr><td class="col-name">DiskSuffix</td><td>Disk</td><td><span class="b b-opt">Opt</span></td><td>Suffix for this disk's managed disk name. Final name is <code>{tgtVMName}-{DiskSuffix}</code>. Defaults to the VMDK leaf filename.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Azure placement &mdash; all read from the BootDisk row</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Req</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">ResourceGroup</td><td><span class="b b-req">Yes</span></td><td>Resource group for the VM, NIC and all managed disks.</td></tr>
+      <tr><td class="col-name">VNetRG</td><td><span class="b b-req">Yes</span></td><td>Resource group containing the virtual network.</td></tr>
+      <tr><td class="col-name">VNetName</td><td><span class="b b-req">Yes</span></td><td>Virtual network name.</td></tr>
+      <tr><td class="col-name">SubnetName</td><td><span class="b b-req">Yes</span></td><td>Subnet name within the VNet.</td></tr>
+      <tr><td class="col-name">VMSize</td><td><span class="b b-req">Yes</span></td><td>Azure VM size SKU, e.g. <code>Standard_E2_v5</code>.</td></tr>
+      <tr><td class="col-name">NsgRG</td><td><span class="b b-opt">Opt</span></td><td>Resource group of the NSG. Defaults to <code>ResourceGroup</code>.</td></tr>
+      <tr><td class="col-name">NsgName</td><td><span class="b b-opt">Opt</span></td><td>NSG name. If blank the NIC is created <b>without</b> an NSG and the script warns.</td></tr>
+      <tr><td class="col-name">ManagedDiskSku</td><td><span class="b b-opt">Opt</span></td><td>Per-VM disk SKU override. Falls back to <code>skuName</code> in the config. Valid: <code>Standard_LRS</code>, <code>StandardSSD_LRS</code>, <code>StandardSSD_ZRS</code>, <code>Premium_LRS</code>, <code>Premium_ZRS</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Phase 3 columns</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Path</th><th>Req</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">sourceHostname</td><td>FLR + SQL</td><td><span class="b b-req">Yes</span></td><td>Source Windows host in Rubrik.</td></tr>
+      <tr><td class="col-name">sourceFlrDrive</td><td>FLR</td><td><span class="b b-req">Yes</span></td><td>Source drive letter(s), comma separated. Gates the row into FLR.</td></tr>
+      <tr><td class="col-name">targetFlrDrive</td><td>FLR</td><td><span class="b b-opt">Opt</span></td><td>Target letter(s), positionally mapped. Count must match or the row is skipped.</td></tr>
+      <tr><td class="col-name">targetRbsWinHost</td><td>FLR + SQL</td><td><span class="b b-opt">Opt</span></td><td>Target host. Defaults to <code>tgtVMName</code>.</td></tr>
+      <tr><td class="col-name">srcSqlInstance</td><td>SQL</td><td><span class="b b-req">Yes</span></td><td>Source MSSQL instance. Gates the row into the SQL path.</td></tr>
+      <tr><td class="col-name">tgtSqlInstance</td><td>SQL</td><td><span class="b b-opt">Opt</span></td><td>Target instance. Defaults to <code>srcSqlInstance</code>.</td></tr>
+      <tr><td class="col-name">sqlDataPath</td><td>SQL</td><td><span class="b b-req">Yes</span></td><td>Target path for data files. Blank means the row is skipped with a warning.</td></tr>
+      <tr><td class="col-name">sqlLogPath</td><td>SQL</td><td><span class="b b-req">Yes</span></td><td>Target path for log files. Same skip behavior.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Auto-populated &mdash; do not edit</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">Name</td><td>Source VMware VM name.</td></tr>
+      <tr><td class="col-name">SourceType</td><td><code>Primary</code> or <code>Replica</code>. Lets you pick which cluster to recover from.</td></tr>
+      <tr><td class="col-name">Excluded</td><td><code>Y</code> if the VMDK is excluded from snapshots. A <code>Y</code> means there is no backup data for this disk.</td></tr>
+      <tr><td class="col-name">vmdkSizeGiB</td><td>Provisioned size in GiB. Used for space estimates and for sizing <code>CreateOnly</code> disks.</td></tr>
+      <tr><td class="col-name">vmdkSizeGB</td><td>Provisioned size in decimal GB. Informational.</td></tr>
+      <tr><td class="col-name">vmdkFile</td><td>Full VMware path. Half of the merge key.</td></tr>
+      <tr><td class="col-name">Cluster</td><td>Rubrik cluster holding the snapshot. Half of the merge key, and required by Phase 3.</td></tr>
+      <tr><td class="col-name">SLA</td><td>Effective SLA domain name.</td></tr>
+      <tr><td class="col-name">ID</td><td>RSC VM object FID. Groups rows into VMs and triggers the download.</td></tr>
+      <tr><td class="col-name">LatestBackupID / Date</td><td>Most recent snapshot. <b>This is the recovery point the conversion uses.</b></td></tr>
+      <tr><td class="col-name">OldestBackupID / Date</td><td>Oldest available snapshot. Informational.</td></tr>
+      <tr><td class="col-name">Notes</td><td>Free text. Only read by the legacy <code>Main-Conversion-Script.ps1</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="label">Choosing a different recovery point</span>
+    <p>The pipeline always uses <code>LatestBackupID</code>. To recover from an earlier point, edit that
+    cell to the snapshot you want before running the conversion. Note a later CSV regeneration will
+    overwrite it, since it is an auto column.</p>
+  </div>
+
+  <h3>Merge behavior on regeneration</h3>
+  <p>Re-running <code>Get-RubrikVMDKList.ps1</code> finds the newest CSV matching the prefix and carries
+  your edits forward, matched on <code>vmdkFile</code> + <code>Cluster</code>. All 22 user columns are
+  merged. <code>Notes</code> is always reset and all auto columns are refreshed. Pass
+  <code>-SkipMerge</code> for a clean CSV.</p>
+</section>
+
+<!-- ============================= CSV 2 ============================= -->
+
+<section id="csv2">
+  <h2>Reference &middot; Drive info CSV</h2>
+  <p class="lede"><code>drive_info-&lt;COMPUTERNAME&gt;.csv</code> &mdash; one row per lettered volume.
+  Produced by <code>Get-DriveInfo.ps1</code> on the source VM, consumed only by
+  <code>Initialize-VMDrives.ps1</code>. Every column is auto-captured.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Column</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td class="col-name">ServerName</td><td>Source computer name. Used by <code>-ServerName</code> when one CSV holds several servers.</td></tr>
+      <tr><td class="col-name">Drive</td><td><span class="b b-req">Required</span> Drive letter, no colon. The letter reassigned on the target.</td></tr>
+      <tr><td class="col-name">DriveType</td><td><span class="b b-req">Required</span> The <b>volume label</b>, despite the column name. Reapplied as the label on the target.</td></tr>
+      <tr><td class="col-name">TotalCapacityMB</td><td><span class="b b-req">Required</span> Volume size in MB. The primary field used to match a raw Azure disk.</td></tr>
+      <tr><td class="col-name">UsedSpaceMB</td><td>Used space in MB. Useful for sizing decisions.</td></tr>
+      <tr><td class="col-name">TotalCapacityBytes</td><td>Exact volume size in bytes.</td></tr>
+      <tr><td class="col-name">FileSystem</td><td>e.g. <code>NTFS</code>, <code>ReFS</code>. Reapplied when formatting.</td></tr>
+      <tr><td class="col-name">AllocationUnitSizeKB</td><td>Cluster size in KB. Reapplied when formatting. Matters for SQL volumes, commonly 64K.</td></tr>
+      <tr><td class="col-name">PartitionStyle</td><td><code>MBR</code> or <code>GPT</code>. Reapplied when initializing the disk.</td></tr>
+      <tr><td class="col-name">DiskNumber</td><td>Source physical disk number. Used <b>only</b> to group volumes that shared one disk.</td></tr>
+      <tr><td class="col-name">DiskType</td><td><code>Basic</code> or <code>Dynamic</code>. <b>Dynamic disks are skipped.</b></td></tr>
+      <tr><td class="col-name">PartitionsOnDisk</td><td>Count of lettered volumes on that source disk. Above 1 means multi-partition.</td></tr>
+      <tr><td class="col-name">BusType</td><td>Source bus type. Informational &mdash; not used for matching.</td></tr>
+      <tr><td class="col-name">ScsiTarget</td><td>SCSI target or LUN. Informational &mdash; not used for matching.</td></tr>
+      <tr><td class="col-name">DiskSizeGB</td><td>Physical disk size, which differs from volume size on multi-partition disks.</td></tr>
+      <tr><td class="col-name">IsSystem</td><td><code>Y</code> if the system or boot partition. Not read by <code>Initialize-VMDrives.ps1</code>.</td></tr>
+      <tr><td class="col-name">IsBoot</td><td><code>Y</code> if the letter matches <code>%SystemDrive%</code>. Not read by <code>Initialize-VMDrives.ps1</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<hr>
+
+<!-- ============================= PREREQS ============================= -->
+
+<section id="prereqs">
+  <h2>Prerequisites</h2>
+
+  <h3>Staging host for Phase 1</h3>
+  <div class="note stop">
+    <span class="label">The Hyper-V role is mandatory, not just the tools</span>
+    <p><code>Convert-VMDK-to-VHD.ps1</code> calls <code>Resize-VHD</code> to 1 MB align the output.
+    Those cmdlets go through the Hyper-V WMI provider, so the <b>full role</b> is required. Management
+    tools alone will not work.</p>
+    <p><code>Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -Restart</code></p>
+  </div>
+
+  <p>If the staging host is itself an Azure VM, you need nested virtualization: a Dv5/Dsv5 or newer SKU
+  such as <code>Standard_D8s_v5</code>, on Windows Server 2022 Datacenter or newer. Alternatively deploy
+  the "Hyper-V Server 2025" marketplace image from Cloud Infrastructure Services, which ships with the
+  role installed.</p>
+
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap">PowerShell 7+</td><td>All scripts. <code>ForEach-Object -Parallel</code> in the orchestrator requires it.</td></tr>
+      <tr><td class="nowrap">aria2c</td><td>Multi-connection VMDK download</td></tr>
+      <tr><td class="nowrap">qemu-img</td><td>VMDK to fixed VHD conversion</td></tr>
+      <tr><td class="nowrap">AzCopy v10</td><td>Direct upload to a managed disk</td></tr>
+      <tr><td class="nowrap">Az modules</td><td><code>Az.Accounts</code>, <code>Az.Compute</code>, <code>Az.Network</code>. <code>Az.Storage</code> only when <code>useStorageAccount = $true</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Storage sizing</h3>
+  <p>Budget roughly <b>2x the total provisioned size</b> of everything you convert in one batch. Each VM
+  needs its VMDK download plus its fixed VHD on disk at the same time. Fixed VHD means fully allocated:
+  a 500 GiB VMDK that is 40 GiB used still produces a 500 GiB VHD.</p>
+
+<pre><code>&lt;workingDir&gt;\
+  conversion_state.csv
+  logs\
+    conversion_master-&lt;timestamp&gt;.log
+    conversion_stats.csv
+  &lt;VMName&gt;\
+    conversion.log
+    conversion_report.json
+    download\      <span class="c">&lt;- .vmdk and -flat.vmdk</span>
+    converted\     <span class="c">&lt;- .vhd</span></code></pre>
+
+  <h3>RSC service account</h3>
+  <p>All Rubrik-facing scripts authenticate with an RSC service account JSON containing
+  <code>client_id</code>, <code>client_secret</code> and <code>access_token_uri</code>.</p>
+
+  <div class="note warn">
+    <span class="label">The staging host needs direct cluster access too</span>
+    <p><code>Download-RubrikVMDK.ps1</code> opens a CDM session <b>directly against the cluster</b>. It
+    derives the cluster IP from the download URL Rubrik returns, then POSTs the same credentials to
+    <code>https://&lt;clusterIP&gt;/api/v1/service_account/session</code>. So the service account must be
+    valid at the cluster level, and the staging host needs HTTPS reach to the cluster nodes, not just
+    to RSC. Certificate validation is disabled for these calls.</p>
+  </div>
+
+  <h3>Azure</h3>
+  <ul>
+    <li>Subscription, resource group, VNet and subnet already in place. The scripts create disks, NICs
+    and VMs but <b>do not create networking</b>.</li>
+    <li>An NSG is optional. If <code>NsgName</code> is blank the NIC is created without one.</li>
+    <li>Accelerated networking is enabled on every NIC created. Confirm your <code>VMSize</code>
+    supports it.</li>
+    <li>Contributor or equivalent on the target resource group. Login is interactive and happens once
+    up front.</li>
+  </ul>
+
+  <p>Default upload is direct-to-managed-disk. If that fails, set <code>useStorageAccount = $true</code>
+  and fill in the storage account settings to upload via a page blob instead.</p>
+</section>
+
+<!-- ============================= GOTCHAS ============================= -->
+
+<section id="gotchas">
+  <h2>Constraints and gotchas</h2>
+  <p class="lede">The behaviors most likely to surprise you, collected in one place.</p>
+
+  <h3>Hard constraints</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Constraint</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td class="nowrap">2 TB disk limit</td><td>VHD format caps at 2 TiB. Anything larger is skipped with a warning and produces no report entry. Plan an alternate path for those volumes.</td></tr>
+      <tr><td class="nowrap">Dynamic disks</td><td>Not reproduced by <code>Initialize-VMDrives.ps1</code>. Flagged at capture, then skipped. Manual work required.</td></tr>
+      <tr><td class="nowrap">Mount point volumes</td><td>Volumes mounted to a folder with no drive letter are never written to the drive info CSV. Manual work required.</td></tr>
+      <tr><td class="nowrap">Same-cluster targets</td><td>Phase 3 target hosts must be registered on the same Rubrik cluster as the source.</td></tr>
+      <tr><td class="nowrap">No per-database SQL selection</td><td><code>Start-SQLRestore.ps1</code> exports <b>all</b> databases on the source instance.</td></tr>
+      <tr><td class="nowrap">SQL overwrite disabled</td><td><code>allowOverwrite = false</code>. The export fails if databases already exist on the target.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Phase 1 troubleshooting</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Symptom</th><th>Likely cause</th></tr></thead>
+    <tbody>
+      <tr><td><code>Resize-VHD</code> not recognized</td><td>Hyper-V management tools installed but not the full role.</td></tr>
+      <tr><td>Download times out at 60 min</td><td>Export preparation is slow on the cluster. Raise <code>timeoutMinutes</code>.</td></tr>
+      <tr><td>Download restarts repeatedly</td><td>Stall detector firing. Check throughput to the cluster.</td></tr>
+      <tr><td>aria2c exits non-zero and stops</td><td>Exit-code failures are not retried. Check the per-VM log, then re-run.</td></tr>
+      <tr><td>No boot disk identified</td><td>Partition signature not recognized. It falls back to the CSV <code>BootDisk</code> marking, so make sure that is set.</td></tr>
+      <tr><td>VM created but will not boot</td><td>Check Hyper-V generation. GPT needs <code>V2</code>, MBR needs <code>V1</code>. Recorded in <code>conversion_state.csv</code>.</td></tr>
+      <tr><td>Direct upload fails</td><td>Set <code>useStorageAccount = $true</code> and configure the storage account.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Phase 2 troubleshooting</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>No raw disks found</code></td><td>Disks are already initialized, or <code>CreateOnly</code> disks were never attached. Check <code>Get-Disk</code>.</td></tr>
+      <tr><td><code>no raw disk of similar size</code></td><td>Size differs by more than 10 percent. Verify the Azure disk was created at the size from <code>vmdkSizeGiB</code>.</td></tr>
+      <tr><td>Wrong letters on same-size disks</td><td>Expected. Reassign with <code>Set-Partition -NewDriveLetter</code>.</td></tr>
+      <tr><td>Drive skipped as already existing</td><td>Correct on a re-run. Delete the volume first if you genuinely want it recreated.</td></tr>
+      <tr><td>Partition style wrong on a multi-partition disk</td><td>The group's first CSV row set it. Reorder the rows or fix the value.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Phase 3 troubleshooting</h3>
+  <div class="tscroll">
+  <table>
+    <thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+    <tbody>
+      <tr><td><code>Source host not found on cluster ''</code></td><td><code>Cluster</code> is blank on the row. Fill it in.</td></tr>
+      <tr><td><code>has no volume groups</code></td><td>The source host has no volume group backup. FLR needs one, not a VM backup.</td></tr>
+      <tr><td><code>No volume group snapshots found in the last 90 days</code></td><td>Backups are older than the 90-day query window.</td></tr>
+      <tr><td><code>No valid drive letters found in snapshot</code></td><td>The letter in <code>sourceFlrDrive</code> is not present. Check what was actually backed up.</td></tr>
+      <tr><td>SQL row silently absent from the job list</td><td><code>sqlDataPath</code> or <code>sqlLogPath</code> is blank. Look for the skip warning.</td></tr>
+      <tr><td>SQL job shows <code>Failed</code> but some databases restored</td><td>Aggregation fails the whole job on any failure. Check RSC for per-database results.</td></tr>
+      <tr><td>Target host not found</td><td>Not registered on the same cluster as the source, or RBS is not installed.</td></tr>
+      <tr><td>Status never leaves <code>Initiated</code></td><td>The event filter found nothing matching. Verify in the RSC activity log directly.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<footer>
+  <p>Source markdown lives alongside this page in <code>cloud/azurevhd/docs/</code>. Edit those files
+  and regenerate to keep the runbook in step with the scripts.</p>
+</footer>
+
+</main>
+</div>
