@@ -1,0 +1,81 @@
+---
+# Example extra-vars file for ahv_mass_recovery.yml.
+#
+# Copy this to something gitignored and edit it, then run:
+#
+#   cp vars/example-recovery-vars.yml vars/my-recovery.yml
+#   ansible-playbook -i inventory/ahv_wave1_example.yml ahv_mass_recovery.yml \
+#       -e @vars/my-recovery.yml
+#
+# Everything in vars/ is gitignored EXCEPT this example file, so your own
+# copies never get committed. Values here take precedence over the role
+# defaults in roles/*/defaults/main.yml.
+#
+# Override a single value at the command line without editing the file --
+# later -e wins:
+#
+#   ansible-playbook ... -e @vars/my-recovery.yml -e ahv_method=export
+
+# --- Connection ------------------------------------------------------------
+
+rubrik_cdm_cluster: 10.8.48.104
+
+# Path to the RSC Service Account JSON. Only client_id and client_secret are
+# read from it; access_token_uri is ignored for CDM.
+rubrik_cdm_svc_json: ~/rsc-sa.json
+
+# Do NOT put client_secret in this file in plain text. If you want credentials
+# inline rather than in a JSON file, encrypt this whole file first:
+#   ansible-vault encrypt vars/my-recovery.yml
+#   ansible-playbook ... -e @vars/my-recovery.yml --ask-vault-pass
+# rubrik_cdm_client_id: ""
+# rubrik_cdm_client_secret: ""
+
+rubrik_cdm_validate_certs: false
+rubrik_cdm_timeout: 300
+
+# --- Which VMs -------------------------------------------------------------
+
+# Inventory group holding the AHV VM names for this wave.
+ahv_wave_group: ahv_recovery_wave
+
+# --- What kind of recovery -------------------------------------------------
+
+# mount  = live mount (non-destructive, easy to unwind -- rehearse with this)
+# export = create new VMs from the snapshot
+ahv_method: mount
+
+# latest, or a UTC time: "2026-09-08 23:00:00" / "2026-09-08T23:00:00.000Z"
+ahv_point_in_time: latest
+
+# --- Where it lands --------------------------------------------------------
+
+ahv_container_name: default-container
+ahv_recovered_vm_prefix: dr
+
+# Leave blank to use each VM's own AHV cluster. Only needed when the Rubrik
+# cluster has more than one AHV cluster registered and you want to redirect.
+ahv_nutanix_cluster_name: ""
+
+# Live mount only.
+ahv_should_migrate_immediately: false
+ahv_should_disable_migration: false
+
+# --- Staged lookups (optional, recommended at scale) -----------------------
+
+# CSVs from get_ahv_inventory.py. With these set, VM ids and storage
+# containers resolve with ZERO lookup API calls. Anything they do not cover
+# falls through to a live lookup, so a stale file degrades rather than fails.
+#
+ahv_inventory_csv: ../python/inventory/ahv_inventory_latest.csv
+ahv_containers_csv: ../python/inventory/ahv_containers_latest.csv
+
+# --- Tuning ----------------------------------------------------------------
+
+ahv_chunk_size: 25
+ahv_state_dir: "{{ playbook_dir }}/state"
+
+# 0 = trigger and exit immediately (recommended). Monitoring belongs to
+# ahv_monitor_recovery.py, which is resumable.
+ahv_monitor_wait_minutes: 0
+ahv_monitor_poll_seconds: 30

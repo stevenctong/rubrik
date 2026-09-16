@@ -1,0 +1,845 @@
+<title>AHV Mass Recovery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  /* ---- Light palette: the complete token set lives on bare :root ---- */
+  :root {
+    --accent:        #00B2A9;
+    --accent-deep:   #007D77;
+    --accent-wash:   #E6F6F5;
+    --accent-line:   #A3DEDA;
+
+    --ground:        #FBFCFC;
+    --surface:       #FFFFFF;
+    --surface-sunk:  #F3F6F5;
+    --ink:           #12201F;
+    --ink-soft:      #334443;
+    --muted:         #5A6B69;
+    --border:        #DCE4E3;
+    --border-firm:   #C3CFCD;
+
+    --ok:            #2E8B6F;
+    --warn:          #B87333;
+    --danger:        #C4553B;
+
+    --measure:       68ch;
+    --radius:        4px;
+
+    --font-display:  "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --font-body:     "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-mono:     "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+
+  /* System-dark: no stamp present, so guard against an explicit light choice */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --accent:       #2ED3C9;
+      --accent-deep:  #6FE5DD;
+      --accent-wash:  #102A28;
+      --accent-line:  #1F4B47;
+
+      --ground:       #0D1514;
+      --surface:      #141F1E;
+      --surface-sunk: #0A1211;
+      --ink:          #E6EDEC;
+      --ink-soft:     #C2CFCD;
+      --muted:        #8FA3A0;
+      --border:       #24322F;
+      --border-firm:  #35473F;
+
+      --ok:           #4FBF98;
+      --warn:         #D9A05B;
+      --danger:       #E8836A;
+    }
+  }
+
+  /* Explicit dark choice wins over a light OS */
+  :root[data-theme="dark"] {
+    --accent:       #2ED3C9;
+    --accent-deep:  #6FE5DD;
+    --accent-wash:  #102A28;
+    --accent-line:  #1F4B47;
+
+    --ground:       #0D1514;
+    --surface:      #141F1E;
+    --surface-sunk: #0A1211;
+    --ink:          #E6EDEC;
+    --ink-soft:     #C2CFCD;
+    --muted:        #8FA3A0;
+    --border:       #24322F;
+    --border-firm:  #35473F;
+
+    --ok:           #4FBF98;
+    --warn:         #D9A05B;
+    --danger:       #E8836A;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  @media (min-width: 1080px) {
+    .wrap { grid-template-columns: 190px minmax(0, 1fr); gap: 56px; }
+  }
+
+  /* ---- Masthead ---- */
+  header.masthead {
+    grid-column: 1 / -1;
+    padding: 72px 0 40px;
+    border-bottom: 2px solid var(--ink);
+  }
+  .eyebrow {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-deep);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(38px, 6.5vw, 66px);
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    max-width: var(--measure);
+    font-size: 19px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  /* ---- Section rail ---- */
+  nav.rail { display: none; }
+  @media (min-width: 1080px) {
+    nav.rail {
+      display: block;
+      position: sticky;
+      top: 40px;
+      align-self: start;
+      padding-top: 56px;
+    }
+    nav.rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+    nav.rail a {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      text-decoration: none;
+      display: block;
+      padding: 2px 0 2px 12px;
+      border-left: 2px solid var(--border);
+    }
+    nav.rail a:hover, nav.rail a:focus-visible {
+      color: var(--accent-deep);
+      border-left-color: var(--accent);
+    }
+  }
+
+  main { min-width: 0; }
+
+  section { padding-top: 60px; scroll-margin-top: 24px; }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  h2 + .deck {
+    max-width: var(--measure);
+    color: var(--muted);
+    font-size: 16px;
+    margin: 0 0 26px;
+  }
+  h3 {
+    font-family: var(--font-display);
+    font-size: 19px;
+    font-weight: 600;
+    margin: 34px 0 8px;
+    text-wrap: balance;
+  }
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 20px; }
+  li { margin-bottom: 7px; }
+
+  a { color: var(--accent-deep); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  pre {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    background: var(--surface-sunk);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0 0 20px;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+
+  /* ---- Tables ---- */
+  .tablewrap { overflow-x: auto; margin: 0 0 22px; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; background: var(--surface); }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.path { font-family: var(--font-mono); font-size: 13px; }
+  .hot  { color: var(--danger); font-weight: 600; }
+  .cool { color: var(--ok); font-weight: 600; }
+
+  /* ---- Figures ---- */
+  figure {
+    margin: 30px 0 34px;
+    padding: 22px 20px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow-x: auto;
+  }
+  figure svg { display: block; max-width: 100%; height: auto; margin: 0 auto; color: var(--ink); }
+  figcaption {
+    max-width: var(--measure);
+    margin: 16px auto 0;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    text-align: left;
+  }
+  figcaption b { color: var(--ink-soft); font-weight: 600; }
+
+  /* ---- Callouts ---- */
+  .note {
+    max-width: var(--measure);
+    border-left: 3px solid var(--accent);
+    background: var(--accent-wash);
+    padding: 14px 18px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin: 0 0 22px;
+    font-size: 15px;
+  }
+  .note.caution { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); }
+  .note.stop    { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--surface)); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .lbl {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 5px;
+    color: var(--accent-deep);
+  }
+  .note.caution .lbl { color: var(--warn); }
+  .note.stop .lbl    { color: var(--danger); }
+
+  /* ---- Two-up cards ---- */
+  .duo { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 0 0 24px; max-width: var(--measure); }
+  @media (min-width: 720px) { .duo { grid-template-columns: 1fr 1fr; max-width: none; } }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .card h4 {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .card .who { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+  .card ul { margin: 0; padding-left: 18px; font-size: 14.5px; }
+  .card li { margin-bottom: 5px; }
+
+  footer {
+    grid-column: 1 / -1;
+    margin-top: 76px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--muted);
+    max-width: var(--measure);
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">Rubrik CDM REST API &middot; Nutanix AHV</p>
+    <h1>AHV Mass Recovery</h1>
+    <p class="standfirst">
+      A toolkit for driving hundreds of Nutanix AHV virtual machine recoveries from CSV
+      wave lists &mdash; export or live mount &mdash; with per-VM metrics and monitoring
+      that survives a closed terminal.
+    </p>
+  </header>
+
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#workflow">Workflow</a></li>
+      <li><a href="#pipeline">The pipeline</a></li>
+      <li><a href="#state">Where state lives</a></li>
+      <li><a href="#fronts">Python or Ansible</a></li>
+      <li><a href="#staging">Staged lookups</a></li>
+      <li><a href="#decisions">Design decisions</a></li>
+      <li><a href="#commands">Commands</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="workflow">
+      <h2>The workflow</h2>
+      <p class="deck">Four programs, one CSV contract between each pair.</p>
+
+      <p>
+        An operator builds an inventory once, filters it down to a recovery wave, triggers
+        the wave, then watches it finish. Live mounts get unwound afterwards. Each step
+        hands the next a CSV, which is what makes the whole thing restartable.
+      </p>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Step</th><th>Program</th><th>Produces</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>1. Inventory</b></td>
+              <td class="path">get_ahv_inventory.py</td>
+              <td><code>ahv_inventory_&lt;ts&gt;.csv</code> plus <code>ahv_containers_&lt;ts&gt;.csv</code></td>
+            </tr>
+            <tr>
+              <td><b>2. Filter</b></td>
+              <td>You, in a spreadsheet</td>
+              <td>A wave CSV, with the two blank trailing columns filled in</td>
+            </tr>
+            <tr>
+              <td><b>3. Trigger</b></td>
+              <td class="path">ahv_mass_recovery.py<br>or the Ansible role</td>
+              <td><code>&lt;wave&gt;_state_&lt;ts&gt;.csv</code>, named after the wave</td>
+            </tr>
+            <tr>
+              <td><b>4. Monitor</b></td>
+              <td class="path">ahv_monitor_recovery.py</td>
+              <td><code>ahv_recovery_results_&lt;ts&gt;.csv</code> plus a metrics summary</td>
+            </tr>
+            <tr>
+              <td><b>5. Unwind</b></td>
+              <td class="path">ahv_cleanup_mounts.py</td>
+              <td>Live mounts torn down</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="lbl">Why the inventory CSV ends with two blank columns</span>
+        <p>
+          <code>target_container_name</code> and <code>recovered_vm_prefix</code> are
+          written empty on purpose. Filling them in is the whole of step 2, which makes the
+          inventory double as the wave template rather than a separate format to learn.
+        </p>
+      </div>
+    </section>
+
+    <section id="pipeline">
+      <h2>The pipeline</h2>
+      <p class="deck">Four calls to trigger, regardless of wave size.</p>
+
+      <p>
+        The CDM recovery API is natively batched. Two VMs and five hundred VMs cost the
+        same number of round trips &mdash; only the request bodies get longer. That is
+        why nothing here loops per VM to start a recovery.
+      </p>
+
+      <figure>
+        <svg viewBox="0 0 900 400" role="img" aria-label="Four sequential API calls resolve VM ids, pick a snapshot, resolve the target container, and trigger a batch recovery; the batch response returns an asyncRequestStatus id which equals the jobInstanceId, joining to an event series that carries progress and transfer metrics.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#00B2A9"/>
+            </marker>
+          </defs>
+
+          <text x="0" y="18" font-size="12" font-weight="700" letter-spacing="1.2" fill="currentColor" opacity="0.55">TRIGGER &mdash; 4 CALLS</text>
+
+          <rect x="1" y="40" width="96" height="66" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.7"/>
+          <text x="49" y="68" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">wave CSV</text>
+          <text x="49" y="85" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.6">VM names</text>
+
+          <line x1="99" y1="73" x2="127" y2="73" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="129" y="40" width="164" height="66" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="211" y="63" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">1 &middot; Resolve ids</text>
+          <text x="211" y="80" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.62">GET nutanix/vm</text>
+          <text x="211" y="94" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">or staged CSV</text>
+
+          <line x1="295" y1="73" x2="323" y2="73" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="325" y="40" width="186" height="66" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="418" y="63" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">2 &middot; Pick snapshot</text>
+          <text x="418" y="80" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.62">closest_to_point_in_time</text>
+          <text x="418" y="94" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">all VMs, one body</text>
+
+          <line x1="513" y1="73" x2="541" y2="73" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="543" y="40" width="150" height="66" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="618" y="63" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">3 &middot; Target</text>
+          <text x="618" y="80" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.62">/container</text>
+          <text x="618" y="94" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">name to naturalId</text>
+
+          <line x1="695" y1="73" x2="723" y2="73" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar-acc)"/>
+
+          <rect x="725" y="36" width="174" height="74" rx="3" fill="none" stroke="#00B2A9" stroke-width="2.5"/>
+          <text x="812" y="60" text-anchor="middle" font-size="12.5" font-weight="700" fill="#00B2A9">4 &middot; Trigger</text>
+          <text x="812" y="77" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#00B2A9">batch_export</text>
+          <text x="812" y="91" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#00B2A9">batch_mount</text>
+          <text x="812" y="104" text-anchor="middle" font-size="10" fill="#00B2A9" opacity="0.8">N VMs, 1 call</text>
+
+          <path d="M 812 112 L 812 152" stroke="#00B2A9" stroke-width="2" fill="none" marker-end="url(#ar-acc)"/>
+          <text x="800" y="136" text-anchor="end" font-size="11" font-style="italic" fill="#00B2A9">returns asyncRequestStatus.id</text>
+
+          <line x1="0" y1="176" x2="900" y2="176" stroke="currentColor" stroke-width="1" opacity="0.2"/>
+          <text x="0" y="202" font-size="12" font-weight="700" letter-spacing="1.2" fill="currentColor" opacity="0.55">MONITOR &mdash; THE JOIN</text>
+
+          <rect x="1" y="222" width="208" height="70" rx="3" fill="none" stroke="#00B2A9" stroke-width="2"/>
+          <text x="105" y="248" text-anchor="middle" font-size="12.5" font-weight="700" fill="#00B2A9">jobInstanceId</text>
+          <text x="105" y="265" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.65">same value as</text>
+          <text x="105" y="279" text-anchor="middle" font-size="10.5" font-family="monospace" fill="currentColor" opacity="0.65">asyncRequestStatus.id</text>
+
+          <line x1="211" y1="257" x2="249" y2="257" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+          <text x="230" y="248" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">match</text>
+
+          <rect x="251" y="222" width="176" height="70" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="339" y="252" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">GET event/latest</text>
+          <text x="339" y="270" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">per VM, once</text>
+
+          <line x1="429" y1="257" x2="467" y2="257" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+          <text x="448" y="248" text-anchor="middle" font-size="10" fill="currentColor" opacity="0.6">yields</text>
+
+          <rect x="469" y="222" width="158" height="70" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="548" y="252" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">eventSeriesId</text>
+          <text x="548" y="270" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">cached to CSV</text>
+
+          <line x1="629" y1="257" x2="667" y2="257" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+
+          <rect x="669" y="216" width="230" height="82" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text x="784" y="240" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">POST event_series/status</text>
+          <text x="784" y="258" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">batched &middot; polled every 30s</text>
+          <text x="784" y="278" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#00B2A9">dataTransferred</text>
+          <text x="784" y="291" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#00B2A9">logicalSize</text>
+
+          <path d="M 784 300 L 784 330 L 105 330 L 105 296" stroke="currentColor" stroke-width="1.3" fill="none" stroke-dasharray="4 3" opacity="0.55" marker-end="url(#ar)"/>
+          <text x="444" y="348" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.6">repeat until every job reports a terminal status</text>
+
+          <text x="0" y="382" font-size="11" fill="currentColor" opacity="0.5">Only step 4 writes. Steps 1 to 3 are read-only and safe to dry run.</text>
+        </svg>
+        <figcaption>
+          <b>The batch response is what makes monitoring possible.</b> Each triggered VM
+          comes back with an <code>asyncRequestStatus.id</code>, and that value <em>is</em>
+          the <code>jobInstanceId</code> that appears in the event stream. Matching on it
+          yields an <code>eventSeriesId</code>, which is the handle for both progress and
+          transfer metrics. Without that identity the two halves could not be joined.
+        </figcaption>
+      </figure>
+
+    </section>
+
+    <section id="state">
+      <h2>Where state lives</h2>
+      <p class="deck">The central design idea, and the reason Ansible does not monitor.</p>
+
+      <p>
+        A fifty-VM wave can take hours. Something will interrupt it: a laptop sleeping, an
+        SSH session dropping, a terminal being closed. The question is whether that
+        interruption loses the job identifiers, because without them there is no way to
+        find the recoveries again.
+      </p>
+
+      <figure>
+        <svg viewBox="0 0 880 330" role="img" aria-label="Comparison: an in-memory Ansible polling loop holds job ids inside the process so a hangup loses all tracking, whereas writing a wave-state CSV to disk lets a new monitor process read the ids back and resume.">
+          <defs>
+            <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar2-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#00B2A9"/>
+            </marker>
+          </defs>
+
+          <line x1="440" y1="14" x2="440" y2="316" stroke="currentColor" stroke-width="1" opacity="0.18"/>
+
+          <text x="0" y="18" font-size="12" font-weight="700" letter-spacing="1.1" fill="currentColor" opacity="0.55">IN-MEMORY POLL</text>
+          <text x="480" y="18" font-size="12" font-weight="700" letter-spacing="1.1" fill="#00B2A9">WAVE-STATE CSV</text>
+
+          <rect x="1" y="38" width="396" height="118" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="16" y="60" font-size="11.5" font-weight="600" fill="currentColor" opacity="0.75">ansible-playbook process</text>
+          <rect x="22" y="72" width="164" height="30" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.85"/>
+          <text x="104" y="92" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">until / retries loop</text>
+          <rect x="204" y="72" width="172" height="30" rx="2" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.85"/>
+          <text x="290" y="92" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">job ids in RAM</text>
+          <text x="199" y="130" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.65">no checkpoint &middot; output buffered</text>
+
+          <path d="M 199 158 L 199 196" stroke="#C4553B" stroke-width="2" fill="none" marker-end="url(#ar2)"/>
+          <text x="212" y="180" font-size="11.5" font-weight="600" fill="#C4553B">SIGHUP</text>
+
+          <rect x="60" y="200" width="278" height="52" rx="4" fill="none" stroke="#C4553B" stroke-width="2"/>
+          <text x="199" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#C4553B">tracking lost</text>
+          <text x="199" y="240" text-anchor="middle" font-size="11" fill="#C4553B" opacity="0.85">recoveries still running, unfindable</text>
+
+          <text x="199" y="288" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.6">The jobs did not fail.</text>
+          <text x="199" y="305" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.6">Only the ability to watch them did.</text>
+
+          <rect x="481" y="38" width="398" height="70" rx="4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="496" y="60" font-size="11.5" font-weight="600" fill="currentColor" opacity="0.75">trigger process (Python or Ansible)</text>
+          <text x="680" y="88" text-anchor="middle" font-size="11" font-family="monospace" fill="currentColor">writes job ids on 202</text>
+
+          <path d="M 680 110 L 680 140" stroke="#00B2A9" stroke-width="2" fill="none" marker-end="url(#ar2-acc)"/>
+
+          <path d="M 566 152 a 114 13 0 0 1 228 0 l 0 44 a 114 13 0 0 1 -228 0 z" fill="none" stroke="#00B2A9" stroke-width="2.5"/>
+          <path d="M 566 152 a 114 13 0 0 0 228 0" fill="none" stroke="#00B2A9" stroke-width="2.5"/>
+          <text x="680" y="182" text-anchor="middle" font-size="12.5" font-weight="700" fill="#00B2A9">wave1_state.csv</text>
+          <text x="680" y="199" text-anchor="middle" font-size="10.5" fill="#00B2A9" opacity="0.85">on disk</text>
+
+          <path d="M 680 214 L 680 244" stroke="#00B2A9" stroke-width="2" fill="none" marker-end="url(#ar2-acc)"/>
+          <text x="692" y="233" font-size="11" font-style="italic" fill="#00B2A9">read back</text>
+
+          <rect x="524" y="248" width="312" height="54" rx="4" fill="none" stroke="#00B2A9" stroke-width="2"/>
+          <text x="680" y="270" text-anchor="middle" font-size="12.5" font-weight="700" fill="#00B2A9">any later monitor process</text>
+          <text x="680" y="288" text-anchor="middle" font-size="10.5" fill="#00B2A9" opacity="0.85">new terminal &middot; new machine &middot; hours later</text>
+        </svg>
+        <figcaption>
+          <b>Resilience becomes a property of the file, not the process.</b> The left side
+          is what an in-playbook <code>until</code> loop gives you: correct while it runs,
+          and worthless the moment the process dies. The right side writes every
+          <code>jobInstanceId</code> to disk the instant the cluster returns
+          <code>202</code>, so recovering the wave is just reading a CSV. This handoff is
+          verified end to end &mdash; an Ansible-rendered state file parses correctly in
+          the Python monitor.
+        </figcaption>
+      </figure>
+
+      <h3>Why Ansible cannot hold this state</h3>
+      <ul>
+        <li><b><code>until</code> / <code>retries</code> is an in-memory loop.</b> No checkpoint, no resume.</li>
+        <li><b><code>.retry</code> files record failed host names only</b> &mdash; not job identifiers.</li>
+        <li><b><code>async</code> / <code>async_status</code> targets long-running commands on remote hosts.</b> Our <code>uri</code> call returns in milliseconds, so wrapping it buys nothing.</li>
+        <li><b>Task output is buffered.</b> A <code>retries: 480</code> poll prints nothing for hours.</li>
+        <li><b>Closing the terminal sends SIGHUP</b> and kills the run.</li>
+      </ul>
+    </section>
+
+    <section id="fronts">
+      <h2>Python or Ansible</h2>
+      <p class="deck">Both trigger. Only Python monitors.</p>
+
+      <div class="duo">
+        <div class="card">
+          <h4>Python</h4>
+          <p class="who">The complete path</p>
+          <ul>
+            <li>Inventory, trigger, monitor, cleanup</li>
+            <li>Resumable monitoring with metrics</li>
+            <li>Auto-discovers staged CSVs</li>
+            <li>Stdlib only, Python 3.6 compatible</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h4>Ansible</h4>
+          <p class="who">Trigger only, then hands off</p>
+          <ul>
+            <li>Waves defined as inventory groups</li>
+            <li>Reusable <code>rubrik_cdm_auth</code> role</li>
+            <li><code>--check</code> is a genuine dry run</li>
+            <li>Settings in a gitignored extra-vars file</li>
+          </ul>
+        </div>
+      </div>
+
+      <p>
+        Reach for Ansible when the team already lives there and wants waves expressed as
+        inventory files. It resolves, triggers, writes the wave-state CSV, and exits in
+        minutes rather than hours. Monitoring then belongs to
+        <code>ahv_monitor_recovery.py</code>, which can be started, stopped, and restarted
+        freely.
+      </p>
+
+      <div class="note caution">
+        <span class="lbl">The per-VM lookup loop is serial</span>
+        <p>
+          Ansible parallelises across hosts via <code>forks</code>, never across
+          <code>loop</code> items, and this play runs on a single host. Tens of VMs is
+          fine; hundreds is slow. Setting <code>ahv_inventory_csv</code> drops it to zero
+          API calls, which is the intended path at scale.
+        </p>
+      </div>
+    </section>
+
+    <section id="staging">
+      <h2>Staged lookups</h2>
+      <p class="deck">What can be resolved from a file, and what cannot.</p>
+
+      <figure>
+        <svg viewBox="0 0 840 300" role="img" aria-label="Resolution flow: each VM name and target container is checked against a staged CSV first; hits cost zero API calls, and only misses fall through to a live API lookup, whose results are merged back and win over the staged values.">
+          <defs>
+            <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+            </marker>
+            <marker id="ar3-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#00B2A9"/>
+            </marker>
+          </defs>
+
+          <rect x="1" y="112" width="132" height="62" rx="3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+          <text x="67" y="139" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">wave needs</text>
+          <text x="67" y="156" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.62">ids + container</text>
+
+          <line x1="135" y1="143" x2="176" y2="143" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+          <path d="M 258 100 L 340 143 L 258 186 L 176 143 Z" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="258" y="139" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">in staged</text>
+          <text x="258" y="154" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">CSV?</text>
+
+          <path d="M 258 98 L 258 62 L 470 62" stroke="#00B2A9" stroke-width="2" fill="none" marker-end="url(#ar3-acc)"/>
+          <text x="268" y="80" font-size="11" font-weight="700" fill="#00B2A9">yes</text>
+
+          <rect x="472" y="34" width="228" height="58" rx="3" fill="none" stroke="#00B2A9" stroke-width="2.5"/>
+          <text x="586" y="58" text-anchor="middle" font-size="12.5" font-weight="700" fill="#00B2A9">use the staged value</text>
+          <text x="586" y="76" text-anchor="middle" font-size="11" fill="#00B2A9" opacity="0.9">0 API calls</text>
+
+          <path d="M 258 188 L 258 226 L 470 226" stroke="currentColor" stroke-width="1.8" fill="none" marker-end="url(#ar3)"/>
+          <text x="268" y="210" font-size="11" font-weight="700" fill="currentColor" opacity="0.75">no</text>
+
+          <rect x="472" y="198" width="228" height="58" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          <text x="586" y="222" text-anchor="middle" font-size="12.5" font-weight="600" fill="currentColor">live API lookup</text>
+          <text x="586" y="240" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.65">per VM, or per AHV cluster</text>
+
+          <path d="M 702 226 L 762 226 L 762 92" stroke="currentColor" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar3)"/>
+          <text x="772" y="160" font-size="11" font-style="italic" fill="currentColor" opacity="0.7">merged</text>
+          <text x="772" y="176" font-size="11" font-style="italic" fill="currentColor" opacity="0.7">live wins</text>
+
+          <text x="0" y="286" font-size="11" fill="currentColor" opacity="0.55">A stale CSV degrades instead of failing: only the entries it misses cost a call.</text>
+        </svg>
+        <figcaption>
+          <b>The fall-through edge is the point.</b> A staged CSV is used only where it
+          actually covers what the wave needs, so an out-of-date file quietly costs a few
+          extra calls rather than breaking the run. Live results win on merge, which keeps
+          a stale entry from overriding current truth.
+        </figcaption>
+      </figure>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Lookup</th><th>Stageable</th><th>How</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>VM name to id</td>
+              <td class="cool">Yes</td>
+              <td><code>--inventory</code> / <code>ahv_inventory_csv</code></td>
+            </tr>
+            <tr>
+              <td>Storage containers</td>
+              <td class="cool">Yes</td>
+              <td><code>--containers</code> / <code>ahv_containers_csv</code>, worth it for the 5.3s cold call</td>
+            </tr>
+            <tr>
+              <td>AHV cluster list</td>
+              <td>Skipped</td>
+              <td>120 to 403ms does not justify the config surface</td>
+            </tr>
+            <tr>
+              <td>Closest snapshot</td>
+              <td class="hot">No</td>
+              <td>Point in time varies per run. Inherently runtime.</td>
+            </tr>
+            <tr>
+              <td>Event series id</td>
+              <td class="hot">No</td>
+              <td>Job ids do not exist until trigger &mdash; but cached back after first resolution</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Auto-discovery, and why only in Python</h3>
+      <p>
+        Because inventory filenames carry timestamps, always passing a full path means
+        pasting a new one every run. The Python trigger picks the newest matching file
+        beside itself and always says which one it chose:
+      </p>
+      <pre><code>Using inventory CSV: ahv_inventory_20260910_120000.csv (22.8 hours old)
+Using containers CSV: ahv_containers_20260910_120000.csv (22.8 hours old)</code></pre>
+      <p>Past a week it warns rather than quietly using stale data:</p>
+      <pre><code>Using inventory CSV: ahv_inventory_20260101_000000.csv (253.4 days old)
+WARNING: that inventory CSV is 253.4 days old. Re-run get_ahv_inventory.py if the
+         environment has changed, or pass an explicit path.</code></pre>
+      <p>
+        Age is read from the <code>YYYYMMDD_HHMMSS</code> stamp in the filename rather
+        than mtime, because copying an old inventory between machines resets mtime and
+        would make a stale file look freshly generated &mdash; defeating the warning.
+        Ansible deliberately stays explicit: a scheduled run silently picking up a
+        different file is a worse failure than typing a variable once.
+      </p>
+    </section>
+
+    <section id="decisions">
+      <h2>Design decisions</h2>
+      <p class="deck">The choices worth explaining to whoever inherits this.</p>
+
+      <h3>Status is matched by prefix, not enumerated</h3>
+      <p>
+        The captured session contains no failed or cancelled recovery, so the terminal
+        failure strings are unconfirmed. Rather than hardcode an enum that might be wrong,
+        anything starting <code>Success</code>, <code>Fail</code>, or <code>Cancel</code>
+        classifies accordingly and everything else counts as in flight. Unrecognised
+        values are logged verbatim instead of being silently bucketed.
+      </p>
+
+      <h3>Missing snapshots are excluded loudly</h3>
+      <p>
+        A VM with no snapshot at the requested point in time is written to an exclusions
+        CSV with a reason, never dropped. During a recovery event, a wave that quietly
+        covers fewer VMs than you asked for is the worst possible outcome.
+      </p>
+
+      <h3>Stdlib only</h3>
+      <p>
+        No <code>requests</code>, no third-party packages, <code>%</code>-formatting
+        throughout for Python 3.6 compatibility. These scripts run on whatever jump host
+        is available during an incident, which is not the moment to discover a missing
+        pip dependency.
+      </p>
+
+      <h3>The wave-state CSV is patched, not rewritten</h3>
+      <p>
+        When the monitor caches a resolved <code>event_series_id</code>, it edits that
+        cell in place rather than regenerating the file from memory. The monitor does not
+        track every column &mdash; <code>container_natural_id</code>,
+        <code>recovered_vm_prefix</code>, <code>container_natural_id</code> &mdash; and
+        rewriting would silently drop them.
+      </p>
+    </section>
+
+
+    <section id="commands">
+      <h2>Commands</h2>
+      <p class="deck">The order to exercise things in.</p>
+
+      <h3>Python</h3>
+      <pre><code># 1. Build the inventory -- proves auth, pagination, and both CSVs
+python3 get_ahv_inventory.py --svc_json rsc-sa.json --cluster 10.8.48.104 --detail
+
+# 2. Dry run -- resolves everything, prints the request body, POSTs nothing
+python3 ahv_mass_recovery.py --svc_json rsc-sa.json --cluster 10.8.48.104 \
+    --csv wave1.csv --method mount --container default-container \
+    --recovered_vm_prefix dr --dry_run
+
+# 3. Live mount two VMs and watch them finish
+python3 ahv_mass_recovery.py --svc_json rsc-sa.json --cluster 10.8.48.104 \
+    --csv wave1.csv --method mount --container default-container \
+    --recovered_vm_prefix dr --monitor
+
+# 4. Monitor separately -- resumable, survives Ctrl-C and terminal close
+python3 ahv_monitor_recovery.py --svc_json rsc-sa.json --cluster 10.8.48.104 \
+    --state wave1_state_20260916_062714.csv
+
+# 5. Verify mounts BEFORE trusting the delete path
+python3 ahv_cleanup_mounts.py --svc_json rsc-sa.json --cluster 10.8.48.104 --list_only</code></pre>
+
+      <h3>Ansible</h3>
+      <pre><code># Settings once, in a gitignored file
+cp vars/example-recovery-vars.yml vars/my-recovery.yml
+
+# Dry run
+ansible-playbook -i inventory/wave1.yml ahv_mass_recovery.yml \
+    -e @vars/my-recovery.yml --check
+
+# Trigger, then hand off to the Python monitor
+ansible-playbook -i inventory/wave1.yml ahv_mass_recovery.yml \
+    -e @vars/my-recovery.yml
+
+# Same settings, export instead -- a later -e wins
+ansible-playbook -i inventory/wave1.yml ahv_mass_recovery.yml \
+    -e @vars/my-recovery.yml -e ahv_method=export</code></pre>
+
+      <div class="note">
+        <span class="lbl">Rehearse with live mount</span>
+        <p>
+          Live mount is non-destructive and easy to unwind, which makes it the right
+          method for a first run against any cluster. That is how the write path here was
+          proven. Note that live mount reports no <code>dataTransferred</code>; export does,
+          once the job reaches a terminal state.
+        </p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Built against the captured session in
+    <code>rest_api-ahv_export_live_mount.json</code> (52 calls). Full reference:
+    <code>README.md</code>, <code>python/README.md</code>,
+    <code>ansible/README.md</code>. Cycle-two GraphQL plan:
+    <code>PLAN-graphql-inventory.md</code>.
+  </footer>
+
+</div>

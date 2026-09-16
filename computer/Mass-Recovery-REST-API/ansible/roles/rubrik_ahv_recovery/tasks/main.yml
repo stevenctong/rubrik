@@ -1,0 +1,26 @@
+---
+- name: Validate the recovery request
+  ansible.builtin.assert:
+    that:
+      - ahv_method in ['export', 'mount']
+      - ahv_container_name | length > 0
+      - ahv_recovered_vm_prefix | length > 0
+      - groups[ahv_wave_group] is defined
+      - groups[ahv_wave_group] | length > 0
+    fail_msg: >-
+      Recovery request is incomplete. Required: ahv_method (export|mount),
+      ahv_container_name, ahv_recovered_vm_prefix, and a non-empty inventory group
+      '{{ ahv_wave_group }}'.
+
+- name: Resolve VMs, snapshots, and the recovery target
+  ansible.builtin.include_tasks: resolve.yml
+
+- name: Trigger the recovery
+  ansible.builtin.include_tasks: trigger.yml
+
+- name: Write the wave-state CSV
+  ansible.builtin.include_tasks: state.yml
+
+- name: Wait for recoveries to finish
+  ansible.builtin.include_tasks: monitor.yml
+  when: ahv_monitor_wait_minutes | int > 0

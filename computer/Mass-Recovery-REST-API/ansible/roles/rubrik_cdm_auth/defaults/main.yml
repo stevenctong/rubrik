@@ -1,0 +1,19 @@
+---
+# Rubrik CDM cluster FQDN or IP. Required.
+rubrik_cdm_cluster: ""
+
+# Path to an RSC Service Account JSON file containing client_id and
+# client_secret. Only those two fields are read -- access_token_uri is
+# ignored, because the token is issued by the CDM cluster, not by RSC.
+rubrik_cdm_svc_json: ""
+
+# Alternative to rubrik_cdm_svc_json. Supply both, or supply neither and use
+# the JSON file. Keep these in Ansible Vault, never in plain group_vars.
+rubrik_cdm_client_id: ""
+rubrik_cdm_client_secret: ""
+
+# CDM clusters commonly run self-signed certificates.
+rubrik_cdm_validate_certs: false
+
+# Seconds. Recovery API calls can be slow on large clusters.
+rubrik_cdm_timeout: 300

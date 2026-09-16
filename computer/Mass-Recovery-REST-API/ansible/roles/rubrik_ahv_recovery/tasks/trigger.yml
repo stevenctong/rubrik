@@ -1,0 +1,88 @@
+---
+# Trigger the recovery. The CDM API is natively batched, so this is one POST
+# per chunk regardless of wave size.
+
+- name: Build the batch payload
+  ansible.builtin.set_fact:
+    ahv_payload: >-
+      {%- set out = [] -%}
+      {%- for r in ahv_records -%}
+      {%- if ahv_method == 'export' -%}
+      {%- set _ = out.append({
+            'exportConfig': {
+              'nutanixClusterId': r.nutanix_cluster_id,
+              'containerNaturalId': r.container_natural_id},
+            'snapshotId': r.snapshot_id,
+            'vmId': r.vm_id,
+            'vmNamePrefix': ahv_recovered_vm_prefix}) -%}
+      {%- else -%}
+      {%- set _ = out.append({
+            'mountConfig': {
+              'shouldMigrateImmediately': ahv_should_migrate_immediately | bool,
+              'vmNamePrefix': ahv_recovered_vm_prefix,
+              'shouldDisableMigration': ahv_should_disable_migration | bool,
+              'nutanixClusterId': r.nutanix_cluster_id,
+              'containerNaturalId': r.container_natural_id},
+            'snapshotId': r.snapshot_id,
+            'vmId': r.vm_id,
+            'vmNamePrefix': ahv_recovered_vm_prefix}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Show the request body without sending it (check mode)
+  ansible.builtin.debug:
+    msg: >-
+      CHECK MODE -- would POST {{ ahv_payload | length }} VM(s) to
+      /api/v1/nutanix/vm/{{ (ahv_method == 'export') | ternary('batch_export', 'batch_mount') }}
+      in {{ (ahv_payload | batch(ahv_chunk_size | int) | list) | length }} batch(es).
+      Body: {{ ahv_payload | to_nice_json }}
+  when: ansible_check_mode
+
+- name: Submit the recovery batches
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/v1/nutanix/vm/{{ (ahv_method == 'export') | ternary('batch_export', 'batch_mount') }}"
+    method: POST
+    headers: "{{ rubrik_cdm_headers }}"
+    body_format: json
+    body:
+      snapshots: "{{ item }}"
+    status_code: [200, 202]
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  loop: "{{ ahv_payload | batch(ahv_chunk_size | int) | list }}"
+  loop_control:
+    label: "{{ item | length }} VM(s)"
+  register: ahv_trigger_results
+  when: not ansible_check_mode
+
+- name: Index the trigger response by VM id
+  ansible.builtin.set_fact:
+    ahv_job_by_vm: >-
+      {%- set out = {} -%}
+      {%- for result in ahv_trigger_results.results | default([]) -%}
+      {%- for ok in result.json.successfulRequests | default([]) -%}
+      {%- set _ = out.update({ok.vmId: {
+            'job_instance_id': ok.asyncRequestStatus.id | default(''),
+            'status': 'queued',
+            'triggered_at': ok.asyncRequestStatus.startTime | default(''),
+            'message': ''}}) -%}
+      {%- endfor -%}
+      {%- for bad in result.json.failedRequests | default([]) -%}
+      {%- set _ = out.update({bad.vmId | default('unknown'): {
+            'job_instance_id': '',
+            'status': 'failed',
+            'triggered_at': '',
+            'message': (bad | to_json)}}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  when: not ansible_check_mode
+
+- name: Report the trigger outcome
+  ansible.builtin.debug:
+    msg: >-
+      Triggered {{ ahv_job_by_vm | dict2items | selectattr('value.status', 'equalto', 'queued') | list | length }}
+      of {{ ahv_records | length }} VM(s).
+      Failed: {{ ahv_job_by_vm | dict2items | selectattr('value.status', 'equalto', 'failed') | list | length }}.
+  when: not ansible_check_mode

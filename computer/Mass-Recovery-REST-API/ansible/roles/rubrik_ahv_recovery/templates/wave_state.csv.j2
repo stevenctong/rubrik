@@ -1,0 +1,5 @@
+triggered_at,status,status_updated,vm_name,method,snapshot_date,recovered_vm_prefix,duration_seconds,data_transferred_bytes,end_time,message,vm_id,snapshot_id,nutanix_cluster_id,container_natural_id,job_instance_id,event_series_id
+{% for r in ahv_records %}
+{% set job = ahv_job_by_vm.get(r.vm_id, {}) %}
+"{{ job.get('triggered_at', '') }}","{{ job.get('status', 'unknown') }}","","{{ r.vm_name }}","{{ ahv_method }}","{{ r.snapshot_date }}","{{ ahv_recovered_vm_prefix }}","","","","{{ job.get('message', '') | replace('"', '""') }}","{{ r.vm_id }}","{{ r.snapshot_id }}","{{ r.nutanix_cluster_id }}","{{ r.container_natural_id }}","{{ job.get('job_instance_id', '') }}",""
+{% endfor %}

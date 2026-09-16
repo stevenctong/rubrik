@@ -11,3 +11,24 @@ CLAUDE.md
 *service_account*.json
 computer/Artifacts/csv-report-viewer/example_reports/
 computer/Artifacts/*/Internal*/
+
+# Plaintext credentials committed under the old rubrik_add_hosts stub.
+# These hold a live client_secret and bearer token -- rotate them.
+ansible/rubrik_add_hosts/variables.yml
+ansible/rubrik_add_hosts/rsc_token.txt
+
+# AHV mass recovery -- captured API reference. Kept local: it contains lab
+# cluster IPs, SSO usernames and vCenter FQDNs from the capture session.
+computer/Mass-Recovery-REST-API/rest_api-*.json
+
+# AHV mass recovery -- run output and generated inventories
+computer/Mass-Recovery-REST-API/python/logs/
+computer/Mass-Recovery-REST-API/python/inventory/
+computer/Mass-Recovery-REST-API/python/*_inventory_*.csv
+computer/Mass-Recovery-REST-API/python/*_containers_*.csv
+computer/Mass-Recovery-REST-API/python/*_state_*.csv
+computer/Mass-Recovery-REST-API/ansible/state/
+
+# Personal Ansible extra-vars files. The committed example is the exception.
+computer/Mass-Recovery-REST-API/ansible/vars/*.yml
+!computer/Mass-Recovery-REST-API/ansible/vars/example-recovery-vars.yml

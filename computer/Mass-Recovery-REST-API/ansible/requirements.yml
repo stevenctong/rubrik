@@ -1,0 +1,7 @@
+---
+# No external collections are required.
+#
+# Everything in this role uses ansible.builtin (uri, set_fact, template,
+# assert, file, pause, debug), which ships with ansible-core. That keeps the
+# playbook runnable on a host with only the minimal Ansible package.
+collections: []

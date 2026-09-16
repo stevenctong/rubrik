@@ -1,0 +1,85 @@
+---
+# --- Which VMs -------------------------------------------------------------
+
+# Inventory group holding the AHV VM names for this recovery wave. Each host
+# in the group is treated as a VM name, not as a machine to connect to.
+ahv_wave_group: ahv_recovery_wave
+
+# Wave name, used to prefix the state file and any run artifacts. Derived from
+# the inventory filename, so -i inventory/wave1.yml produces
+# state/wave1_state_<timestamp>.csv. Override to name it something else.
+ahv_wave_name: >-
+  {{ (ansible_inventory_sources | first | basename
+      | regex_replace('\.(ya?ml)$', '') | regex_replace('[^A-Za-z0-9._-]', '_'))
+     if (ansible_inventory_sources | default([]) | length > 0) else 'wave' }}
+
+# --- What kind of recovery -------------------------------------------------
+
+# export = create new VMs from the snapshot
+# mount  = live mount the snapshot (non-destructive, easy to unwind)
+ahv_method: mount
+
+# Recover from the newest snapshot at or before this UTC time.
+# Accepts: latest
+#          2026-09-08T23:00:00.000Z
+#          2026-09-08 23:00:00
+ahv_point_in_time: latest
+
+# --- Where it lands --------------------------------------------------------
+
+# Target storage container name. Required.
+ahv_container_name: ""
+
+# Target AHV cluster name. Leave blank to use each VM's own AHV cluster,
+# which is also the only sensible choice when the Rubrik cluster has exactly
+# one AHV cluster registered.
+ahv_nutanix_cluster_name: ""
+
+# Prefix applied to every recovered VM name. Required.
+ahv_recovered_vm_prefix: ""
+
+# Live mount only.
+ahv_should_migrate_immediately: false
+ahv_should_disable_migration: false
+
+# --- Tuning ----------------------------------------------------------------
+
+# VMs per batch API call. A single very large batch can exceed the cluster
+# request timeout -- a 2-VM export took ~6.7s in the reference capture.
+ahv_chunk_size: 25
+
+# Optional AHV inventory CSV from get_ahv_inventory.py. When set, VM ids are
+# read from it and no name-lookup API calls are made at all.
+#
+# Strongly recommended for large environments: without it the role issues one
+# name-filtered GET per VM. That is bounded and safe, but it is N round trips.
+# With it, resolution costs nothing.
+#
+# A stale CSV degrades gracefully -- any name it does not cover falls through
+# to the per-VM API lookup.
+ahv_inventory_csv: ""
+
+# Optional storage container CSV from get_ahv_inventory.py. When it covers
+# every container this wave targets, the per-AHV-cluster container listing is
+# skipped entirely -- that call is a Prism passthrough measured at 5.3s on a
+# cold cache. Anything it does not cover falls through to a live lookup.
+ahv_containers_csv: ""
+
+# --- Output ----------------------------------------------------------------
+
+# Directory for the wave-state CSV. This file is the durable handoff to
+# ahv_monitor_recovery.py -- keep it.
+ahv_state_dir: "{{ playbook_dir }}/state"
+
+# --- Optional bounded wait -------------------------------------------------
+
+# 0 means trigger and exit immediately, which is the recommended default.
+#
+# Ansible cannot durably hold monitoring state: until/retries is an in-memory
+# loop with no checkpoint, task output is buffered so a long poll prints
+# nothing until it finishes, and closing the terminal kills the run. For
+# anything longer than a quick smoke test, leave this at 0 and monitor with
+# python3 ahv_monitor_recovery.py --state <wave-state CSV>, which is
+# resumable.
+ahv_monitor_wait_minutes: 0
+ahv_monitor_poll_seconds: 30

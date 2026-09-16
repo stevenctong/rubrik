@@ -1,0 +1,13 @@
+---
+# Recovery wave 1.
+#
+# Each host here is an AHV VM NAME as Rubrik knows it. Ansible never connects
+# to them -- the play runs on localhost and uses this group purely as the VM
+# list. Build one file per wave and point -i at the one you want.
+
+all:
+  children:
+    ahv_recovery_wave:
+      hosts:
+        sh2-ntnx-w1:
+        sh2-ntnx-w2:

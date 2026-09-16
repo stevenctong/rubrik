@@ -1,0 +1,19 @@
+---
+# Recovery wave inventory.
+#
+# Each host under ahv_recovery_wave is an AHV VM NAME as Rubrik knows it.
+# Ansible never connects to these -- the playbook runs on localhost and uses
+# the group purely as the VM list.
+#
+# Build one file per wave (wave1, wave2, tier0, ...) and point -i at the one
+# you want. Names are matched case-insensitively against the cluster.
+#
+# Tip: generate these from the inventory CSV produced by
+# python3 ../../python/get_ahv_inventory.py
+
+all:
+  children:
+    ahv_recovery_wave:
+      hosts:
+        sh2-ntnx-l1:
+        NTNX-sh2-afs-01-1:

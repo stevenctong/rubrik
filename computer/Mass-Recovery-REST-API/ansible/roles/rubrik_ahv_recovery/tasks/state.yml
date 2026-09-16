@@ -1,0 +1,27 @@
+---
+# The wave-state CSV is the durable handoff to the Python monitor. It is
+# written immediately after the trigger so that a crash, a closed terminal,
+# or a move to another machine never loses the job ids.
+
+- name: Ensure the state directory exists
+  ansible.builtin.file:
+    path: "{{ ahv_state_dir }}"
+    state: directory
+    mode: "0755"
+  when: not ansible_check_mode
+
+- name: Write the wave-state CSV
+  ansible.builtin.template:
+    src: wave_state.csv.j2
+    dest: "{{ ahv_state_dir }}/{{ ahv_wave_name }}_state_{{ now(utc=true).strftime('%Y%m%d_%H%M%S') }}.csv"
+    mode: "0644"
+  register: ahv_state_file
+  when: not ansible_check_mode
+
+- name: Report the wave-state CSV and how to monitor it
+  ansible.builtin.debug:
+    msg:
+      - "Wave state written to {{ ahv_state_file.dest }}"
+      - "Monitor it (resumable, survives Ctrl-C and terminal close) with:"
+      - "  python3 ../python/ahv_monitor_recovery.py --svc_json <json> --cluster {{ rubrik_cdm_cluster }} --state {{ ahv_state_file.dest }}"
+  when: not ansible_check_mode

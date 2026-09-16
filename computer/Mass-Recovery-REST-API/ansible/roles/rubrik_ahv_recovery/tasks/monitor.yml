@@ -1,0 +1,90 @@
+---
+# OPTIONAL bounded wait. Off by default (ahv_monitor_wait_minutes: 0).
+#
+# This exists for small smoke tests where you want a single command to tell
+# you the wave finished. It is deliberately NOT the recommended way to watch a
+# real recovery wave:
+#
+#   * until/retries is an in-memory loop -- there is no checkpoint and no
+#     resume, so a crash or a closed terminal loses all tracking.
+#   * task output is buffered, so a long poll prints nothing at all until it
+#     finishes.
+#
+# For real waves leave this at 0 and use the Python monitor against the
+# wave-state CSV, which is resumable and prints a live table.
+
+- name: Allow the event series to register on the cluster
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Look up the latest events for each triggered VM
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/v1/event/latest?limit=50&object_ids={{ item.vm_id | urlencode }}"
+    method: GET
+    headers: "{{ rubrik_cdm_headers }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  loop: "{{ ahv_records }}"
+  loop_control:
+    label: "{{ item.vm_name }}"
+  register: ahv_event_lookup
+  changed_when: false
+
+- name: Pair each job instance with its event series
+  ansible.builtin.set_fact:
+    ahv_status_pairs: >-
+      {%- set out = [] -%}
+      {%- for result in ahv_event_lookup.results -%}
+      {%- set job = ahv_job_by_vm.get(result.item.vm_id, {}) -%}
+      {%- set job_id = job.get('job_instance_id', '') -%}
+      {%- if job_id | length > 0 -%}
+      {%- for entry in result.json.data | default([]) -%}
+      {%- if entry.latestEvent.jobInstanceId | default('') == job_id -%}
+      {%- set _ = out.append({'id': entry.latestEvent.eventSeriesId, 'jobInstanceId': job_id}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Report how many recoveries are being tracked
+  ansible.builtin.debug:
+    msg: >-
+      Tracking {{ ahv_status_pairs | length }} of {{ ahv_records | length }} recovery(s).
+      {% if ahv_status_pairs | length < ahv_records | length %}
+      Any not tracked here are still visible in the wave-state CSV and can be
+      picked up by ahv_monitor_recovery.py.
+      {% endif %}
+
+- name: Wait for every tracked recovery to reach a terminal state
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/internal/event_series/status"
+    method: POST
+    headers: "{{ rubrik_cdm_headers }}"
+    body_format: json
+    body: "{{ ahv_status_pairs }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  register: ahv_poll
+  until: >-
+    ahv_poll.json.data | default([])
+    | rejectattr('terminatedEventSeriesStatus', 'defined') | list | length == 0
+  retries: "{{ ((ahv_monitor_wait_minutes | int * 60) / (ahv_monitor_poll_seconds | int)) | round(0, 'ceil') | int }}"
+  delay: "{{ ahv_monitor_poll_seconds | int }}"
+  when: ahv_status_pairs | length > 0
+  changed_when: false
+  failed_when: false
+
+- name: Summarise the outcome
+  ansible.builtin.debug:
+    msg: >-
+      {%- set rows = ahv_poll.json.data | default([]) -%}
+      {%- set done = rows | selectattr('terminatedEventSeriesStatus', 'defined') | list -%}
+      {%- set ok = done | selectattr('terminatedEventSeriesStatus', 'search', '^Success') | list -%}
+      Completed {{ done | length }} of {{ rows | length }} tracked recovery(s):
+      {{ ok | length }} succeeded, {{ (done | length) - (ok | length) }} did not.
+      {% if (rows | length) > (done | length) %}
+      {{ (rows | length) - (done | length) }} still in flight -- the wait window
+      expired, not the recovery. Continue with ahv_monitor_recovery.py --state.
+      {% endif %}
+  when: ahv_status_pairs | length > 0

@@ -1,0 +1,85 @@
+---
+# Reusable Rubrik CDM authentication.
+#
+# Include this role from any playbook that needs to call the CDM REST API.
+# It sets three facts for the rest of the play:
+#
+#   rubrik_cdm_base_url   https://<cluster>
+#   rubrik_cdm_token      the bearer token
+#   rubrik_cdm_headers    ready-to-use headers dict for ansible.builtin.uri
+#
+# Usage:
+#   - ansible.builtin.include_role:
+#       name: rubrik_cdm_auth
+#     vars:
+#       rubrik_cdm_cluster: 10.8.48.104
+#       rubrik_cdm_svc_json: ~/rsc-sa.json
+
+- name: Assert a CDM cluster was supplied
+  ansible.builtin.assert:
+    that:
+      - rubrik_cdm_cluster | length > 0
+    fail_msg: >-
+      rubrik_cdm_cluster must be set to the CDM cluster FQDN or IP address.
+
+- name: Read the service account JSON
+  ansible.builtin.set_fact:
+    _rubrik_svc: "{{ lookup('ansible.builtin.file', rubrik_cdm_svc_json | expanduser) | from_json }}"
+  when: rubrik_cdm_svc_json | length > 0
+  no_log: true
+
+- name: Resolve the service account credentials
+  ansible.builtin.set_fact:
+    _rubrik_client_id: >-
+      {{ rubrik_cdm_client_id if rubrik_cdm_client_id | length > 0
+         else (_rubrik_svc.client_id | default('')) }}
+    _rubrik_client_secret: >-
+      {{ rubrik_cdm_client_secret if rubrik_cdm_client_secret | length > 0
+         else (_rubrik_svc.client_secret | default('')) }}
+  no_log: true
+
+- name: Assert credentials were resolved
+  ansible.builtin.assert:
+    that:
+      - _rubrik_client_id | length > 0
+      - _rubrik_client_secret | length > 0
+    fail_msg: >-
+      Could not resolve service account credentials. Set rubrik_cdm_svc_json to
+      a JSON file containing client_id and client_secret, or set
+      rubrik_cdm_client_id and rubrik_cdm_client_secret directly.
+
+- name: Request a CDM session token
+  ansible.builtin.uri:
+    url: "https://{{ rubrik_cdm_cluster }}/api/v1/service_account/session"
+    method: POST
+    body_format: json
+    body:
+      serviceAccountId: "{{ _rubrik_client_id }}"
+      secret: "{{ _rubrik_client_secret }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+    status_code: [200, 201]
+  register: _rubrik_session
+  no_log: true
+  check_mode: false
+
+- name: Set the CDM connection facts
+  ansible.builtin.set_fact:
+    rubrik_cdm_base_url: "https://{{ rubrik_cdm_cluster }}"
+    rubrik_cdm_token: "{{ _rubrik_session.json.token }}"
+    rubrik_cdm_headers:
+      Content-Type: application/json
+      Accept: application/json
+      Authorization: "Bearer {{ _rubrik_session.json.token }}"
+  no_log: true
+
+- name: Clear the resolved credentials from play scope
+  ansible.builtin.set_fact:
+    _rubrik_svc: null
+    _rubrik_client_id: null
+    _rubrik_client_secret: null
+  no_log: true
+
+- name: Report the authenticated cluster
+  ansible.builtin.debug:
+    msg: "Authenticated to Rubrik CDM cluster {{ rubrik_cdm_cluster }}"

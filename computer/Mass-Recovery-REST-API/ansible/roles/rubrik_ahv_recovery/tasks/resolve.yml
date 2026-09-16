@@ -1,0 +1,357 @@
+---
+# Resolve everything the batch trigger needs, in four read-only API calls.
+
+- name: Normalise the requested point in time to ISO-8601 UTC
+  ansible.builtin.set_fact:
+    ahv_before_date: >-
+      {%- set raw = ahv_point_in_time | default('latest') | string | trim -%}
+      {%- if raw | lower == 'latest' -%}
+      {{ now(utc=true).strftime('%Y-%m-%dT%H:%M:%S.000Z') }}
+      {%- elif raw.endswith('Z') -%}
+      {{ raw }}
+      {%- elif '.' in raw -%}
+      {{ raw | regex_replace(' ', 'T') }}Z
+      {%- else -%}
+      {{ raw | regex_replace(' ', 'T') }}.000Z
+      {%- endif -%}
+
+- name: Collect the wave VM names from the inventory group
+  ansible.builtin.set_fact:
+    ahv_wave_names: "{{ groups[ahv_wave_group] }}"
+
+# VM name -> id resolution deliberately avoids a bulk listing of every AHV VM
+# on the cluster. That call is paginated, and in a large environment it either
+# truncates silently or forces a paging loop that Ansible expresses badly.
+#
+# Two bounded strategies instead:
+#   1. ahv_inventory_csv -- read ids straight out of the CSV that
+#      get_ahv_inventory.py produces. Zero API calls. Use this for large
+#      environments and for repeat runs.
+#   2. Fallback -- one name-filtered GET per VM. Each returns a handful of
+#      rows, so there is no pagination exposure. N small calls, not one huge
+#      one.
+#
+# Anything the CSV misses falls through to the API lookup, so a stale CSV
+# degrades gracefully instead of failing.
+
+- name: Resolve VM ids from the inventory CSV
+  ansible.builtin.set_fact:
+    ahv_csv_index: >-
+      {%- set out = {} -%}
+      {%- for n in ahv_wave_names -%}
+      {%- set vid = lookup('ansible.builtin.csvfile', n, file=ahv_inventory_csv, delimiter=',', col=1, default='') -%}
+      {%- set cid = lookup('ansible.builtin.csvfile', n, file=ahv_inventory_csv, delimiter=',', col=3, default='') -%}
+      {%- if vid | length > 0 -%}
+      {%- set _ = out.update({n: {'id': vid, 'name': n, 'nutanixClusterId': cid}}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: ahv_inventory_csv | length > 0
+
+- name: Default the CSV index when no inventory CSV was supplied
+  ansible.builtin.set_fact:
+    ahv_csv_index: {}
+  when: ahv_inventory_csv | length == 0
+
+- name: Determine which VM names still need an API lookup
+  ansible.builtin.set_fact:
+    ahv_names_to_lookup: >-
+      {{ ahv_wave_names | reject('in', ahv_csv_index.keys() | list) | list }}
+
+- name: Report how the wave is being resolved
+  ansible.builtin.debug:
+    msg: >-
+      Resolving {{ ahv_wave_names | length }} VM name(s):
+      {{ ahv_csv_index | length }} from the inventory CSV,
+      {{ ahv_names_to_lookup | length }} via a per-VM API lookup.
+
+- name: Look up each remaining VM by name
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/internal/nutanix/vm?primary_cluster_id=local&is_relic=false&name={{ item | urlencode }}"
+    method: GET
+    headers: "{{ rubrik_cdm_headers }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  loop: "{{ ahv_names_to_lookup }}"
+  loop_control:
+    label: "{{ item }}"
+  register: ahv_vm_lookup
+  changed_when: false
+  when: ahv_names_to_lookup | length > 0
+
+# The name query param is a substring match, so filter to an exact
+# case-insensitive hit before trusting a row.
+  check_mode: false
+
+- name: Index the API-resolved VMs
+  ansible.builtin.set_fact:
+    ahv_api_index: >-
+      {%- set out = {} -%}
+      {%- for result in ahv_vm_lookup.results | default([]) -%}
+      {%- for vm in result.json.data | default([]) -%}
+      {%- if (vm.name | lower) == (result.item | lower) -%}
+      {%- set _ = out.update({result.item: vm}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Combine the resolved VMs and identify the unmatched
+  ansible.builtin.set_fact:
+    ahv_resolved: >-
+      {%- set out = [] -%}
+      {%- for n in ahv_wave_names -%}
+      {%- set vm = ahv_csv_index.get(n) or ahv_api_index.get(n) -%}
+      {%- if vm -%}
+      {%- set _ = out.append(vm) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    ahv_unmatched: >-
+      {%- set out = [] -%}
+      {%- for n in ahv_wave_names -%}
+      {%- if not (ahv_csv_index.get(n) or ahv_api_index.get(n)) -%}
+      {%- set _ = out.append(n) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Warn about VM names that are not on this cluster
+  ansible.builtin.debug:
+    msg: >-
+      {{ ahv_unmatched | length }} VM name(s) were not found on the cluster and
+      will be skipped: {{ ahv_unmatched | join(', ') }}
+  when: ahv_unmatched | length > 0
+
+- name: Assert at least one VM resolved
+  ansible.builtin.assert:
+    that:
+      - ahv_resolved | length > 0
+    fail_msg: >-
+      None of the VM names in inventory group '{{ ahv_wave_group }}' matched a
+      VM on cluster {{ rubrik_cdm_cluster }}.
+
+- name: Resolve the closest snapshot at or before the point in time
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/v1/snapshot/closest_to_point_in_time"
+    method: POST
+    headers: "{{ rubrik_cdm_headers }}"
+    body_format: json
+    body:
+      snappableIds: "{{ item | map(attribute='id') | list }}"
+      beforeDate: "{{ ahv_before_date }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  loop: "{{ ahv_resolved | batch(ahv_chunk_size | int) | list }}"
+  loop_control:
+    label: "{{ item | length }} VM(s)"
+  register: ahv_snapshot_results
+  changed_when: false
+  check_mode: false
+
+- name: Index snapshots by snappable id
+  ansible.builtin.set_fact:
+    ahv_snapshot_index: >-
+      {%- set out = {} -%}
+      {%- for result in ahv_snapshot_results.results -%}
+      {%- for snap in result.json.snapshots | default([]) -%}
+      {%- set _ = out.update({snap.snappableId: snap}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+# Storage container resolution prefers a staged CSV from
+# get_ahv_inventory.py. The per-AHV-cluster container listing is a Prism
+# passthrough measured at 5.3s on a cold cache, so skipping it is worth doing
+# -- but only when the staged file covers every container this wave targets.
+# Anything it misses falls through to a live lookup.
+
+- name: Load the staged storage container CSV
+  ansible.builtin.set_fact:
+    ahv_staged_containers: >-
+      {%- set out = {} -%}
+      {%- for line in lookup('ansible.builtin.file', ahv_containers_csv).splitlines()[1:] -%}
+      {%- set f = line.split(',') -%}
+      {%- if f | length >= 4 and f[1] | trim | length > 0 -%}
+      {%- set _ = out.update({(f[1] | trim ~ '|' ~ (f[2] | trim | lower)): f[3] | trim}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    ahv_staged_cluster_ids: >-
+      {%- set out = {} -%}
+      {%- for line in lookup('ansible.builtin.file', ahv_containers_csv).splitlines()[1:] -%}
+      {%- set f = line.split(',') -%}
+      {%- if f | length >= 2 and f[0] | trim | length > 0 -%}
+      {%- set _ = out.update({(f[0] | trim | lower): f[1] | trim}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: ahv_containers_csv | length > 0
+
+- name: Default the staged container facts when no CSV was supplied
+  ansible.builtin.set_fact:
+    ahv_staged_containers: {}
+    ahv_staged_cluster_ids: {}
+  when: ahv_containers_csv | length == 0
+
+- name: Work out whether a live container lookup is still needed
+  ansible.builtin.set_fact:
+    ahv_provisional_cluster_id: >-
+      {%- set staged_ids = ahv_staged_containers.keys() | map('regex_replace', '\\|.*$', '') | unique | list -%}
+      {%- if ahv_nutanix_cluster_name | length > 0 -%}
+      {{ ahv_staged_cluster_ids.get(ahv_nutanix_cluster_name | lower, '') }}
+      {%- elif staged_ids | length == 1 -%}
+      {{ staged_ids[0] }}
+      {%- else -%}
+      {{ '' }}
+      {%- endif -%}
+
+- name: Determine whether the staged CSV covers this wave
+  ansible.builtin.set_fact:
+    ahv_containers_need_live: >-
+      {%- if ahv_staged_containers | length == 0 -%}
+      {{ true }}
+      {%- elif ahv_nutanix_cluster_name | length > 0 and ahv_provisional_cluster_id | length == 0 -%}
+      {{ true }}
+      {%- else -%}
+      {%- set missing = [] -%}
+      {%- for vm in ahv_resolved -%}
+      {%- set cid = ahv_provisional_cluster_id if ahv_provisional_cluster_id | length > 0 else (vm.nutanixClusterId | default('')) -%}
+      {%- if cid | length == 0 or (cid ~ '|' ~ (ahv_container_name | lower)) not in ahv_staged_containers -%}
+      {%- set _ = missing.append(vm.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ missing | length > 0 }}
+      {%- endif -%}
+
+- name: Report how the storage container is being resolved
+  ansible.builtin.debug:
+    msg: >-
+      {%- if ahv_containers_need_live | bool -%}
+      Querying the cluster for AHV clusters and storage containers
+      {%- if ahv_staged_containers | length > 0 %} (staged CSV did not cover every target){% endif -%}.
+      {%- else -%}
+      Resolved entirely from the staged CSV -- no cluster or container API calls.
+      {%- endif -%}
+
+- name: List AHV clusters
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/internal/nutanix/cluster?primary_cluster_id=local&include_prism_clusters=true"
+    method: GET
+    headers: "{{ rubrik_cdm_headers }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  register: ahv_cluster_list
+  changed_when: false
+  when: ahv_containers_need_live | bool
+  check_mode: false
+
+- name: List storage containers on each AHV cluster
+  ansible.builtin.uri:
+    url: "{{ rubrik_cdm_base_url }}/api/internal/nutanix/cluster/{{ item.id | urlencode }}/container"
+    method: GET
+    headers: "{{ rubrik_cdm_headers }}"
+    validate_certs: "{{ rubrik_cdm_validate_certs }}"
+    timeout: "{{ rubrik_cdm_timeout }}"
+  loop: "{{ (ahv_cluster_list.json.data | default([])) if (ahv_containers_need_live | bool) else [] }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: ahv_container_results
+  changed_when: false
+  check_mode: false
+
+- name: Merge staged and live storage containers
+  ansible.builtin.set_fact:
+    ahv_container_index: >-
+      {%- set out = {} -%}
+      {%- for key, value in ahv_staged_containers.items() -%}
+      {%- set _ = out.update({key: value}) -%}
+      {%- endfor -%}
+      {%- for result in ahv_container_results.results | default([]) -%}
+      {%- for container in result.json.data | default([]) -%}
+      {%- set _ = out.update({(result.item.id ~ '|' ~ (container.name | lower)): container.naturalId}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+    ahv_cluster_ids_by_name: >-
+      {%- set out = {} -%}
+      {%- for key, value in ahv_staged_cluster_ids.items() -%}
+      {%- set _ = out.update({key: value}) -%}
+      {%- endfor -%}
+      {%- for cluster in ahv_cluster_list.json.data | default([]) -%}
+      {%- set _ = out.update({(cluster.name | lower): cluster.id}) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Resolve the target AHV cluster id
+  ansible.builtin.set_fact:
+    ahv_target_cluster_id: >-
+      {%- set live = ahv_cluster_list.json.data | default([]) -%}
+      {%- set all_ids = ahv_container_index.keys() | map('regex_replace', '\\|.*$', '') | unique | list -%}
+      {%- if ahv_nutanix_cluster_name | length > 0 -%}
+      {{ ahv_cluster_ids_by_name.get(ahv_nutanix_cluster_name | lower, '') }}
+      {%- elif live | length == 1 -%}
+      {{ live[0].id }}
+      {%- elif all_ids | length == 1 -%}
+      {{ all_ids[0] }}
+      {%- else -%}
+      {{ '' }}
+      {%- endif -%}
+
+- name: Assert the named AHV cluster exists
+  ansible.builtin.assert:
+    that:
+      - ahv_target_cluster_id | length > 0
+    fail_msg: >-
+      AHV cluster '{{ ahv_nutanix_cluster_name }}' was not found. Available:
+      {{ ahv_cluster_ids_by_name.keys() | list | join(', ') }}
+  when: ahv_nutanix_cluster_name | length > 0
+
+- name: Build the recoverable record set
+  ansible.builtin.set_fact:
+    ahv_records: >-
+      {%- set out = [] -%}
+      {%- for vm in ahv_resolved -%}
+      {%- set snap = ahv_snapshot_index.get(vm.id) -%}
+      {%- set cid = ahv_target_cluster_id if ahv_target_cluster_id | length > 0 else vm.nutanixClusterId -%}
+      {%- set cnat = ahv_container_index.get(cid ~ '|' ~ (ahv_container_name | lower)) -%}
+      {%- if snap and cnat -%}
+      {%- set _ = out.append({
+            'vm_name': vm.name,
+            'vm_id': vm.id,
+            'snapshot_id': snap.snapshotId,
+            'snapshot_date': snap.snapshotDate,
+            'nutanix_cluster_id': cid,
+            'container_natural_id': cnat}) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    ahv_skipped: >-
+      {%- set out = [] -%}
+      {%- for vm in ahv_resolved -%}
+      {%- set snap = ahv_snapshot_index.get(vm.id) -%}
+      {%- set cid = ahv_target_cluster_id if ahv_target_cluster_id | length > 0 else vm.nutanixClusterId -%}
+      {%- set cnat = ahv_container_index.get(cid ~ '|' ~ (ahv_container_name | lower)) -%}
+      {%- if not snap -%}
+      {%- set _ = out.append(vm.name ~ ' -- no snapshot at or before ' ~ ahv_before_date) -%}
+      {%- elif not cnat -%}
+      {%- set _ = out.append(vm.name ~ " -- container '" ~ ahv_container_name ~ "' not found on its AHV cluster") -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Report the recovery preview
+  ansible.builtin.debug:
+    msg: >-
+      {{ ahv_method }} at {{ ahv_before_date }} --
+      {{ ahv_records | length }} VM(s) ready,
+      {{ ahv_skipped | length }} skipped,
+      {{ ahv_unmatched | length }} not found.
+      {%- if ahv_skipped | length > 0 %} Skipped: {{ ahv_skipped | join('; ') }}{% endif -%}
+
+- name: Assert something is recoverable
+  ansible.builtin.assert:
+    that:
+      - ahv_records | length > 0
+    fail_msg: >-
+      No VMs are recoverable with the current settings. See the preview above.

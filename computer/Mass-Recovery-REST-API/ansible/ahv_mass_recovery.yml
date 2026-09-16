@@ -1,0 +1,52 @@
+---
+# Rubrik AHV (Nutanix) Mass Recovery -- trigger phase.
+#
+# Runs entirely on localhost. The inventory group named by ahv_wave_group
+# supplies the VM names for the wave; its entries are never connected to.
+#
+# This playbook triggers the recovery and writes a durable wave-state CSV,
+# then exits. Monitoring is handled by the companion Python script, which is
+# resumable across crashes and closed terminals:
+#
+#   python3 ../python/ahv_monitor_recovery.py \
+#       --svc_json rsc-sa.json --cluster <cluster> --state <wave-state CSV>
+#
+# Examples:
+#   Put your settings in a gitignored extra-vars file once, rather than
+#   retyping -e flags every run:
+#
+#     cp vars/example-recovery-vars.yml vars/my-recovery.yml
+#     $EDITOR vars/my-recovery.yml
+#
+#   # Dry run -- resolves everything and prints the request body, sends nothing
+#   ansible-playbook -i inventory/ahv_wave1_example.yml ahv_mass_recovery.yml \
+#       -e @vars/my-recovery.yml --check
+#
+#   # Live mount the wave
+#   ansible-playbook -i inventory/ahv_wave1_example.yml ahv_mass_recovery.yml \
+#       -e @vars/my-recovery.yml
+#
+#   # Same settings, but export instead -- a later -e wins over the file
+#   ansible-playbook -i inventory/ahv_wave1_example.yml ahv_mass_recovery.yml \
+#       -e @vars/my-recovery.yml -e ahv_method=export
+#
+#   # Everything inline, no vars file
+#   ansible-playbook -i inventory/ahv_wave1_example.yml ahv_mass_recovery.yml \
+#       -e rubrik_cdm_cluster=10.8.48.104 \
+#       -e rubrik_cdm_svc_json=~/rsc-sa.json \
+#       -e ahv_method=mount \
+#       -e ahv_container_name=default-container \
+#       -e ahv_recovered_vm_prefix=dr-
+#
+#   # Credentials inline instead of a JSON file -- encrypt the file first
+#   ansible-vault encrypt vars/my-recovery.yml
+#   ansible-playbook ... -e @vars/my-recovery.yml --ask-vault-pass
+
+- name: Rubrik AHV mass recovery
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  roles:
+    - role: rubrik_cdm_auth
+    - role: rubrik_ahv_recovery
