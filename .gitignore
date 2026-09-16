@@ -21,6 +21,9 @@ ansible/rubrik_add_hosts/rsc_token.txt
 # cluster IPs, SSO usernames and vCenter FQDNs from the capture session.
 computer/Mass-Recovery-REST-API/rest_api-*.json
 
+# AHV mass recovery -- internal planning notes, kept local
+computer/Mass-Recovery-REST-API/PLAN-*.md
+
 # AHV mass recovery -- run output and generated inventories
 computer/Mass-Recovery-REST-API/python/logs/
 computer/Mass-Recovery-REST-API/python/inventory/
