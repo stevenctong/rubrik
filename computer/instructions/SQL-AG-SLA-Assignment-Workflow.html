@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Server AG SLA Assignment - Workflow & Script Reference</title>
+<style>
+  :root {
+    --rubrik-teal: #00B2A9;
+    --ink: #1a1a1a;
+    --muted: #5f6b6a;
+    --border: #dfe6e5;
+    --bg-soft: #f4f9f8;
+    --code-bg: #0f1717;
+    --code-ink: #d9f2ef;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 20px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #ffffff;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header.doc-header {
+    border-bottom: 4px solid var(--rubrik-teal);
+    padding: 32px 0 20px;
+  }
+  header.doc-header h1 {
+    margin: 0 0 6px;
+    font-size: 1.9rem;
+    color: var(--ink);
+  }
+  header.doc-header p.subtitle {
+    margin: 0;
+    color: var(--muted);
+    font-size: 1rem;
+  }
+  h2 {
+    color: var(--ink);
+    border-left: 5px solid var(--rubrik-teal);
+    padding-left: 12px;
+    margin-top: 48px;
+    font-size: 1.35rem;
+  }
+  h3 {
+    font-size: 1.08rem;
+    margin-top: 28px;
+    color: var(--ink);
+  }
+  h3 .step-num {
+    display: inline-block;
+    background: var(--rubrik-teal);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    margin-right: 8px;
+  }
+  p { color: var(--ink); }
+  .callout {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--rubrik-teal);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--ink); }
+
+  /* Flow diagram */
+  .flow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: stretch;
+    margin: 24px 0;
+  }
+  .flow .box {
+    flex: 1 1 150px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fff;
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .flow .box .tag {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .flow .box.outside { background: #f6f6f6; border-color: #d8d8d8; }
+  .flow .box.outside .tag { color: #8a8a8a; }
+  .flow .box.script { background: #e6f7f5; border-color: var(--rubrik-teal); }
+  .flow .box.script .tag { color: #007a73; }
+  .flow .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 1.3rem;
+    flex: 0 0 auto;
+    padding: 0 2px;
+  }
+  .flow-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 14px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .flow-divider::before, .flow-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0 20px;
+    font-size: 0.88rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--bg-soft);
+    color: var(--ink);
+    font-weight: 700;
+  }
+  code {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 10px 0 18px;
+  }
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+  }
+  .step-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px 4px;
+    margin: 18px 0 28px;
+  }
+  .step-card .label {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #007a73;
+    background: #e6f7f5;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-bottom: 6px;
+  }
+  .label.mutation { color: #9a4b00; background: #fdeee0; }
+  .label.rest { color: #5b3d9a; background: #efe8fb; }
+  .label.logic { color: #555; background: #ececec; }
+  ul { padding-left: 22px; }
+  .pill-list li { margin-bottom: 6px; }
+  footer {
+    margin-top: 60px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  @media (max-width: 640px) {
+    .flow { flex-direction: column; }
+    .flow .arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-header">
+  <h1>SQL Server Availability Group &mdash; SLA Assignment Workflow</h1>
+  <p class="subtitle">Onboarding workflow and script reference for <code>Check-Assign-SLA-SQL-AG.ps1</code></p>
+</header>
+
+<h2>1. Overall Workflow</h2>
+<p>
+  When a new Windows SQL Server host is onboarded into Rubrik Security Cloud (RSC), any databases that
+  participate in a SQL Server Availability Group (AG) should be protected at the <strong>AG level</strong>,
+  not at the individual host/database level. The steps below show where this script fits into the broader
+  onboarding process.
+</p>
+
+<div class="flow-divider">Onboarding steps (outside the scope of this script)</div>
+<div class="flow">
+  <div class="box outside">
+    <div class="tag">Step A</div>
+    Add the SQL Host to Rubrik
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box outside">
+    <div class="tag">Step B</div>
+    Wait ~3 minutes for SQL discovery to complete
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box outside">
+    <div class="tag">Step C</div>
+    Assign an SLA at the SQL Host level (protects standalone, non-AG databases)
+  </div>
+</div>
+
+<div class="flow-divider">This script picks up from here</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Script Step 1</div>
+    Check the new SQL Host for databases that are members of an AG
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Script Step 2</div>
+    Gather the distinct list of AGs that don't have an SLA assigned yet
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Script Step 3</div>
+    Assign the specified SLA Domain to each AG (if one was provided)
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Why this matters:</strong> An AG-aware SLA assignment protects the AG as a single logical object.
+  Assigning SLA at the host or per-database level instead can result in inconsistent snapshot behavior across
+  AG replicas, or duplicate/competing protection policies on the same data.
+</div>
+
+<h2>2. Script Logic (Pseudocode)</h2>
+<pre><code>INPUT: one or more SQL host names, optional SLA name or SLA ID, optional -ForceSLA switch
+
+AUTHENTICATE to RSC using the Service Account JSON (client_id/client_secret -> bearer token)
+
+IF an SLA was provided:
+    RESOLVE the SLA name to its SLA ID (skip lookup if -SLAId was given directly)
+
+FOR EACH SQL host name provided:
+    LOOK UP the host object in RSC by name
+    IF host not found: report and skip to next host
+
+    GET all database descendants of the host, including:
+        - isInAvailabilityGroup flag
+        - logicalPath (used to find the parent AG object, if any)
+        - effectiveSlaDomain (the DB's current SLA)
+
+    FOR EACH database on the host:
+        IF isInAvailabilityGroup == true:
+            RECORD the database + its AG name/ID + current SLA in the summary list
+            ADD the AG to a deduped map of "distinct AGs found" (keyed by AG ID)
+
+    REPORT how many DBs are in an AG vs. not, for this host
+
+PRINT the summary table (host, database, AG name/ID, current SLA)
+
+IF an SLA was provided:
+    PRINT the deduped list of distinct AGs found
+    FOR EACH distinct AG:
+        IF the AG already has an SLA assigned (not UNPROTECTED/DO_NOT_PROTECT) AND -ForceSLA was NOT passed:
+            SKIP this AG (log as skipped)
+        ELSE:
+            ASSIGN the resolved SLA to the AG object
+            LOG success or failure
+
+IF exporting: WRITE the summary list to a timestamped CSV
+</code></pre>
+
+<h2>3. Detailed Steps &amp; GraphQL Reference</h2>
+<p>Each step below corresponds to a function or logic block in <code>Check-Assign-SLA-SQL-AG.ps1</code>.</p>
+
+<div class="step-card">
+  <span class="label rest">REST</span>
+  <h3><span class="step-num">0</span>Authenticate to RSC</h3>
+  <p>Before any GraphQL calls can be made, the script exchanges the RSC Service Account's client
+  credentials for a bearer token. This is a plain REST call (not GraphQL).</p>
+
+  <p><strong>0a. Read and validate the Service Account JSON file</strong></p>
+  <p>The script reads the file at <code>$ServiceAccountPath</code> and confirms it contains
+  <code>client_id</code>, <code>client_secret</code>, and <code>access_token_uri</code>. If any are
+  missing, the script throws and stops before making any network call. Example service account
+  file:</p>
+  <pre><code>{
+  "client_id": "client|abcdef1234567890",
+  "client_secret": "SuperSecretClientSecretValue",
+  "access_token_uri": "https://mycompany.my.rubrik.com/api/client_token",
+  "name": "sql-ag-sla-automation",
+  "organization_id": "abcd1234-5678-90ab-cdef-1234567890ab"
+}</code></pre>
+
+  <p><strong>0b. Derive the tenant's base URL</strong></p>
+  <p>Before calling out, the script strips the literal <code>/api/client_token</code> suffix off
+  <code>access_token_uri</code> to get the tenant's base URL (<code>$rubrikURL</code>). This is done
+  locally and does not require a network call.</p>
+  <pre><code>rubrikURL = access_token_uri.Replace("/api/client_token", "")
+// e.g. "https://mycompany.my.rubrik.com/api/client_token"
+//   -> "https://mycompany.my.rubrik.com"</code></pre>
+
+  <p><strong>0c. Exchange credentials for a bearer token</strong></p>
+  <table>
+    <tr><th>Method</th><td>POST</td></tr>
+    <tr><th>URL</th><td><code>&lt;access_token_uri from service account JSON&gt;</code></td></tr>
+  </table>
+  <pre><code>{
+  "grant_type": "client_credentials",
+  "client_id": "&lt;from service account JSON&gt;",
+  "client_secret": "&lt;from service account JSON&gt;"
+}</code></pre>
+  <p>This first call is sent with only <code>Content-Type</code>/<code>Accept</code> headers &mdash;
+  there is no bearer token yet. The response's <code>access_token</code>, along with
+  <code>$rubrikURL</code> from step 0b, is stored for the rest of the script's run. If the response
+  does not contain an <code>access_token</code>, the script throws and stops.</p>
+
+  <p><strong>0d. Build the GraphQL endpoint and headers</strong></p>
+  <p>The GraphQL endpoint is <code>$rubrikURL/api/graphql</code>. A fresh headers object is then
+  built with the bearer token, and is what every GraphQL call below actually uses (this is a
+  separate header object from the one used for the token POST in step 0c &mdash; it did not have an
+  <code>Authorization</code> value to add to).</p>
+  <pre><code>endpoint = rubrikURL + "/api/graphql"
+headers = {
+  "Content-Type": "application/json",
+  "Accept": "application/json",
+  "Authorization": "Bearer &lt;access_token&gt;"
+}</code></pre>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">1</span>Look up the SQL Host by name</h3>
+  <p><strong>Function:</strong> <code>Get-MssqlHost</code></p>
+  <p>Finds the RSC object for the given SQL host name, scoped to <code>MSSQL_HOST</code> type objects.
+  The returned <code>id</code> (fid) is used as the anchor for the next step.</p>
+  <pre><code>query MssqlTopLevelDescendantsQuery($typeFilter: [HierarchyObjectTypeEnum!], $filter: [Filter!]) {
+  mssqlTopLevelDescendants(typeFilter: $typeFilter, filter: $filter) {
+    edges {
+      node {
+        id
+        name
+        objectType
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}</code></pre>
+  <p><strong>Variables:</strong></p>
+  <table>
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td><code>typeFilter</code></td><td><code>["MSSQL_HOST"]</code></td></tr>
+    <tr><td><code>filter</code></td><td><code>[{ "field": "NAME", "texts": ["&lt;SQLHostName&gt;"] }]</code></td></tr>
+  </table>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">2</span>Get the host's databases and AG membership</h3>
+  <p><strong>Function:</strong> <code>Get-MssqlHostDatabases</code></p>
+  <p>Returns every database descendant of the host object, each with its <code>isInAvailabilityGroup</code>
+  flag, its current <code>effectiveSlaDomain</code>, and its <code>logicalPath</code> &mdash; which contains
+  the parent Availability Group object (<code>objectType: MssqlAvailabilityGroup</code>) when the database
+  is an AG member. Results are paginated with <code>first</code>/<code>after</code> (page size 1000).</p>
+  <pre><code>query MssqlHostHierarchyDatabaseListQuery($id: UUID!, $typeFilter: [HierarchyObjectTypeEnum!], $first: Int, $after: String) {
+  hierarchyObject(fid: $id) {
+    id
+    name
+    ... on MssqlHost {
+      databaseDescendantConnection: descendantConnection(typeFilter: $typeFilter, first: $first, after: $after) {
+        edges {
+          node {
+            id
+            name
+            logicalPath {
+              fid
+              name
+              objectType
+              __typename
+            }
+            effectiveSlaDomain {
+              id
+              name
+              __typename
+            }
+            ... on MssqlDatabase {
+              isInAvailabilityGroup
+            }
+            __typename
+          }
+          __typename
+        }
+        pageInfo {
+          endCursor
+          hasNextPage
+          __typename
+        }
+        __typename
+      }
+    }
+    __typename
+  }
+}</code></pre>
+  <p><strong>Variables:</strong></p>
+  <table>
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td><code>id</code></td><td><code>&lt;host fid from Step 1&gt;</code></td></tr>
+    <tr><td><code>typeFilter</code></td><td><code>["Mssql"]</code></td></tr>
+    <tr><td><code>first</code></td><td><code>1000</code></td></tr>
+    <tr><td><code>after</code></td><td><code>&lt;endCursor from previous page, if paginating&gt;</code></td></tr>
+  </table>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">3</span>Identify AG databases and build a deduped AG list</h3>
+  <p>No API call &mdash; this is client-side logic performed on the results of Step 2:</p>
+  <ul class="pill-list">
+    <li>For each database where <code>isInAvailabilityGroup == true</code>, find the entry in its
+    <code>logicalPath</code> with <code>objectType == "MssqlAvailabilityGroup"</code> to get the AG's
+    <code>fid</code> and <code>name</code>.</li>
+    <li>Add a row to the summary list: host name, database name, AG name, AG ID, and the database's current
+    <code>effectiveSlaDomain</code>.</li>
+    <li>Add the AG to a hash map keyed by AG <code>fid</code> so each distinct AG is only recorded (and later
+    assigned) once, regardless of how many member databases reference it.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">4</span>Resolve the SLA Domain name to an ID (only if <code>-SLAName</code> was used)</h3>
+  <p><strong>Function:</strong> <code>Get-SLADomainByName</code></p>
+  <p>Looks up an SLA Domain by exact name to get its ID. Skipped entirely if <code>-SLAId</code> was passed
+  directly instead of <code>-SLAName</code>.</p>
+  <pre><code>query SLADomainsForNameFilterQuery($filter: [GlobalSlaFilterInput!]) {
+  slaDomains(filter: $filter) {
+    nodes {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+}</code></pre>
+  <p><strong>Variables:</strong></p>
+  <table>
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td><code>filter</code></td><td><code>[{ "field": "NAME", "text": "&lt;SLAName&gt;" }]</code></td></tr>
+  </table>
+  <p>The script requires an exact, unique name match &mdash; it throws an error if zero or more than one
+  SLA Domain matches the given name.</p>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">5</span>Decide which AGs to assign (skip already-protected AGs)</h3>
+  <p>No API call. For each distinct AG found in Step 3:</p>
+  <ul class="pill-list">
+    <li>If the AG's current SLA is anything other than blank, <code>UNPROTECTED</code>, or
+    <code>DO_NOT_PROTECT</code>, the AG is considered <strong>already protected</strong>.</li>
+    <li>Already-protected AGs are <strong>skipped by default</strong>.</li>
+    <li>Pass <code>-ForceSLA</code> to override this and assign the given SLA anyway.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label mutation">Mutation</span>
+  <h3><span class="step-num">6</span>Assign the SLA Domain to the Availability Group</h3>
+  <p><strong>Function:</strong> <code>Set-SLAForHierarchy</code></p>
+  <p>Assigns the resolved SLA Domain to the AG object's hierarchy. Because the AG object itself is the
+  target (not the individual databases), this single mutation call protects the AG and all of its current
+  member databases together.</p>
+  <pre><code>mutation AssignSlasForSnappableHierarchiesMutation(
+  $globalExistingSnapshotRetention: GlobalExistingSnapshotRetention,
+  $globalSlaOptionalFid: UUID,
+  $globalSlaAssignType: SlaAssignTypeEnum!,
+  $objectIds: [UUID!]!,
+  $applicableSnappableTypes: [WorkloadLevelHierarchy!],
+  $shouldApplyToExistingSnapshots: Boolean,
+  $shouldApplyToNonPolicySnapshots: Boolean,
+  $userNote: String
+) {
+  assignSlasForSnappableHierarchies(
+    globalExistingSnapshotRetention: $globalExistingSnapshotRetention,
+    globalSlaOptionalFid: $globalSlaOptionalFid,
+    globalSlaAssignType: $globalSlaAssignType,
+    objectIds: $objectIds,
+    applicableSnappableTypes: $applicableSnappableTypes,
+    shouldApplyToExistingSnapshots: $shouldApplyToExistingSnapshots,
+    shouldApplyToNonPolicySnapshots: $shouldApplyToNonPolicySnapshots,
+    userNote: $userNote
+  ) {
+    success
+    __typename
+  }
+}</code></pre>
+  <p><strong>Variables:</strong></p>
+  <table>
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td><code>objectIds</code></td><td><code>["&lt;AG fid&gt;"]</code></td></tr>
+    <tr><td><code>globalSlaAssignType</code></td><td><code>"protectWithSlaId"</code></td></tr>
+    <tr><td><code>globalSlaOptionalFid</code></td><td><code>"&lt;resolved SLA Domain ID&gt;"</code></td></tr>
+    <tr><td><code>shouldApplyToExistingSnapshots</code></td><td><code>false</code></td></tr>
+    <tr><td><code>shouldApplyToNonPolicySnapshots</code></td><td><code>false</code></td></tr>
+    <tr><td><code>userNote</code></td><td><code>""</code></td></tr>
+  </table>
+  <p>Repeated once per distinct AG that was not skipped in Step 5. The mutation's <code>success</code> field
+  determines whether the script reports the assignment as successful or failed.</p>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Output</span>
+  <h3><span class="step-num">7</span>Report results</h3>
+  <p>No API call. The script prints, in order:</p>
+  <ul class="pill-list">
+    <li>A summary table of every AG-member database found (host, database, AG name/ID, current SLA).</li>
+    <li>The deduped list of distinct AGs found, with each AG's current SLA.</li>
+    <li>The assign/skip result for each AG as SLA assignment is attempted.</li>
+  </ul>
+  <p>If more than one host was checked, or <code>-ExportCsv</code> is passed, the summary table is also
+  written to a timestamped CSV file.</p>
+</div>
+
+<footer>
+  Reference: <code>powershell/RSC/Check-Assign-SLA-SQL-AG.ps1</code> &mdash; requires PowerShell 7+ and an
+  RSC Service Account with permissions to view MSSQL hosts/databases/Availability Groups/SLA Domains and to
+  assign SLA Domains.
+</footer>
+
+</div>
+</body>
+</html>
