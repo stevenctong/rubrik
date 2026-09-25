@@ -1,0 +1,2505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RSC GCP Recovery API Integration Guide</title>
+<style>
+  :root {
+    --teal: #00B2A9;
+    --teal-dark: #00857E;
+    --teal-tint: #E6F7F6;
+    --teal-tint-2: #F2FBFA;
+    --ink: #1A1D21;
+    --ink-2: #3D4349;
+    --ink-3: #6B7278;
+    --rule: #E1E5E8;
+    --code-bg: #F6F8F9;
+    --warn-bg: #FFF8E6;
+    --warn-bd: #E8B23A;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: var(--ink-2);
+    background: #fff;
+  }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+
+  /* ---- Masthead ---- */
+  .masthead {
+    border-top: 5px solid var(--teal);
+    background: #fff;
+    border-bottom: 1px solid var(--rule);
+    padding: 34px 0 26px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 28px; }
+  .brandline {
+    font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--teal-dark); margin-bottom: 10px;
+  }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 12px; color: var(--ink); font-weight: 650; letter-spacing: -.01em; }
+  .subtitle { font-size: 16px; color: var(--ink-3); margin: 0; max-width: 70ch; }
+  main { padding: 34px 0 80px; }
+
+  /* ---- Typography ---- */
+  h2 {
+    font-size: 21px; color: var(--ink); font-weight: 650; letter-spacing: -.005em;
+    margin: 52px 0 14px; padding-bottom: 10px; border-bottom: 2px solid var(--teal);
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 26px; height: 26px; padding: 0 7px; flex: none;
+    background: var(--teal); color: #fff; border-radius: 4px;
+    font-size: 13px; font-weight: 700; font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  h3 { font-size: 16px; color: var(--ink); font-weight: 650; margin: 30px 0 10px; }
+  h4 { font-size: 14px; color: var(--ink-2); font-weight: 650; margin: 22px 0 8px;
+       text-transform: uppercase; letter-spacing: .06em; font-size: 12px; color: var(--teal-dark); }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--teal-dark); }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 40px 0; }
+
+  code {
+    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 3px;
+    padding: 1px 5px; font-size: .88em; color: var(--ink);
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-left: 3px solid var(--teal);
+    border-radius: 4px; padding: 16px 18px; overflow-x: auto;
+    font-size: 12.5px; line-height: 1.6; margin: 0 0 16px; color: var(--ink);
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  .codehdr {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    background: var(--teal-tint); border: 1px solid var(--rule); border-bottom: 0;
+    border-left: 3px solid var(--teal);
+    border-radius: 4px 4px 0 0; padding: 7px 14px;
+    font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--teal-dark);
+  }
+  .codehdr + pre { border-radius: 0 0 4px 4px; margin-top: 0; }
+  .codehdr .tag {
+    font-family: ui-monospace, Menlo, Consolas, monospace; text-transform: none;
+    letter-spacing: 0; font-weight: 600; color: var(--ink-3); font-size: 11.5px;
+  }
+
+  /* ---- Callouts ---- */
+  .note, .warn {
+    border-left: 3px solid var(--teal); background: var(--teal-tint-2);
+    padding: 13px 16px; margin: 0 0 18px; border-radius: 0 4px 4px 0; font-size: 14px;
+  }
+  .warn { border-left-color: var(--warn-bd); background: var(--warn-bg); }
+  .note .lbl, .warn .lbl {
+    display: block; font-size: 11px; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--teal-dark); margin-bottom: 4px;
+  }
+  .warn .lbl { color: #8A6100; }
+  .note p:last-child, .warn p:last-child, .note ul:last-child, .warn ul:last-child { margin-bottom: 0; }
+
+  /* ---- Tables ---- */
+  .tablewrap { overflow-x: auto; margin: 0 0 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th {
+    background: var(--teal-tint); color: var(--ink); text-align: left;
+    font-weight: 650; font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+    padding: 9px 12px; border: 1px solid var(--rule); white-space: nowrap;
+  }
+  td { padding: 9px 12px; border: 1px solid var(--rule); vertical-align: top; }
+  tbody tr:nth-child(even) { background: #FAFBFC; }
+  td code { font-size: 12px; white-space: nowrap; }
+  td.wrap-code code { white-space: normal; }
+  .req { color: #B3261E; font-weight: 700; }
+  .opt { color: var(--ink-3); }
+
+  /* ---- TOC ---- */
+  .toc {
+    border: 1px solid var(--rule); border-top: 3px solid var(--teal);
+    border-radius: 4px; padding: 20px 24px; margin: 8px 0 10px; background: #fff;
+  }
+  .toc h2 {
+    border: 0; margin: 0 0 12px; padding: 0; font-size: 12px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--teal-dark); display: block;
+  }
+  .toc ol { margin: 0; padding-left: 0; list-style: none; counter-reset: toc; }
+  .toc li { margin-bottom: 7px; counter-increment: toc; font-size: 14.5px; }
+  .toc li::before {
+    content: counter(toc) ". "; color: var(--teal); font-weight: 700;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .toc a { text-decoration: none; color: var(--ink-2); }
+  .toc a:hover { color: var(--teal-dark); text-decoration: underline; }
+  .toc .sub { color: var(--ink-3); font-size: 13px; }
+
+  /* ---- Flow diagram ---- */
+  /* ---- Figure / diagram ---- */
+  figure.diagram {
+    margin: 0 0 26px; padding: 22px 20px 14px; background: #fff;
+    border: 1px solid var(--rule); border-top: 3px solid var(--teal); border-radius: 4px;
+  }
+  .diagram-scroll { overflow-x: auto; }
+  .diagram-scroll svg { display: block; width: 100%; min-width: 680px; height: auto; }
+  figure.diagram figcaption {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule);
+    font-size: 12.5px; color: var(--ink-3); text-align: center;
+  }
+
+  .flow { margin: 0 0 20px; }
+  .flow-step {
+    display: flex; gap: 14px; align-items: flex-start;
+    padding: 12px 0; border-bottom: 1px solid var(--rule);
+  }
+  .flow-step:last-child { border-bottom: 0; }
+  .flow-step .n {
+    flex: none; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--teal); color: #fff; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; margin-top: 1px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+  }
+  .flow-step .body { flex: 1; min-width: 0; }
+  .flow-step .t { font-weight: 650; color: var(--ink); }
+  .flow-step .d { font-size: 13.5px; color: var(--ink-3); }
+  .flow-step .d code { font-size: 12px; }
+
+  footer {
+    border-top: 1px solid var(--rule); padding: 22px 0 40px;
+    font-size: 12.5px; color: var(--ink-3);
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; }
+    body { font-size: 14.5px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div class="wrap">
+    <div class="brandline">Rubrik Security Cloud &middot; API Reference</div>
+    <h1>GCP Instance Recovery API Integration Guide</h1>
+    <p class="subtitle">
+      A complete, field-by-field walkthrough of the Rubrik Security Cloud (RSC) GraphQL APIs required to
+      authenticate, enumerate Google Compute Engine inventory, select snapshots, and perform bulk
+      instance recovery &mdash; derived from Rubrik's own working GCP Mass Recovery reference application.
+    </p>
+  </div>
+</div>
+
+<main class="wrap">
+
+<div class="note">
+  <span class="lbl">About this document</span>
+  <p>
+    Every GraphQL operation shown here is reproduced <strong>verbatim</strong> from a Rubrik-authored application
+    that performs this exact workflow against production RSC tenants. Nothing in this guide is theoretical or
+    inferred from schema browsing &mdash; if it is written here, it is known to work.
+  </p>
+  <p style="margin-bottom:0">
+    All example request and response payloads use <strong>synthetic placeholder values</strong> (fake UUIDs,
+    fake project names, fake instance names). They illustrate payload shape and field semantics only; they are
+    not captured from any real customer environment.
+  </p>
+</div>
+
+<div class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#flow">The recovery flow at a glance</a></li>
+    <li><a href="#auth">Authenticating to RSC</a> <span class="sub">&mdash; service account, OAuth2, GraphQL transport</span></li>
+    <li><a href="#inventory">Pulling GCP inventory</a> <span class="sub">&mdash; <code>GCPInstancesListQuery</code>, pagination, name search</span></li>
+    <li><a href="#model">The GCE instance data model</a> <span class="sub">&mdash; fields, types, derived values</span></li>
+    <li><a href="#select">Multi-select and initiating recovery</a> <span class="sub">&mdash; UI state model</span></li>
+    <li><a href="#snapshots">Selecting snapshots</a> <span class="sub">&mdash; <code>SnapshotsListSingleQuery</code> + selection algorithm</span></li>
+    <li><a href="#target">Resolving the recovery target</a> <span class="sub">&mdash; project, region, zone, network, machine type</span></li>
+    <li><a href="#mutation">The recovery mutation</a> <span class="sub">&mdash; <code>ExportGCPInstanceMutation</code>, every input field</span></li>
+    <li><a href="#tracking">Tracking recovery progress</a> <span class="sub">&mdash; activity series polling</span></li>
+    <li><a href="#appendix">Appendix: operation quick reference</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ 1 -->
+<h2 id="flow"><span class="num">1</span> The recovery flow at a glance</h2>
+
+<p>
+  Recovering one or many GCE instances from RSC is a sequence of nine API interactions. Steps 1&ndash;3 are
+  one-time per session. Steps 4&ndash;7 gather the inputs the recovery mutation requires. Step 8 is the actual
+  recovery. Step 9 reports progress back to the user.
+</p>
+
+<figure class="diagram">
+<div class="diagram-scroll">
+<svg viewBox="0 0 900 566" role="img" aria-labelledby="flowdiag-title flowdiag-desc"
+     xmlns="http://www.w3.org/2000/svg"
+     font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title id="flowdiag-title">RSC GCP recovery API call sequence</title>
+  <desc id="flowdiag-desc">Five stages: authenticate, discover, resolve target, recover, track. Each stage
+  lists its GraphQL operations and the identifier each one yields for the recovery mutation.</desc>
+
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#00B2A9"/>
+    </marker>
+  </defs>
+
+  <style>
+    .band  { fill:#fff; stroke:#E1E5E8; stroke-width:1; }
+    .band3 { fill:#F2FBFA; stroke:#B7E5E1; stroke-width:1; }
+    .stage { font-size:11px; font-weight:700; letter-spacing:.11em; fill:#00857E; }
+    .op    { font-size:12.5px; fill:#1A1D21; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .yield { font-size:12.5px; fill:#3D4349; }
+    .idv   { font-size:12.5px; fill:#00857E; font-weight:600;
+             font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .badge { fill:#00B2A9; }
+    .bnum  { font-size:13px; font-weight:700; fill:#fff; text-anchor:middle; }
+    .conn  { stroke:#00B2A9; stroke-width:2; marker-end:url(#arw); }
+    .arrow { font-size:12px; fill:#9AA3A8; }
+  </style>
+
+  <!-- stage 1 -->
+  <rect class="band" x="20" y="16" width="860" height="60" rx="6"/>
+  <circle class="badge" cx="50" cy="46" r="13"/><text class="bnum" x="50" y="51">1</text>
+  <text class="stage" x="76" y="38">AUTHENTICATE</text>
+  <text class="op"    x="76" y="60">POST {access_token_uri}</text>
+  <text class="arrow" x="470" y="60">&#8594;</text>
+  <text class="yield" x="500" y="60">bearer token + tenant base URL</text>
+  <line class="conn" x1="50" y1="76" x2="50" y2="92"/>
+
+  <!-- stage 2 -->
+  <rect class="band" x="20" y="96" width="860" height="86" rx="6"/>
+  <circle class="badge" cx="50" cy="126" r="13"/><text class="bnum" x="50" y="131">2</text>
+  <text class="stage" x="76" y="118">DISCOVER</text>
+  <text class="op"    x="76" y="142">GCPInstancesListQuery</text>
+  <text class="arrow" x="470" y="142">&#8594;</text>
+  <text class="yield" x="500" y="142">instance <tspan class="idv">id</tspan> (Rubrik FID)</text>
+  <text class="op"    x="76" y="166">SnapshotsListSingleQuery</text>
+  <text class="arrow" x="470" y="166">&#8594;</text>
+  <text class="yield" x="500" y="166">snapshot <tspan class="idv">id</tspan> (Rubrik FID)</text>
+  <line class="conn" x1="50" y1="182" x2="50" y2="198"/>
+
+  <!-- stage 3 -->
+  <rect class="band3" x="20" y="202" width="860" height="158" rx="6"/>
+  <circle class="badge" cx="50" cy="232" r="13"/><text class="bnum" x="50" y="237">3</text>
+  <text class="stage" x="76" y="224">RESOLVE TARGET</text>
+  <text class="op"    x="76" y="248">ListGCPProjectsQuery</text>
+  <text class="arrow" x="470" y="248">&#8594;</text>
+  <text class="yield" x="500" y="248">project <tspan class="idv">id</tspan> (Rubrik FID) + <tspan class="idv">nativeId</tspan></text>
+  <text class="op"    x="76" y="272">GcpCloudAccountInfoQuery</text>
+  <text class="arrow" x="470" y="272">&#8594;</text>
+  <text class="yield" x="500" y="272">service account email</text>
+  <text class="op"    x="76" y="296">ListGCPRegionsForProjectQuery</text>
+  <text class="arrow" x="470" y="296">&#8594;</text>
+  <text class="yield" x="500" y="296">region + zone names</text>
+  <text class="op"    x="76" y="320">ListGCPNetworksQuery</text>
+  <text class="arrow" x="470" y="320">&#8594;</text>
+  <text class="yield" x="500" y="320">network + subnet names</text>
+  <text class="op"    x="76" y="344">ListGCPMachineTypeQuery</text>
+  <text class="arrow" x="470" y="344">&#8594;</text>
+  <text class="yield" x="500" y="344">compatible machine type names</text>
+  <line class="conn" x1="50" y1="360" x2="50" y2="394"/>
+
+  <!-- stage 4 -->
+  <rect class="band" x="20" y="398" width="860" height="60" rx="6" stroke="#00B2A9" stroke-width="2"/>
+  <circle class="badge" cx="50" cy="428" r="13"/><text class="bnum" x="50" y="433">4</text>
+  <text class="stage" x="76" y="420">RECOVER</text>
+  <text class="op"    x="76" y="442">ExportGCPInstanceMutation</text>
+  <text class="arrow" x="470" y="442">&#8594;</text>
+  <text class="yield" x="500" y="442"><tspan class="idv">jobId</tspan> &#183; one call per instance, in parallel</text>
+  <line class="conn" x1="50" y1="458" x2="50" y2="474"/>
+
+  <!-- stage 5 -->
+  <rect class="band" x="20" y="478" width="860" height="60" rx="6"/>
+  <circle class="badge" cx="50" cy="508" r="13"/><text class="bnum" x="50" y="513">5</text>
+  <text class="stage" x="76" y="500">TRACK</text>
+  <text class="op"    x="76" y="522">EventSeriesListQuery</text>
+  <text class="arrow" x="470" y="522">&#8594;</text>
+  <text class="yield" x="500" y="522">status, until every instance is terminal</text>
+
+  <!-- feed annotation -->
+  <path d="M 884 250 Q 896 250 896 300 L 896 380 Q 896 428 884 428"
+        fill="none" stroke="#00B2A9" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arw)"/>
+</svg>
+</div>
+<figcaption>
+  Stage 3 exists solely to produce the inputs stage 4 consumes. Every value in the recovery
+  mutation originates in a response from stage 2 or 3 &mdash; none of it can be typed by hand.
+</figcaption>
+</figure>
+
+<div class="flow">
+  <div class="flow-step"><div class="n">1</div><div class="body">
+    <div class="t">Exchange service account credentials for a bearer token</div>
+    <div class="d">POST to <code>access_token_uri</code> with <code>grant_type: client_credentials</code></div>
+  </div></div>
+  <div class="flow-step"><div class="n">2</div><div class="body">
+    <div class="t">Derive the GraphQL endpoint</div>
+    <div class="d">Strip <code>/api/client_token</code> from the token URI, append <code>/api/graphql</code></div>
+  </div></div>
+  <div class="flow-step"><div class="n">3</div><div class="body">
+    <div class="t">List protected GCE instances</div>
+    <div class="d"><code>GCPInstancesListQuery</code> &rarr; <code>gcpNativeGceInstances</code></div>
+  </div></div>
+  <div class="flow-step"><div class="n">4</div><div class="body">
+    <div class="t">User multi-selects instances to recover</div>
+    <div class="d">Client-side only. No API call. Track a set of RSC instance <code>id</code> values.</div>
+  </div></div>
+  <div class="flow-step"><div class="n">5</div><div class="body">
+    <div class="t">List snapshots for each selected instance and pick one per instance</div>
+    <div class="d"><code>SnapshotsListSingleQuery</code> &rarr; filter to Primary-resident snapshots &rarr; apply Latest / Before / After rule</div>
+  </div></div>
+  <div class="flow-step"><div class="n">6</div><div class="body">
+    <div class="t">User picks a target GCP project</div>
+    <div class="d"><code>ListGCPProjectsQuery</code></div>
+  </div></div>
+  <div class="flow-step"><div class="n">7</div><div class="body">
+    <div class="t">Resolve target infrastructure for that project</div>
+    <div class="d"><code>GcpCloudAccountInfoQuery</code> + <code>ListGCPRegionsForProjectQuery</code> + <code>ListGCPNetworksQuery</code>, then <code>ListGCPMachineTypeQuery</code> per instance</div>
+  </div></div>
+  <div class="flow-step"><div class="n">8</div><div class="body">
+    <div class="t">Submit one recovery mutation per instance</div>
+    <div class="d"><code>ExportGCPInstanceMutation</code> &rarr; returns a <code>jobId</code> per instance</div>
+  </div></div>
+  <div class="flow-step"><div class="n">9</div><div class="body">
+    <div class="t">Poll activity series until every instance reaches a terminal state</div>
+    <div class="d"><code>EventSeriesListQuery</code> / <code>EventSeriesDetailsQuery</code></div>
+  </div></div>
+</div>
+
+<div class="note">
+  <span class="lbl">Bulk model</span>
+  <p style="margin-bottom:0">
+    There is no single "recover N instances" mutation. Bulk recovery is implemented client-side as
+    <strong>N independent <code>ExportGCPInstanceMutation</code> calls issued in parallel</strong>, each returning its own
+    <code>jobId</code>. This is important for error handling: a failure on one instance does not affect the others,
+    so per-instance success/failure must be tracked independently.
+  </p>
+</div>
+
+<!-- ============================================================ 2 -->
+<h2 id="auth"><span class="num">2</span> Authenticating to RSC</h2>
+
+<h3>2.1 The RSC service account</h3>
+
+<p>
+  RSC authentication uses a <strong>service account</strong>, created by an RSC administrator under
+  <em>Settings &rarr; Users &amp; Access &rarr; Service Accounts</em>. On creation, RSC issues a one-time JSON download.
+  This JSON is the only credential material the integration needs.
+</p>
+
+<div class="codehdr"><span>Service account JSON</span><span class="tag">synthetic example</span></div>
+<pre><code>{
+  "client_id":        "client|Ab1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV",
+  "client_secret":    "xY9_EXAMPLE_SECRET_VALUE_DO_NOT_USE_zW4",
+  "name":             "gce-recovery-integration",
+  "access_token_uri": "https://example-tenant.my.rubrik.com/api/client_token"
+}</code></pre>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th style="width:190px">Field</th><th style="width:90px">Required</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>client_id</code></td><td class="req">Yes</td><td>OAuth2 client identifier. Always prefixed <code>client|</code>.</td></tr>
+    <tr><td><code>client_secret</code></td><td class="req">Yes</td><td>OAuth2 client secret. Shown once at creation and never retrievable again.</td></tr>
+    <tr><td><code>access_token_uri</code></td><td class="req">Yes</td><td>Tenant-specific token endpoint. <strong>This is also the canonical source of the tenant's base URL</strong> &mdash; do not ask the user to type the RSC URL separately.</td></tr>
+    <tr><td><code>name</code></td><td class="opt">No</td><td>Human-readable label. Informational only; not used by the API.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="lbl">Recommended UX</span>
+  <p style="margin-bottom:0">
+    Accept the service account JSON as a file upload or pasted blob and validate that
+    <code>client_id</code>, <code>client_secret</code>, and <code>access_token_uri</code> are all present before
+    attempting authentication. The reference app rejects the file up front and names the missing fields,
+    which is far clearer than surfacing an opaque 400 from the token endpoint.
+  </p>
+</div>
+
+<h3>2.2 Deriving the tenant base URL</h3>
+
+<p>
+  Every tenant has its own hostname. Derive it from <code>access_token_uri</code> by stripping the
+  <code>/api/client_token</code> suffix. Never hardcode a hostname.
+</p>
+
+<div class="codehdr"><span>Base URL derivation</span></div>
+<pre><code>rscBaseUrl = access_token_uri.replaceSuffix("/api/client_token", "")
+
+  "https://example-tenant.my.rubrik.com/api/client_token"
+    -&gt; rscBaseUrl   = "https://example-tenant.my.rubrik.com"
+    -&gt; graphqlUrl   = "https://example-tenant.my.rubrik.com/api/graphql"</code></pre>
+
+<h3>2.3 The token exchange</h3>
+
+<p>
+  A standard OAuth2 <code>client_credentials</code> grant, but note that RSC expects the parameters as a
+  <strong>JSON body</strong>, not as form-encoded data.
+</p>
+
+<div class="codehdr"><span>Request</span><span class="tag">POST {access_token_uri}</span></div>
+<pre><code>POST https://example-tenant.my.rubrik.com/api/client_token
+Content-Type: application/json
+Accept: application/json
+
+{
+  "grant_type":    "client_credentials",
+  "client_id":     "client|Ab1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV",
+  "client_secret": "xY9_EXAMPLE_SECRET_VALUE_DO_NOT_USE_zW4"
+}</code></pre>
+
+<div class="codehdr"><span>Response</span><span class="tag">200 OK &middot; synthetic example</span></div>
+<pre><code>{
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.EXAMPLE_TOKEN_PAYLOAD.EXAMPLE_SIG",
+  "token_type":   "Bearer",
+  "expires_in":   86400
+}</code></pre>
+
+<h3>2.4 Calling GraphQL</h3>
+
+<p>
+  Every subsequent operation &mdash; query and mutation alike &mdash; is a <code>POST</code> to the single
+  <code>/api/graphql</code> endpoint with the bearer token attached.
+</p>
+
+<div class="codehdr"><span>GraphQL request envelope</span><span class="tag">POST {rscBaseUrl}/api/graphql</span></div>
+<pre><code>POST https://example-tenant.my.rubrik.com/api/graphql?op=GCPInstancesListQuery
+Content-Type:  application/json
+Accept:        application/json
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+{
+  "operationName": "GCPInstancesListQuery",
+  "variables":     { "first": 500, "sortBy": "GCP_INSTANCE_NATIVE_NAME", "sortOrder": "ASC" },
+  "query":         "query GCPInstancesListQuery($first: Int, ...) { ... }"
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">The <code>?op=</code> query parameter</span>
+  <p style="margin-bottom:0">
+    The reference app appends <code>?op={operationName}</code> to the GraphQL URL. This is
+    <strong>not required</strong> by the API &mdash; the operation is resolved from the request body. It exists purely so
+    that operations are distinguishable in browser devtools, proxy logs, and HAR captures, where every
+    GraphQL call would otherwise show as an identical <code>POST /api/graphql</code>. Recommended, but optional.
+  </p>
+</div>
+
+<h3>2.5 Error handling</h3>
+
+<p>
+  GraphQL returns HTTP 200 for application-level errors. A response is only successful if
+  <strong>both</strong> the HTTP status is 2xx <strong>and</strong> the body contains no <code>errors</code> array.
+</p>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">auth + transport layer</span></div>
+<pre><code>function authenticate(serviceAccountJson):
+    required = ["client_id", "client_secret", "access_token_uri"]
+    missing  = required.filter(f =&gt; not serviceAccountJson.has(f))
+    if missing.isNotEmpty():
+        fail("Service account JSON missing: " + missing.join(", "))
+
+    rscBaseUrl = serviceAccountJson.access_token_uri
+                    .replaceSuffix("/api/client_token", "")
+
+    response = httpPost(
+        url     = serviceAccountJson.access_token_uri,
+        headers = { "Content-Type": "application/json",
+                    "Accept":       "application/json" },
+        body    = { grant_type:    "client_credentials",
+                    client_id:     serviceAccountJson.client_id,
+                    client_secret: serviceAccountJson.client_secret })
+
+    if not response.ok:
+        fail("Token request failed: " + response.status + " " + response.body)
+
+    token = parseJson(response.body).access_token
+    if token is null:
+        fail("Token response contained no access_token")
+
+    return { token: token, baseUrl: rscBaseUrl }
+
+
+function gql(operationName, query, variables):
+    response = httpPost(
+        url     = rscBaseUrl + "/api/graphql?op=" + operationName,
+        headers = { "Content-Type":  "application/json",
+                    "Accept":        "application/json",
+                    "Authorization": "Bearer " + token },
+        body    = { operationName: operationName,
+                    variables:     variables,
+                    query:         query })
+
+    if not response.ok:
+        fail("GraphQL HTTP " + response.status)
+
+    payload = parseJson(response.body)
+
+    // GraphQL reports application errors with HTTP 200.
+    if payload.errors is present:
+        fail(payload.errors[0].message)
+
+    return payload.data</code></pre>
+
+<div class="note">
+  <span class="lbl">Token lifetime</span>
+  <p style="margin-bottom:0">
+    Tokens are typically valid for 24 hours. For a long-running service, cache the token with its
+    <code>expires_in</code> and re-authenticate proactively before expiry, or reactively on an HTTP 401.
+    Do not re-authenticate on every call.
+  </p>
+</div>
+
+<div class="warn">
+  <span class="lbl">Browser-based clients: CORS</span>
+  <p style="margin-bottom:0">
+    RSC does not send permissive CORS headers, so direct browser-to-RSC calls from a third-party origin
+    are blocked. Any browser-delivered integration must proxy RSC traffic through its own backend.
+    The reference app works around this for local use with an Electron main-process bridge or a local
+    Python proxy; neither approach is appropriate for a production SaaS product. <strong>Make RSC calls
+    server-side.</strong> This also keeps the service account secret off the client.
+  </p>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 id="inventory"><span class="num">3</span> Pulling GCP inventory</h2>
+
+<p>
+  A single query returns every GCE instance RSC knows about, across all onboarded GCP projects and cloud
+  accounts. This is the list the user selects from.
+</p>
+
+<div class="codehdr"><span>GCPInstancesListQuery</span><span class="tag">verbatim from reference app</span></div>
+<pre><code>query GCPInstancesListQuery($first: Int, $sortBy: GcpNativeGceInstanceSortFields, $sortOrder: SortOrder) {
+  gcpNativeGceInstances(first: $first, sortBy: $sortBy, sortOrder: $sortOrder) {
+    edges {
+      node {
+        id nativeId nativeName vpcName region zone machineType isRelic
+        gcpProjectDetails { id nativeName nativeId }
+        effectiveSlaDomain { id name }
+        allOrgs { fullName }
+      }
+    }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Variables</span></div>
+<pre><code>{
+  "first":     500,
+  "sortBy":    "GCP_INSTANCE_NATIVE_NAME",
+  "sortOrder": "ASC"
+}</code></pre>
+
+<div class="warn">
+  <span class="lbl">Known limitation &mdash; do not copy this verbatim</span>
+  <p>
+    The reference app requests <code>first: 500</code> and does <strong>not</strong> paginate. It is a field tool
+    sized for the environments it was built for. A production integration must implement cursor pagination:
+    add <code>pageInfo { endCursor hasNextPage }</code> to the connection, add an <code>$after: String</code>
+    variable, and loop until <code>hasNextPage</code> is false.
+  </p>
+  <p style="margin-bottom:0">
+    The same cursor pattern is already demonstrated correctly in the snapshot query in
+    <a href="#snapshots">section 6</a> &mdash; reuse that loop shape here. Better still, avoid bulk-loading
+    the inventory at all and let the server filter: see <a href="#inventory">section 3.2</a>.
+  </p>
+</div>
+
+<h3>3.1 Paginated variant</h3>
+
+<div class="codehdr"><span>GCPInstancesListQuery</span><span class="tag">recommended for production</span></div>
+<pre><code>query GCPInstancesListQuery(
+  $first: Int, $after: String,
+  $sortBy: GcpNativeGceInstanceSortFields, $sortOrder: SortOrder
+) {
+  gcpNativeGceInstances(first: $first, after: $after, sortBy: $sortBy, sortOrder: $sortOrder) {
+    edges {
+      node {
+        id nativeId nativeName vpcName region zone machineType isRelic
+        gcpProjectDetails { id nativeName nativeId }
+        effectiveSlaDomain { id name }
+        allOrgs { fullName }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">full inventory fetch</span></div>
+<pre><code>function loadInventory():
+    instances   = []
+    after       = null
+    hasNextPage = true
+
+    while hasNextPage:
+        vars = { first:     100,
+                 after:     after,
+                 sortBy:    "GCP_INSTANCE_NATIVE_NAME",
+                 sortOrder: "ASC" }
+
+        data = gql("GCPInstancesListQuery", GCP_INSTANCES_QUERY, vars)
+        conn = data.gcpNativeGceInstances
+
+        instances.addAll(conn.edges.map(edge =&gt; edge.node))
+
+        hasNextPage = conn.pageInfo.hasNextPage
+        after       = conn.pageInfo.endCursor
+
+    // Relics are instances deleted at the source but whose snapshots RSC still retains.
+    // They are still recoverable. Surface them, but consider flagging them in the UI.
+    return instances</code></pre>
+
+<h3>3.2 Searching for specific instances</h3>
+
+<p>
+  The reference app fetches the full inventory once and filters it in the browser. That is workable for a
+  single-operator tool, but for a product-scale integration &mdash; and for any tenant with thousands of
+  instances &mdash; you want the <strong>server</strong> to do the filtering. The
+  <code>gcpNativeGceInstances</code> connection accepts a <code>gceInstanceFilters</code> argument for exactly
+  this, and it is the fastest way for a user to zero in on the handful of instances they intend to recover.
+</p>
+
+<div class="codehdr"><span>GCPInstancesSearchQuery</span><span class="tag">filterable variant</span></div>
+<pre><code>query GCPInstancesSearchQuery(
+  $first: Int, $after: String,
+  $sortBy: GcpNativeGceInstanceSortFields, $sortOrder: SortOrder,
+  $filters: GcpNativeGceInstanceFilters
+) {
+  gcpNativeGceInstances(
+    first: $first, after: $after,
+    sortBy: $sortBy, sortOrder: $sortOrder,
+    gceInstanceFilters: $filters
+  ) {
+    edges {
+      cursor
+      node {
+        id nativeId nativeName vpcName region zone machineType isRelic
+        gcpProjectDetails { id nativeName nativeId }
+        effectiveSlaDomain { id name }
+        allOrgs { fullName }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">Argument naming</span>
+  <p style="margin-bottom:0">
+    Note the asymmetry: the GraphQL <em>variable</em> is conventionally called <code>$filters</code>, but the
+    <em>argument</em> on the connection is <code>gceInstanceFilters</code>. Getting this wrong produces an
+    "unknown argument" error rather than a silently unfiltered result.
+  </p>
+</div>
+
+<h4>Search by name or ID substring</h4>
+
+<p>
+  The single most useful filter. <code>nameOrIdSubstring</code> matches against both the instance name and
+  its native ID, as a case-insensitive substring &mdash; so it behaves like the search box in the RSC UI.
+</p>
+
+<div class="codehdr"><span>Variables</span><span class="tag">name search &middot; synthetic example</span></div>
+<pre><code>{
+  "first":     50,
+  "sortBy":    "GCP_INSTANCE_NATIVE_NAME",
+  "sortOrder": "ASC",
+  "filters": {
+    "nameOrIdSubstringFilter": { "nameOrIdSubstring": "web-server" },
+    "relicFilter":             { "relic": false }
+  }
+}</code></pre>
+
+<p>
+  This returns every live instance whose name or native ID contains <code>web-server</code>. Pairing the
+  substring filter with <code>relicFilter</code> is the common case: it excludes instances that have been
+  deleted in GCP, which is usually what a user searching for a recovery target wants. Omit
+  <code>relicFilter</code> entirely to include relics, or set <code>relic: true</code> to search relics
+  exclusively.
+</p>
+
+<h4>The complete filter object</h4>
+
+<p>
+  All fields on <code>GcpNativeGceInstanceFilters</code> are optional and combine with <strong>AND</strong>
+  semantics. Within a single list-valued filter the values are <strong>OR</strong>-ed.
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th style="width:200px">Filter</th><th style="width:255px">Shape</th><th>Matches</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>nameOrIdSubstringFilter</code></td>
+      <td class="wrap-code"><code>{ nameOrIdSubstring: String! }</code></td>
+      <td>Instances whose <code>nativeName</code> or <code>nativeId</code> contains the substring.</td>
+    </tr>
+    <tr>
+      <td><code>relicFilter</code></td>
+      <td class="wrap-code"><code>{ relic: Boolean! }</code></td>
+      <td><code>false</code> for live instances only, <code>true</code> for relics only. Omit for both.</td>
+    </tr>
+    <tr>
+      <td><code>projectFilter</code></td>
+      <td class="wrap-code"><code>{ projectIds: [String!]! }</code></td>
+      <td>Instances in the given projects. Takes RSC project FIDs.</td>
+    </tr>
+    <tr>
+      <td><code>regionFilter</code></td>
+      <td class="wrap-code"><code>{ regions: [String!]! }</code></td>
+      <td>Instances in the given regions, e.g. <code>["us-central1","us-east4"]</code>.</td>
+    </tr>
+    <tr>
+      <td><code>machineTypeFilter</code></td>
+      <td class="wrap-code"><code>{ machineTypes: [String!]! }</code></td>
+      <td>Instances of the given machine types, e.g. <code>["n2-standard-4"]</code>.</td>
+    </tr>
+    <tr>
+      <td><code>networkFilter</code></td>
+      <td class="wrap-code"><code>{ networkNames: [String!]! }</code></td>
+      <td>Instances attached to the given VPC networks.</td>
+    </tr>
+    <tr>
+      <td><code>effectiveSlaFilter</code></td>
+      <td class="wrap-code"><code>{ effectiveSlaIds: [String!]! }</code></td>
+      <td>Instances with the given effective SLA Domains. Takes SLA Domain IDs, not names.</td>
+    </tr>
+    <tr>
+      <td><code>labelFilter</code></td>
+      <td class="wrap-code"><code>{ labelFilterParams: [{ filterType, labelKey, labelValue }] }</code></td>
+      <td>Instances carrying the given GCP labels.</td>
+    </tr>
+    <tr>
+      <td><code>orgFilter</code></td>
+      <td class="wrap-code"><code>{ orgIds: [String!]! }</code></td>
+      <td>Multi-tenant deployments only. Restricts to the given RSC Organizations.</td>
+    </tr>
+    <tr>
+      <td><code>fileIndexingFilter</code></td>
+      <td class="wrap-code"><code>{ statuses: [GcpNativeFileIndexingStatus!]! }</code></td>
+      <td>By file-indexing state: <code>ENABLED</code>, <code>DISABLED</code>, <code>NOT_SPECIFIED</code>.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="codehdr"><span>Variables</span><span class="tag">combined filters &middot; synthetic example</span></div>
+<pre><code>// "Live n2-standard-4 instances in us-central1 whose name contains 'db',
+//  within the production project."
+{
+  "first":     50,
+  "sortBy":    "GCP_INSTANCE_NATIVE_NAME",
+  "sortOrder": "ASC",
+  "filters": {
+    "nameOrIdSubstringFilter": { "nameOrIdSubstring": "db" },
+    "relicFilter":             { "relic": false },
+    "regionFilter":            { "regions": ["us-central1"] },
+    "machineTypeFilter":       { "machineTypes": ["n2-standard-4"] },
+    "projectFilter":           { "projectIds": ["1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"] }
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">Omit rather than null</span>
+  <p style="margin-bottom:0">
+    An unused filter can be sent as <code>null</code> or left out of the object entirely; both are treated as
+    "no restriction". Sending an <em>empty list</em> is different and should be avoided &mdash; for example
+    <code>{ "regions": [] }</code> is not the same as omitting <code>regionFilter</code>. Build the filter
+    object by adding only the criteria the user actually set.
+  </p>
+</div>
+
+<h4>Available sort fields</h4>
+
+<p>
+  <code>sortBy</code> accepts any value of the <code>GcpNativeGceInstanceSortFields</code> enum, paired with
+  <code>sortOrder</code> of <code>ASC</code> or <code>DESC</code>:
+</p>
+
+<div class="codehdr"><span>GcpNativeGceInstanceSortFields</span><span class="tag">enum values</span></div>
+<pre><code>GCP_INSTANCE_NATIVE_NAME     GCP_INSTANCE_NATIVE_ID
+GCP_INSTANCE_REGION          GCP_INSTANCE_TYPE
+GCP_INSTANCE_NETWORK_NAME    GCP_INSTANCE_PROJECT_NAME
+EFFECTIVE_SLA_DOMAIN         ASSIGNED_SLA_DOMAIN</code></pre>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">search-driven instance picker</span></div>
+<pre><code>function searchInstances(criteria, pageSize = 50, after = null):
+    filters = {}
+
+    // Only include criteria the user actually supplied.
+    if criteria.searchText is not empty:
+        filters.nameOrIdSubstringFilter = { nameOrIdSubstring: criteria.searchText }
+
+    if criteria.includeRelics is false:
+        filters.relicFilter = { relic: false }
+
+    if criteria.regions is not empty:
+        filters.regionFilter = { regions: criteria.regions }
+
+    if criteria.projectRubrikIds is not empty:
+        filters.projectFilter = { projectIds: criteria.projectRubrikIds }
+
+    if criteria.machineTypes is not empty:
+        filters.machineTypeFilter = { machineTypes: criteria.machineTypes }
+
+    data = gql("GCPInstancesSearchQuery", GCP_INSTANCES_SEARCH_QUERY, {
+        first:     pageSize,
+        after:     after,
+        sortBy:    "GCP_INSTANCE_NATIVE_NAME",
+        sortOrder: "ASC",
+        filters:   filters
+    })
+
+    conn = data.gcpNativeGceInstances
+
+    return {
+        instances:   conn.edges.map(e =&gt; e.node),
+        nextCursor:  conn.pageInfo.hasNextPage ? conn.pageInfo.endCursor : null
+    }</code></pre>
+
+<div class="note">
+  <span class="lbl">Selection state and search</span>
+  <p style="margin-bottom:0">
+    If your picker is search-driven, remember that a user will typically search, select a few instances,
+    then search again for the next set. Because selection is a set of RSC instance FIDs
+    (<a href="#select">section 5</a>) and not a property of the rendered rows, selections survive a change
+    of search terms for free &mdash; but you must keep the selected <em>instance objects</em> cached too, since
+    they will no longer be in the current result page when the batch is finally submitted.
+  </p>
+</div>
+
+<h3>3.3 Example response</h3>
+
+<div class="codehdr"><span>Response</span><span class="tag">200 OK &middot; synthetic example</span></div>
+<pre><code>{
+  "data": {
+    "gcpNativeGceInstances": {
+      "edges": [
+        {
+          "node": {
+            "id":          "8f3d1c2a-4b5e-4d6f-9a70-1e2b3c4d5e6f",
+            "nativeId":    "4728193056274851930",
+            "nativeName":  "web-server-01",
+            "vpcName":     "example-vpc-prod",
+            "region":      "us-central1",
+            "zone":        "us-central1-a",
+            "machineType": "n2-standard-4",
+            "isRelic":     false,
+            "gcpProjectDetails": {
+              "id":         "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "nativeName": "example-prod-project",
+              "nativeId":   "example-prod-project-482910"
+            },
+            "effectiveSlaDomain": {
+              "id":   "7c8d9e0f-1a2b-4c3d-5e6f-7a8b9c0d1e2f",
+              "name": "Gold - 30 Day Retention"
+            },
+            "allOrgs": [ { "fullName": "Example Organization" } ]
+          }
+        },
+        {
+          "node": {
+            "id":          "2b4e6a8c-0d1f-4e3a-b5c7-d9e1f3a5b7c9",
+            "nativeId":    "1938475620394857102",
+            "nativeName":  "db-primary-02",
+            "vpcName":     "example-vpc-prod",
+            "region":      "us-east4",
+            "zone":        "us-east4-b",
+            "machineType": "n2-highmem-8",
+            "isRelic":     false,
+            "gcpProjectDetails": {
+              "id":         "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+              "nativeName": "example-prod-project",
+              "nativeId":   "example-prod-project-482910"
+            },
+            "effectiveSlaDomain": {
+              "id":   "7c8d9e0f-1a2b-4c3d-5e6f-7a8b9c0d1e2f",
+              "name": "Gold - 30 Day Retention"
+            },
+            "allOrgs": [ { "fullName": "Example Organization" } ]
+          }
+        },
+        {
+          "node": {
+            "id":          "5c7e9b1d-3f5a-4b7c-9d1e-2f4a6b8c0d2e",
+            "nativeId":    "8273645019283746501",
+            "nativeName":  "scratch-builder-07",
+            "vpcName":     "example-vpc-dev",
+            "region":      "us-central1",
+            "zone":        "us-central1-c",
+            "machineType": "e2-medium",
+            "isRelic":     false,
+            "gcpProjectDetails": {
+              "id":         "9f8e7d6c-5b4a-4392-8172-6a5b4c3d2e1f",
+              "nativeName": "example-dev-project",
+              "nativeId":   "example-dev-project-771043"
+            },
+            "effectiveSlaDomain": {
+              "id":   "00000000-0000-0000-0000-000000000000",
+              "name": "UNPROTECTED"
+            },
+            "allOrgs": [ { "fullName": "Example Organization" } ]
+          }
+        }
+      ]
+    }
+  }
+}</code></pre>
+
+<!-- ============================================================ 4 -->
+<h2 id="model"><span class="num">4</span> The GCE instance data model</h2>
+
+<p>
+  There is <strong>no separate "instance detail" query</strong> in this workflow. The inventory query above returns
+  the complete set of attributes the recovery flow consumes; everything else the UI displays is derived
+  client-side from those fields. This section is the authoritative field reference.
+</p>
+
+<h3>4.1 Field reference</h3>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th style="width:190px">Field</th><th style="width:100px">Type</th><th>Meaning and downstream use</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>id</code></td><td><code>UUID</code></td>
+      <td><strong>The RSC object identifier (FID).</strong> This is the key that ties everything together: it is the
+          <code>workloadId</code> for snapshot lookup, the <code>objectFid</code> for activity filtering, and the
+          identity you track in your own selection state. <strong>Not</strong> a GCP identifier.</td>
+    </tr>
+    <tr>
+      <td><code>nativeId</code></td><td><code>String</code></td>
+      <td>The GCP-assigned numeric instance ID. Useful for correlating with data your platform already holds
+          from the GCP API. Not used by any recovery call.</td>
+    </tr>
+    <tr>
+      <td><code>nativeName</code></td><td><code>String</code></td>
+      <td>The GCE instance name as it exists in GCP. Primary display label, and the base string for
+          generating the recovered instance's target name. See <a href="#mutation">section 8.5</a>.</td>
+    </tr>
+    <tr>
+      <td><code>vpcName</code></td><td><code>String</code></td>
+      <td>Name of the VPC network the source instance is attached to. Informational &mdash; the recovery target
+          network is chosen independently and is not defaulted from this.</td>
+    </tr>
+    <tr>
+      <td><code>region</code></td><td><code>String</code></td>
+      <td>Source GCP region, e.g. <code>us-central1</code>. Informational for recovery; the target region is
+          chosen by the user and may differ.</td>
+    </tr>
+    <tr>
+      <td><code>zone</code></td><td><code>String</code></td>
+      <td>Source GCP zone, e.g. <code>us-central1-a</code>. Informational; the target zone is chosen separately
+          and drives machine-type compatibility.</td>
+    </tr>
+    <tr>
+      <td><code>machineType</code></td><td><code>String</code></td>
+      <td>Source machine type, e.g. <code>n2-standard-4</code>. <strong>Used as the default target machine type</strong>
+          and must be handled specially when it is not offered in the target zone (see section 7.5).</td>
+    </tr>
+    <tr>
+      <td><code>isRelic</code></td><td><code>Boolean</code></td>
+      <td><code>true</code> when the source instance no longer exists in GCP but RSC still retains its snapshots.
+          Relics remain fully recoverable. Worth surfacing distinctly in the UI, since recovering a relic is
+          a meaningfully different user intent than recovering a live instance.</td>
+    </tr>
+    <tr>
+      <td><code>gcpProjectDetails.id</code></td><td><code>UUID</code></td>
+      <td>RSC's internal identifier for the source GCP project.</td>
+    </tr>
+    <tr>
+      <td><code>gcpProjectDetails.nativeName</code></td><td><code>String</code></td>
+      <td>Human-readable GCP project name. Primary grouping/filtering dimension in the inventory UI.</td>
+    </tr>
+    <tr>
+      <td><code>gcpProjectDetails.nativeId</code></td><td><code>String</code></td>
+      <td>The GCP project ID string, e.g. <code>example-prod-project-482910</code>.</td>
+    </tr>
+    <tr>
+      <td><code>effectiveSlaDomain.id</code></td><td><code>UUID</code></td>
+      <td>SLA Domain identifier. The all-zero UUID indicates no SLA is assigned.</td>
+    </tr>
+    <tr>
+      <td><code>effectiveSlaDomain.name</code></td><td><code>String</code></td>
+      <td>SLA Domain name, or the literal string <code>UNPROTECTED</code>. See 4.2 &mdash; this is the protection-status signal.</td>
+    </tr>
+    <tr>
+      <td><code>allOrgs[].fullName</code></td><td><code>[String]</code></td>
+      <td>Organization(s) the object belongs to. Relevant only in multi-tenant / RSC Organizations deployments.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="lbl">The one field that matters most</span>
+  <p style="margin-bottom:0">
+    <code>id</code> is the RSC FID and is the join key across the entire workflow. Snapshot lookup takes it as
+    <code>workloadId</code>. Activity polling takes it as <code>objectFid</code>. Your internal selection state should
+    be keyed on it. Do not substitute <code>nativeId</code> anywhere &mdash; it is a GCP identifier and RSC will not
+    resolve it.
+  </p>
+</div>
+
+<h3>4.2 Values derived client-side</h3>
+
+<p>
+  Two presentation values in the reference app are computed locally rather than returned by the API. If you
+  want parity with the Rubrik UI, replicate them.
+</p>
+
+<h4>Protection status</h4>
+<p>
+  RSC does not return a boolean "protected" flag. Protection status is inferred from the SLA Domain name:
+</p>
+
+<div class="codehdr"><span>Pseudocode</span></div>
+<pre><code>isProtected(instance) =
+    instance.effectiveSlaDomain?.name is present
+    and instance.effectiveSlaDomain.name != "UNPROTECTED"</code></pre>
+
+<p>
+  An unprotected instance may still have snapshots (from a previously assigned SLA or from on-demand
+  backups), so <strong>do not use protection status to decide whether an instance is recoverable</strong>.
+  Recoverability is determined solely by whether it has an eligible snapshot (section 6).
+</p>
+
+<h4>Machine type family</h4>
+<p>
+  Machine type lists in the target zone can run to hundreds of entries. The reference app groups them by
+  family for the picker:
+</p>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">machineTypeFamily()</span></div>
+<pre><code>function machineTypeFamily(machineType):
+    if machineType is empty: return "Other"
+
+    // Match a leading letter, digits, optional trailing letter:
+    //   "n2-standard-4"   -&gt; "N2"
+    //   "e2-medium"       -&gt; "E2"
+    //   "c3d-highmem-16"  -&gt; "C3D"
+    //   "n2d-standard-2"  -&gt; "N2D"
+    match = regexMatch(machineType, "^([a-z]\d+[a-z]?)", caseInsensitive)
+
+    return match ? uppercase(match.group(1)) : "Other"</code></pre>
+
+<!-- ============================================================ 5 -->
+<h2 id="select"><span class="num">5</span> Multi-select and initiating recovery</h2>
+
+<p>
+  Selection is entirely client-side; no API is involved. The model is simple, but two details matter for
+  correctness downstream.
+</p>
+
+<h3>5.1 State model</h3>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">selection state</span></div>
+<pre><code>// The set of RSC instance IDs the user has selected.
+selectedInstanceIds : Set&lt;UUID&gt;
+
+// Per-instance recovery inputs, keyed by the same RSC instance ID.
+// Populated only once the user reaches target configuration.
+perInstanceConfig : Map&lt;UUID, {
+    targetName  : String,   // generated, user-editable
+    machineType : String    // defaulted from source, user-editable
+}&gt;
+
+// The snapshot chosen for each instance, keyed by RSC instance ID.
+selectedSnapshots : Map&lt;UUID, {
+    id         : UUID,
+    date       : ISO8601 String,
+    type       : "SOURCE",
+    isOnDemand : Boolean
+}&gt;
+
+
+function toggleSelection(instanceId):
+    if selectedInstanceIds.contains(instanceId):
+        selectedInstanceIds.remove(instanceId)
+    else:
+        selectedInstanceIds.add(instanceId)
+
+
+function toggleSelectAll(checked):
+    // IMPORTANT: operate on the CURRENTLY FILTERED view, not the full inventory.
+    visible = getFilteredInstances()
+
+    for instance in visible:
+        if checked: selectedInstanceIds.add(instance.id)
+        else:       selectedInstanceIds.remove(instance.id)</code></pre>
+
+<div class="note">
+  <span class="lbl">Select-all semantics</span>
+  <p style="margin-bottom:0">
+    "Select all" must apply to the filtered result set, not the entire inventory. A user who filters to
+    <code>region = us-central1</code> and clicks select-all expects those instances and no others. Equally,
+    selections made under one filter must <strong>survive</strong> a filter change &mdash; the selection set is
+    independent of the view. Both behaviours fall out naturally from keeping selection in a set of IDs
+    rather than as a per-row boolean.
+  </p>
+</div>
+
+<h3>5.2 Transitioning into the recovery wizard</h3>
+
+<p>
+  When the user initiates recovery, the reference app performs three things before showing target
+  configuration:
+</p>
+
+<ol>
+  <li>Fetches snapshots for every selected instance <strong>in parallel</strong> and resolves one snapshot per
+      instance according to the active selection mode (section 6).</li>
+  <li>Identifies instances with <strong>no eligible snapshot</strong> and explicitly confirms with the user that
+      those will be skipped. It does not silently drop them.</li>
+  <li>Generates a default target name and default machine type per surviving instance.</li>
+</ol>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">entering target configuration</span></div>
+<pre><code>function beginRecovery():
+    selected = allInstances.filter(i =&gt; selectedInstanceIds.contains(i.id))
+
+    // Section 6 - resolves selectedSnapshots for each instance, in parallel.
+    loadSnapshotsForInstances(selected)
+
+    withoutSnapshot = selected.filter(i =&gt; selectedSnapshots[i.id] is null)
+    if withoutSnapshot.isNotEmpty():
+        confirmed = askUser(withoutSnapshot.count +
+                            " instance(s) have no eligible snapshot and will be "
+                            + "skipped. Continue?")
+        if not confirmed: return
+
+    recoverable = selected.filter(i =&gt; selectedSnapshots[i.id] is not null)
+
+    for instance in recoverable:
+        perInstanceConfig[instance.id] = {
+            targetName:  makeTargetName(instance),      // section 8.5
+            machineType: instance.machineType           // source type as default
+        }
+
+    showTargetConfigurationStep(recoverable)</code></pre>
+
+<div class="warn">
+  <span class="lbl">Skipped instances are a correctness issue, not a UI nicety</span>
+  <p style="margin-bottom:0">
+    An instance with no Primary-resident snapshot cannot be recovered by this flow. If your tool silently
+    omits it, the user believes they recovered N instances when they recovered N minus the skipped ones.
+    Make the skip explicit and name the instances.
+  </p>
+</div>
+
+<!-- ============================================================ 6 -->
+<h2 id="snapshots"><span class="num">6</span> Selecting snapshots</h2>
+
+<p>
+  Each instance is recovered from exactly one snapshot, resolved independently per instance. Snapshots are
+  queried one instance at a time, keyed on the RSC instance <code>id</code>.
+</p>
+
+<h3>6.1 The query</h3>
+
+<div class="codehdr"><span>SnapshotsListSingleQuery</span><span class="tag">verbatim from reference app</span></div>
+<pre><code>query SnapshotsListSingleQuery(
+  $snappableId: String!, $first: Int, $after: String,
+  $snapshotFilter: [SnapshotQueryFilterInput!], $sortBy: SnapshotQuerySortByField,
+  $sortOrder: SortOrder, $timeRange: TimeRangeInput,
+  $includeOnlySourceSnapshots: Boolean = false
+) {
+  snapshotsListConnection: snapshotOfASnappableConnection(
+    workloadId: $snappableId
+    first: $first
+    after: $after
+    snapshotFilter: $snapshotFilter
+    sortBy: $sortBy
+    sortOrder: $sortOrder
+    timeRange: $timeRange
+    includeOnlySourceSnapshots: $includeOnlySourceSnapshots
+  ) {
+    edges {
+      cursor
+      node {
+        id
+        date
+        expirationDate
+        isOnDemandSnapshot
+        ... on PolarisSnapshot {
+          snapshotRetentionInfo {
+            localInfo {
+              isSnapshotPresent
+              locationName
+            }
+          }
+        }
+        __typename
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Base variables</span></div>
+<pre><code>{
+  "snappableId":                "&lt;RSC instance id&gt;",   // note: String, not UUID
+  "includeOnlySourceSnapshots": true,
+  "first":                      200,
+  "sortBy":                     "CREATION_TIME",
+  "sortOrder":                  "DESC",
+  "snapshotFilter":             [ { "field": "SNAPSHOT_TYPE", "typeFilters": [] } ],
+  "timeRange":                  null
+}</code></pre>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th style="width:230px">Variable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>snappableId</code></td>
+        <td>The RSC instance <code>id</code> from inventory. Declared as <code>String!</code>, not <code>UUID!</code> &mdash; pass it as a plain string.</td></tr>
+    <tr><td><code>includeOnlySourceSnapshots</code></td>
+        <td>Set <code>true</code>. Restricts results to source-type snapshots, which is the category eligible for standard export.</td></tr>
+    <tr><td><code>snapshotFilter</code></td>
+        <td>An empty <code>typeFilters</code> array on the <code>SNAPSHOT_TYPE</code> field means "no type restriction". The filter object must still be present.</td></tr>
+    <tr><td><code>sortBy</code> / <code>sortOrder</code></td>
+        <td><code>CREATION_TIME</code> / <code>DESC</code> returns newest first, which makes "latest" a simple head-of-list read.</td></tr>
+    <tr><td><code>timeRange</code></td>
+        <td>Left <code>null</code>. The reference app fetches the full list and filters by date client-side, which keeps all three selection modes (and their fallbacks) on one dataset.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>6.2 The Primary-residency rule</h3>
+
+<div class="warn">
+  <span class="lbl">Critical &mdash; the most common integration mistake</span>
+  <p>
+    A snapshot returned by this query is <strong>only recoverable via <code>snapshotType: SOURCE</code></strong> if:
+  </p>
+  <pre style="background:#fff;border-left-color:var(--warn-bd);margin:12px 0"><code>node.snapshotRetentionInfo.localInfo.isSnapshotPresent == true</code></pre>
+  <p style="margin-bottom:0">
+    Snapshots where this is <code>false</code> exist only in archival storage. They are returned by the query
+    and look identical in every other respect, but attempting a <code>SOURCE</code> export against one will fail
+    or require rehydration through a different recovery path. <strong>Filter these out before applying any
+    selection logic</strong>, and treat an instance whose snapshots are all archival as having no eligible
+    snapshot.
+  </p>
+</div>
+
+<p>
+  It is worth surfacing the archival count in the UI rather than hiding it &mdash; "no Primary snapshots
+  (3 archival only)" tells the user something actionable, where "no snapshots" does not.
+</p>
+
+<h3>6.3 Fetching with pagination</h3>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">per-instance snapshot fetch</span></div>
+<pre><code>function loadSnapshotsForInstances(instances):
+    // Fetch all instances concurrently - this is the dominant cost of entering
+    // the wizard, and it parallelises cleanly.
+    parallelForEach(instances, instance =&gt; {
+        try:
+            all         = []
+            after       = null
+            hasNextPage = true
+
+            while hasNextPage:
+                vars = { snappableId:                instance.id,
+                         includeOnlySourceSnapshots: true,
+                         first:                      200,
+                         sortBy:                     "CREATION_TIME",
+                         sortOrder:                  "DESC",
+                         snapshotFilter: [ { field: "SNAPSHOT_TYPE", typeFilters: [] } ],
+                         timeRange:                  null,
+                         after:                      after }
+
+                data = gql("SnapshotsListSingleQuery", SNAPSHOTS_QUERY, vars)
+                conn = data.snapshotsListConnection
+
+                all.addAll(conn.edges.map(e =&gt; e.node))
+
+                hasNextPage = conn.pageInfo.hasNextPage
+                after       = conn.pageInfo.endCursor
+
+                // Safety valve: long-retained workloads can have thousands of
+                // snapshots. 1000 is far more than any selection rule needs.
+                if all.size &gt;= 1000: break
+
+            all.sortDescendingBy(snapshot =&gt; parseDate(snapshot.date))
+            snapshotCache[instance.id] = all
+
+        catch error:
+            snapshotErrors[instance.id] = error.message
+
+        // Resolve the chosen snapshot immediately, per instance.
+        resolveSnapshot(instance)
+    })</code></pre>
+
+<h3>6.4 The selection algorithm</h3>
+
+<p>
+  The user picks one selection mode that applies to the whole batch; the rule is then evaluated
+  independently against each instance's own snapshot list. Because snapshot schedules differ per instance,
+  an exact match may not exist for every instance &mdash; hence the symmetric fallback.
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th style="width:120px">Mode</th><th>Rule</th><th>Fallback when no match</th></tr></thead>
+  <tbody>
+    <tr><td><code>latest</code></td><td>Newest eligible snapshot.</td><td>None needed.</td></tr>
+    <tr><td><code>before</code></td><td>Newest snapshot at or before the target timestamp.</td><td>Oldest snapshot <em>after</em> the target &mdash; i.e. the nearest available in the other direction.</td></tr>
+    <tr><td><code>after</code></td><td>Oldest snapshot at or after the target timestamp.</td><td>Newest snapshot <em>before</em> the target.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">resolveSnapshot()</span></div>
+<pre><code>function resolveSnapshot(instance):
+    raw = snapshotCache[instance.id]
+
+    if raw is null or raw.isEmpty():
+        selectedSnapshots.remove(instance.id)
+        display(instance, "No snapshots")
+        return
+
+    // === The Primary-residency filter. Apply before anything else. ===
+    eligible = raw.filter(s =&gt;
+        s.snapshotRetentionInfo?.localInfo?.isSnapshotPresent == true)
+
+    if eligible.isEmpty():
+        archivalCount = raw.size
+        selectedSnapshots.remove(instance.id)
+        display(instance, "No Primary snapshots (" + archivalCount + " archival only)")
+        return
+
+    // eligible is sorted newest-first.
+    chosen       = null
+    fallbackUsed = null
+
+    if mode == "latest":
+        chosen = eligible.first()
+
+    else:
+        target = userSelectedTimestampAsUtc()
+
+        if target is null:
+            chosen = eligible.first()
+
+        else if mode == "before":
+            // Newest snapshot at or before target.
+            chosen = eligible.findFirst(s =&gt; parseDate(s.date) &lt;= target)
+
+            if chosen is null:
+                // Nothing that old exists. Fall back to the OLDEST snapshot
+                // after the target - the closest available point in time.
+                afters = eligible.filter(s =&gt; parseDate(s.date) &gt; target)
+                chosen = afters.last() ?? eligible.first()
+                if chosen is not null: fallbackUsed = "after"
+
+        else:   // mode == "after"
+            afters = eligible.filter(s =&gt; parseDate(s.date) &gt;= target)
+
+            if afters.isNotEmpty():
+                // afters is newest-first, so last() is the OLDEST snapshot
+                // at or after the target - i.e. the closest one.
+                chosen = afters.last()
+            else:
+                // Nothing that recent exists. Fall back to the newest snapshot
+                // before the target.
+                chosen = eligible.findFirst(s =&gt; parseDate(s.date) &lt; target)
+                if chosen is not null: fallbackUsed = "before"
+
+    if chosen is null:
+        selectedSnapshots.remove(instance.id)
+        return
+
+    selectedSnapshots[instance.id] = {
+        id:         chosen.id,
+        date:       chosen.date,
+        type:       "SOURCE",
+        isOnDemand: chosen.isOnDemandSnapshot
+    }
+
+    if fallbackUsed is not null:
+        // Surface this. The user asked for a point in time and is getting a
+        // different one; silently substituting is a data-loss surprise.
+        warn(instance, "No snapshot " + mode + " the requested time; "
+                       + "using nearest " + fallbackUsed)</code></pre>
+
+<div class="note">
+  <span class="lbl">Always show the resolved timestamp</span>
+  <p style="margin-bottom:0">
+    Because each instance resolves independently, a batch of 20 instances can easily recover from 20
+    different points in time. The review step must show the <strong>actual resolved snapshot timestamp per
+    instance</strong>, not just the rule that was requested. The reference app also shows the oldest and newest
+    available snapshot per instance so the user can see the bounds they are working within.
+  </p>
+</div>
+
+<h3>6.5 Example response</h3>
+
+<div class="codehdr"><span>Response</span><span class="tag">200 OK &middot; synthetic example</span></div>
+<pre><code>{
+  "data": {
+    "snapshotsListConnection": {
+      "edges": [
+        {
+          "cursor": "Y3Vyc29yOjA=",
+          "node": {
+            "id":                 "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6071",
+            "date":               "2026-09-23T06:00:12.000Z",
+            "expirationDate":     "2026-10-23T06:00:12.000Z",
+            "isOnDemandSnapshot": false,
+            "snapshotRetentionInfo": {
+              "localInfo": { "isSnapshotPresent": true, "locationName": "Primary" }
+            },
+            "__typename": "PolarisSnapshot"
+          }
+        },
+        {
+          "cursor": "Y3Vyc29yOjE=",
+          "node": {
+            "id":                 "b2c3d4e5-f607-4819-a2b3-c4d5e6f70182",
+            "date":               "2026-09-22T06:00:08.000Z",
+            "expirationDate":     "2026-10-22T06:00:08.000Z",
+            "isOnDemandSnapshot": false,
+            "snapshotRetentionInfo": {
+              "localInfo": { "isSnapshotPresent": true, "locationName": "Primary" }
+            },
+            "__typename": "PolarisSnapshot"
+          }
+        },
+        {
+          "cursor": "Y3Vyc29yOjI=",
+          "node": {
+            "id":                 "c3d4e5f6-0718-492a-b3c4-d5e6f7081293",
+            "date":               "2026-09-20T14:32:55.000Z",
+            "expirationDate":     "2026-12-19T14:32:55.000Z",
+            "isOnDemandSnapshot": true,
+            "snapshotRetentionInfo": {
+              "localInfo": { "isSnapshotPresent": true, "locationName": "Primary" }
+            },
+            "__typename": "PolarisSnapshot"
+          }
+        },
+        {
+          "cursor": "Y3Vyc29yOjM=",
+          "node": {
+            "id":                 "d4e5f607-1829-4a3b-c4d5-e6f708129304",
+            "date":               "2026-06-15T06:00:03.000Z",
+            "expirationDate":     "2027-06-15T06:00:03.000Z",
+            "isOnDemandSnapshot": false,
+            "snapshotRetentionInfo": {
+              "localInfo": { "isSnapshotPresent": false, "locationName": "Primary" }
+            },
+            "__typename": "PolarisSnapshot"
+          }
+        }
+      ],
+      "pageInfo": { "endCursor": "Y3Vyc29yOjM=", "hasNextPage": false }
+    }
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">Reading the example</span>
+  <p style="margin-bottom:0">
+    Four snapshots are returned, but only <strong>three are eligible</strong>. The 2026-06-15 snapshot has
+    <code>isSnapshotPresent: false</code> &mdash; it has aged out of Primary storage into an archival tier and must be
+    excluded. Note also that its <code>locationName</code> is still <code>"Primary"</code>: the location name is not
+    the residency signal. <strong>Only <code>isSnapshotPresent</code> is.</strong>
+  </p>
+</div>
+
+<!-- ============================================================ 7 -->
+<h2 id="target"><span class="num">7</span> Resolving the recovery target</h2>
+
+<p>
+  The recovery mutation requires a fully specified target: project, zone, network, subnet, machine type,
+  service account, and encryption settings. These are resolved through a dependency cascade, where each
+  selection unlocks the next set of options.
+</p>
+
+<div class="codehdr"><span>Dependency cascade</span></div>
+<pre><code>  Target project selected
+        |
+        +--&gt; GcpCloudAccountInfoQuery          -&gt; service account  (parallel)
+        +--&gt; ListGCPRegionsForProjectQuery     -&gt; regions + zones  (parallel)
+        +--&gt; ListGCPNetworksQuery              -&gt; networks + subnets (parallel)
+                    |
+        Region selected
+                    |
+                    +--&gt; zones          (client-side, from region.zones)
+                    +--&gt; subnet options (client-side, filter subnets by region)
+                              |
+                    Zone selected
+                              |
+                              +--&gt; ListGCPMachineTypeQuery  (per instance, server-side)</code></pre>
+
+<h3>7.1 List target projects</h3>
+
+<div class="codehdr"><span>ListGCPProjectsQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query ListGCPProjectsQuery($first: Int!, $sortBy: GcpNativeProjectSortFields, $sortOrder: SortOrder!) {
+  gcpNativeProjects(first: $first, sortBy: $sortBy, sortOrder: $sortOrder) {
+    edges { node { id name nativeId cloudAccountId } }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Variables &amp; response</span><span class="tag">synthetic example</span></div>
+<pre><code>// Variables
+{ "first": 200, "sortBy": "NAME", "sortOrder": "ASC" }
+
+// Response
+{
+  "data": {
+    "gcpNativeProjects": {
+      "edges": [
+        { "node": {
+            "id":             "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+            "name":           "example-prod-project",
+            "nativeId":       "example-prod-project-482910",
+            "cloudAccountId": "3e4f5a6b-7c8d-49e0-a1b2-c3d4e5f60718"
+        } },
+        { "node": {
+            "id":             "9f8e7d6c-5b4a-4392-8172-6a5b4c3d2e1f",
+            "name":           "example-dev-project",
+            "nativeId":       "example-dev-project-771043",
+            "cloudAccountId": "4f5a6b7c-8d9e-40f1-b2c3-d4e5f6071829"
+        } }
+      ]
+    }
+  }
+}</code></pre>
+
+<div class="warn">
+  <span class="lbl">Three different project identifiers &mdash; keep them straight</span>
+  <ul style="margin-bottom:0">
+    <li><code>id</code> &mdash; RSC's project FID. Goes into the mutation as <code>targetGcpProjectRubrikId</code>.</li>
+    <li><code>nativeId</code> &mdash; the GCP project ID string. Goes into the mutation as <code>sharedVpcHostProjectNativeId</code>.</li>
+    <li><code>cloudAccountId</code> &mdash; RSC's cloud account FID. Used only to look up the service account in 7.2.</li>
+  </ul>
+</div>
+
+<h3>7.2 Resolve the project's service account</h3>
+
+<p>
+  RSC performs the recovery in GCP using a service account it already has configured for that cloud
+  account. This query retrieves it. Note that the input takes the <strong><code>cloudAccountId</code></strong>, not the
+  project <code>id</code>.
+</p>
+
+<div class="codehdr"><span>GcpCloudAccountInfoQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query GcpCloudAccountInfoQuery($input: GcpCloudAccountGetProjectReq!) {
+  gcpCloudAccountGetProject(input: $input) {
+    project { effectiveServiceAccount projectNumber }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Variables &amp; response</span><span class="tag">synthetic example</span></div>
+<pre><code>// Variables - projectId here is the project's cloudAccountId from 7.1
+{ "input": { "projectId": "3e4f5a6b-7c8d-49e0-a1b2-c3d4e5f60718" } }
+
+// Response
+{
+  "data": {
+    "gcpCloudAccountGetProject": {
+      "project": {
+        "effectiveServiceAccount": "rubrik-recovery@example-prod-project-482910.iam.gserviceaccount.com",
+        "projectNumber":           "482910573649"
+      }
+    }
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">Present this as read-only</span>
+  <p style="margin-bottom:0">
+    The reference app displays <code>effectiveServiceAccount</code> in a field the user can see but should not
+    normally change. It is passed straight through to the mutation. See section 8.3 for the naming trap
+    around this value.
+  </p>
+</div>
+
+<h3>7.3 List regions and zones</h3>
+
+<div class="codehdr"><span>ListGCPRegionsForProjectQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query ListGCPRegionsForProjectQuery($projectId: UUID!) {
+  allGcpNativeRegions(projectId: $projectId) { name zones }
+}</code></pre>
+
+<div class="codehdr"><span>Variables &amp; response</span><span class="tag">synthetic example</span></div>
+<pre><code>// Variables - projectId here is the project's RSC id (NOT cloudAccountId)
+{ "projectId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d" }
+
+// Response
+{
+  "data": {
+    "allGcpNativeRegions": [
+      { "name": "us-central1", "zones": ["us-central1-a","us-central1-b","us-central1-c","us-central1-f"] },
+      { "name": "us-east4",    "zones": ["us-east4-a","us-east4-b","us-east4-c"] },
+      { "name": "europe-west1","zones": ["europe-west1-b","europe-west1-c","europe-west1-d"] }
+    ]
+  }
+}</code></pre>
+
+<p>
+  Zones are returned inline with each region, so the zone picker is populated client-side from the selected
+  region's <code>zones</code> array. No second round trip.
+</p>
+
+<h3>7.4 List networks and subnets</h3>
+
+<div class="codehdr"><span>ListGCPNetworksQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query ListGCPNetworksQuery($projectId: UUID!) {
+  allGcpNativeNetworks(projectId: $projectId) {
+    name nativeProjectId
+    subnetworks { name region }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Variables &amp; response</span><span class="tag">synthetic example</span></div>
+<pre><code>// Variables - the project's RSC id
+{ "projectId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d" }
+
+// Response
+{
+  "data": {
+    "allGcpNativeNetworks": [
+      {
+        "name":            "example-vpc-prod",
+        "nativeProjectId": "example-prod-project-482910",
+        "subnetworks": [
+          { "name": "prod-subnet-central", "region": "us-central1" },
+          { "name": "prod-subnet-east",    "region": "us-east4"    },
+          { "name": "prod-subnet-eu",      "region": "europe-west1"}
+        ]
+      },
+      {
+        "name":            "example-vpc-shared",
+        "nativeProjectId": "example-host-project-119284",
+        "subnetworks": [
+          { "name": "shared-subnet-central", "region": "us-central1" }
+        ]
+      }
+    ]
+  }
+}</code></pre>
+
+<p>
+  Subnets are nested inside each network and carry their own region. Filter them client-side against the
+  selected target region &mdash; offering a subnet from the wrong region will cause the recovery to fail in GCP.
+</p>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">subnet filtering</span></div>
+<pre><code>function onNetworkSelected(networkName):
+    region  = selectedTargetRegion
+    network = allNetworks.find(n =&gt; n.name == networkName)
+
+    if network is null:
+        setSubnetOptions([])
+        return
+
+    // Only subnets in the chosen target region are valid.
+    options = network.subnetworks
+                .filter(s =&gt; region is empty or s.region == region)
+                .map(s =&gt; { value: s.name, label: s.name, detail: s.region })
+
+    setSubnetOptions(options)</code></pre>
+
+<h3>7.5 Resolve compatible machine types per instance</h3>
+
+<p>
+  Machine-type compatibility depends on <strong>both</strong> the snapshot and the target zone &mdash; disk size, boot
+  type, and zone inventory all constrain it. This query must therefore be issued <strong>once per instance</strong>,
+  after the target zone is chosen.
+</p>
+
+<div class="codehdr"><span>ListGCPMachineTypeQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query ListGCPMachineTypeQuery($snapshotId: UUID!, $targetZone: String!) {
+  allGcpNativeCompatibleMachineTypes(snapshotId: $snapshotId, targetZone: $targetZone)
+}</code></pre>
+
+<div class="codehdr"><span>Variables &amp; response</span><span class="tag">synthetic example</span></div>
+<pre><code>// Variables - snapshotId is the snapshot resolved for THIS instance in section 6
+{
+  "snapshotId": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6071",
+  "targetZone": "us-central1-a"
+}
+
+// Response - a flat array of machine type name strings
+{
+  "data": {
+    "allGcpNativeCompatibleMachineTypes": [
+      "e2-standard-2", "e2-standard-4", "e2-standard-8",
+      "n2-standard-2", "n2-standard-4", "n2-standard-8", "n2-standard-16",
+      "n2-highmem-2",  "n2-highmem-4",  "n2-highmem-8",
+      "c3-standard-4", "c3-standard-8"
+    ]
+  }
+}</code></pre>
+
+<div class="warn">
+  <span class="lbl">Handle the source machine type not being available</span>
+  <p style="margin-bottom:0">
+    The source instance's machine type may not exist in the target zone &mdash; older generations are not offered
+    everywhere. The reference app <strong>force-includes the source machine type in the picker regardless</strong>,
+    labelled <em>"(original, not in zone)"</em>, so the user can see what the source was and make an informed
+    substitution rather than being silently defaulted to something else. When the source type <em>is</em>
+    available it is labelled <em>"(original)"</em> and selected by default.
+  </p>
+</div>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">per-instance machine type resolution</span></div>
+<pre><code>function onTargetZoneSelected(zone):
+    recoverable = selectedInstances.filter(i =&gt; selectedSnapshots[i.id] is not null)
+
+    parallelForEach(recoverable, instance =&gt; {
+        sourceType = perInstanceConfig[instance.id].machineType ?? instance.machineType
+
+        data  = gql("ListGCPMachineTypeQuery", MACHINE_TYPE_QUERY,
+                    { snapshotId: selectedSnapshots[instance.id].id,
+                      targetZone: zone })
+
+        types = data.allGcpNativeCompatibleMachineTypes ?? []
+
+        options = types.map(t =&gt; {
+            label = (t == sourceType) ? t + " (original)" : t
+            return { value: t, label: label, group: machineTypeFamily(t) }
+        })
+
+        // Always offer the source type, even when the zone does not support it.
+        if not types.contains(sourceType):
+            options.prepend({ value: sourceType,
+                              label: sourceType + " (original, not in zone)",
+                              group: machineTypeFamily(sourceType) })
+
+        setMachineTypeOptions(instance.id, options, defaultValue = sourceType)
+    })</code></pre>
+
+<!-- ============================================================ 8 -->
+<h2 id="mutation"><span class="num">8</span> The recovery mutation</h2>
+
+<p>
+  This is the operation that performs the recovery. One call per instance; each returns a <code>jobId</code>.
+</p>
+
+<div class="codehdr"><span>ExportGCPInstanceMutation</span><span class="tag">verbatim from reference app</span></div>
+<pre><code>mutation ExportGCPInstanceMutation($input: GcpNativeExportGceInstanceInput!) {
+  gcpNativeExportGceInstance(input: $input) { jobId }
+}</code></pre>
+
+<h3>8.1 Complete input field reference</h3>
+
+<p>
+  Every field below is populated by the reference app on every call. The "Source" column identifies exactly
+  where the value comes from.
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr>
+      <th style="width:215px">Field</th>
+      <th style="width:85px">Type</th>
+      <th style="width:230px">Source</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>snapshotId</code></td>
+      <td><code>UUID</code></td>
+      <td>Snapshot resolved in section 6, per instance</td>
+      <td>The point in time to recover from. Must be a Primary-resident snapshot.</td>
+    </tr>
+    <tr>
+      <td><code>snapshotType</code></td>
+      <td><code>Enum</code></td>
+      <td>Constant <code>"SOURCE"</code></td>
+      <td>Indicates recovery from the source-resident snapshot. This is why the Primary-residency filter in 6.2 is mandatory.</td>
+    </tr>
+    <tr>
+      <td><code>targetGcpProjectRubrikId</code></td>
+      <td><code>UUID</code></td>
+      <td><code>gcpNativeProjects.node.id</code></td>
+      <td>RSC's FID for the destination project. <strong>Not</strong> a GCP project ID.</td>
+    </tr>
+    <tr>
+      <td><code>sharedVpcHostProjectNativeId</code></td>
+      <td><code>String</code></td>
+      <td><code>gcpNativeProjects.node.nativeId</code></td>
+      <td>The GCP project ID string. Despite the "sharedVpc" name, the reference app always sends the selected target project's native ID, including when no Shared VPC is in play.</td>
+    </tr>
+    <tr>
+      <td><code>targetZone</code></td>
+      <td><code>String</code></td>
+      <td>User selection (7.3)</td>
+      <td>Full zone name, e.g. <code>us-central1-a</code>. Determines machine-type compatibility.</td>
+    </tr>
+    <tr>
+      <td><code>targetInstanceName</code></td>
+      <td><code>String</code></td>
+      <td>Generated, user-editable (8.5)</td>
+      <td>Must satisfy GCP naming rules: lowercase letters, digits and hyphens, max 63 characters, must not end in a hyphen.</td>
+    </tr>
+    <tr>
+      <td><code>targetMachineType</code></td>
+      <td><code>String</code></td>
+      <td>Per-instance selection (7.5)</td>
+      <td>Defaults to the source instance's machine type.</td>
+    </tr>
+    <tr>
+      <td><code>targetSubnetName</code></td>
+      <td><code>String</code></td>
+      <td>User selection (7.4)</td>
+      <td>The reference app falls back to the literal string <code>"default"</code> when no subnet is selected.</td>
+    </tr>
+    <tr>
+      <td><code>targetNetworkTags</code></td>
+      <td><code>[String]</code></td>
+      <td>User input</td>
+      <td>GCP network tags to apply. Parsed from a comma-separated field. Pass an empty array when none.</td>
+    </tr>
+    <tr>
+      <td><code>serviceAccountId</code></td>
+      <td><code>String</code></td>
+      <td><code>effectiveServiceAccount</code> (7.2)</td>
+      <td class="wrap-code"><strong>See 8.3.</strong> Despite the name, this carries a service account <em>email address</em>, not an ID.</td>
+    </tr>
+    <tr>
+      <td><code>diskEncryptionType</code></td>
+      <td><code>Enum</code></td>
+      <td>User selection</td>
+      <td><code>"GOOGLE_MANAGED_KEY"</code> (default) or <code>"CUSTOMER_MANAGED_KEY"</code>.</td>
+    </tr>
+    <tr>
+      <td><code>kmsCryptoKey</code></td>
+      <td><code>String</code></td>
+      <td>User input, conditional</td>
+      <td>The CMEK key. Sent only when <code>diskEncryptionType == "CUSTOMER_MANAGED_KEY"</code>; otherwise explicitly <code>null</code>.</td>
+    </tr>
+    <tr>
+      <td><code>kmsCryptoKeyResourceId</code></td>
+      <td><code>String</code></td>
+      <td>Always <code>null</code></td>
+      <td>Alternative CMEK addressing form. The reference app does not use it but sends the key explicitly as <code>null</code> rather than omitting it.</td>
+    </tr>
+    <tr>
+      <td><code>shouldCopyLabels</code></td>
+      <td><code>Boolean</code></td>
+      <td>User toggle</td>
+      <td>Copy the source instance's GCP labels onto the recovered instance.</td>
+    </tr>
+    <tr>
+      <td><code>shouldAddRubrikLabels</code></td>
+      <td><code>Boolean</code></td>
+      <td>User toggle</td>
+      <td>Tag the recovered instance with Rubrik-provenance labels. Useful for identifying and later cleaning up recovered resources.</td>
+    </tr>
+    <tr>
+      <td><code>shouldPowerOff</code></td>
+      <td><code>Boolean</code></td>
+      <td>User toggle</td>
+      <td>When <code>true</code>, the recovered instance is created in a stopped state. Commonly wanted for forensics, malware inspection, or staged cutover, where booting the workload immediately is undesirable.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>8.2 Example request and response</h3>
+
+<div class="codehdr"><span>Request payload</span><span class="tag">synthetic example</span></div>
+<pre><code>POST https://example-tenant.my.rubrik.com/api/graphql?op=ExportGCPInstanceMutation
+Content-Type:  application/json
+Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...
+
+{
+  "operationName": "ExportGCPInstanceMutation",
+  "query": "mutation ExportGCPInstanceMutation($input: GcpNativeExportGceInstanceInput!) { gcpNativeExportGceInstance(input: $input) { jobId } }",
+  "variables": {
+    "input": {
+      "snapshotId":                   "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6071",
+      "snapshotType":                 "SOURCE",
+
+      "targetGcpProjectRubrikId":     "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "sharedVpcHostProjectNativeId": "example-prod-project-482910",
+      "targetZone":                   "us-central1-a",
+
+      "targetInstanceName":           "web-server-01-0923-0100",
+      "targetMachineType":            "n2-standard-4",
+      "targetSubnetName":             "prod-subnet-central",
+      "targetNetworkTags":            ["recovered", "no-ingress"],
+
+      "serviceAccountId":             "rubrik-recovery@example-prod-project-482910.iam.gserviceaccount.com",
+
+      "diskEncryptionType":           "GOOGLE_MANAGED_KEY",
+      "kmsCryptoKey":                 null,
+      "kmsCryptoKeyResourceId":       null,
+
+      "shouldCopyLabels":             true,
+      "shouldAddRubrikLabels":        true,
+      "shouldPowerOff":               false
+    }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Response</span><span class="tag">200 OK &middot; synthetic example</span></div>
+<pre><code>{
+  "data": {
+    "gcpNativeExportGceInstance": {
+      "jobId": "CLOUD_NATIVE_JOB_a7f3c91e-2b8d-4e56-9071-3c4d5e6f7081"
+    }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>CMEK variant</span><span class="tag">differing fields only</span></div>
+<pre><code>{
+  "diskEncryptionType": "CUSTOMER_MANAGED_KEY",
+  "kmsCryptoKey":       "projects/example-prod-project-482910/locations/us-central1/keyRings/example-keyring/cryptoKeys/example-key",
+  "kmsCryptoKeyResourceId": null
+}</code></pre>
+
+<h3>8.3 Friendly names in the UI, identifiers in the payload</h3>
+
+<p>
+  This is the single most important structural point about the mutation, and the one most likely to cost
+  development time if it is discovered late.
+</p>
+
+<div class="warn">
+  <span class="lbl">No value in the mutation can be typed by hand</span>
+  <p style="margin-bottom:0">
+    Every field in <code>GcpNativeExportGceInstanceInput</code> must carry a value that came back from an
+    earlier RSC query response. The user selects a <em>human-friendly name</em> &mdash; a project called
+    "example-prod-project", a snapshot dated 23 Sep 2026 &mdash; but what the mutation receives is the
+    identifier RSC returned alongside that name. Your picker components must carry both: the friendly
+    <strong>label</strong> for display, and the underlying <strong>value</strong> for submission.
+  </p>
+</div>
+
+<p>
+  The catch is that the required form is <strong>not uniform across fields</strong>. Three different things
+  happen depending on the field, and treating them all the same way fails in both directions &mdash; sending a
+  name where a UUID is expected, or trying to resolve a UUID for a field that wants the plain name.
+</p>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr>
+      <th style="width:195px">User selects (label)</th>
+      <th style="width:215px">Mutation receives (value)</th>
+      <th style="width:105px">Form</th>
+      <th>Resolved by</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Project <code>example-prod-project</code></td>
+      <td><code>targetGcpProjectRubrikId</code><br><code>1a2b3c4d-5e6f-...</code></td>
+      <td><strong>Rubrik FID</strong></td>
+      <td><code>ListGCPProjectsQuery</code> &rarr; <code>node.id</code></td>
+    </tr>
+    <tr>
+      <td>Project <span class="opt">(same selection)</span></td>
+      <td><code>sharedVpcHostProjectNativeId</code><br><code>example-prod-project-482910</code></td>
+      <td>GCP native ID</td>
+      <td><code>ListGCPProjectsQuery</code> &rarr; <code>node.nativeId</code></td>
+    </tr>
+    <tr>
+      <td>Snapshot <code>23 Sep 2026 01:00</code></td>
+      <td><code>snapshotId</code><br><code>a1b2c3d4-e5f6-...</code></td>
+      <td><strong>Rubrik FID</strong></td>
+      <td><code>SnapshotsListSingleQuery</code> &rarr; <code>node.id</code></td>
+    </tr>
+    <tr>
+      <td><span class="opt">Not user-selected</span></td>
+      <td><code>serviceAccountId</code><br><code>rubrik-recovery@...gserviceaccount.com</code></td>
+      <td>GCP identity</td>
+      <td><code>GcpCloudAccountInfoQuery</code> &rarr; <code>effectiveServiceAccount</code></td>
+    </tr>
+    <tr>
+      <td>Zone <code>us-central1-a</code></td>
+      <td><code>targetZone</code><br><code>us-central1-a</code></td>
+      <td>Name, verbatim</td>
+      <td><code>ListGCPRegionsForProjectQuery</code> &rarr; <code>zones[]</code></td>
+    </tr>
+    <tr>
+      <td>Subnet <code>prod-subnet-central</code></td>
+      <td><code>targetSubnetName</code><br><code>prod-subnet-central</code></td>
+      <td>Name, verbatim</td>
+      <td><code>ListGCPNetworksQuery</code> &rarr; <code>subnetworks[].name</code></td>
+    </tr>
+    <tr>
+      <td>Machine type <code>n2-standard-4</code></td>
+      <td><code>targetMachineType</code><br><code>n2-standard-4</code></td>
+      <td>Name, verbatim</td>
+      <td><code>ListGCPMachineTypeQuery</code></td>
+    </tr>
+    <tr>
+      <td>Network <code>example-vpc-prod</code></td>
+      <td colspan="3"><strong>Not sent.</strong> The network selection exists only to scope the subnet list client-side. The mutation carries the subnet, never the network.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h4>The three forms</h4>
+
+<ol>
+  <li>
+    <strong>Rubrik FIDs (UUIDs).</strong> <code>targetGcpProjectRubrikId</code> and <code>snapshotId</code>.
+    These are RSC's own object identifiers and are meaningless to GCP. They are the classic
+    name-to-ID lookup: the user picks "example-prod-project" and you must submit the UUID RSC returned
+    with it. There is no way to derive one from the name; you must retain it from the query response.
+  </li>
+  <li>
+    <strong>GCP native identifiers.</strong> <code>sharedVpcHostProjectNativeId</code> and
+    <code>serviceAccountId</code>. Not Rubrik IDs, but still values you must obtain from RSC rather than
+    construct &mdash; RSC is the authority on which service account it will use to perform the recovery.
+  </li>
+  <li>
+    <strong>Plain names, passed through unchanged.</strong> <code>targetZone</code>,
+    <code>targetSubnetName</code>, <code>targetMachineType</code>. <strong>Do not attempt to resolve these to
+    IDs</strong> &mdash; RSC expects the literal GCP name string. They must still originate from the
+    corresponding RSC query, though, because RSC validates them against what it can actually reach: a
+    zone or subnet that is real in GCP but not returned by these queries will fail at recovery time.
+  </li>
+</ol>
+
+<div class="note">
+  <span class="lbl">Practical implication for your picker components</span>
+  <p style="margin-bottom:0">
+    Model every target selector as an object carrying <code>{ label, value, source }</code> rather than as
+    a bare string, and populate all of them exclusively from RSC query responses. Never let a user
+    free-type a project, zone, subnet, or machine type. The reference app follows this pattern: its project
+    dropdown displays <code>node.name</code> while carrying <code>node.id</code>, and it keeps the whole
+    project object attached to the option so both <code>id</code> and <code>nativeId</code> are available at
+    submission time.
+  </p>
+</div>
+
+<h3>8.4 Two naming traps</h3>
+
+<div class="warn">
+  <span class="lbl">Trap 1 &mdash; <code>serviceAccountId</code> is not an ID</span>
+  <p style="margin-bottom:0">
+    The field name strongly implies a Rubrik object identifier or a numeric GCP account ID. It is neither.
+    It carries the <strong>service account email address</strong> returned verbatim as
+    <code>gcpCloudAccountGetProject.project.effectiveServiceAccount</code>, for example
+    <code>rubrik-recovery@example-prod-project-482910.iam.gserviceaccount.com</code>.
+    Passing any kind of UUID here will fail. Pass the string through unchanged.
+  </p>
+</div>
+
+<div class="warn">
+  <span class="lbl">Trap 2 &mdash; <code>sharedVpcHostProjectNativeId</code> is not only for Shared VPC</span>
+  <p style="margin-bottom:0">
+    The name suggests it should be populated only when deploying into a Shared VPC host project. In practice
+    the reference app <strong>always</strong> sends the selected target project's <code>nativeId</code> here, Shared VPC or
+    not, and this is the behaviour known to work. Do not conditionally omit it.
+  </p>
+</div>
+
+<h3>8.5 Target instance naming</h3>
+
+<p>
+  Recovered instances need names that do not collide with existing instances in the target project. The
+  reference app appends a timestamp derived from <strong>the snapshot's own date</strong> &mdash; which is more useful
+  than the current time, because the name then states what point in time the instance represents.
+</p>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">makeTargetName()</span></div>
+<pre><code>// Produces e.g. "web-server-01-0923-0100"
+//   base   = source instance name, lowercased
+//   suffix = snapshot date as MMDD-HHMM in the display timezone
+function makeTargetName(instance):
+    snapshot = selectedSnapshots[instance.id]
+
+    if snapshot is not null and snapshot.date is not null:
+        suffix = formatAsMMDD_HHMM(parseDate(snapshot.date), timezone)
+    else:
+        // Edge case only - a random 5-char token keeps the name unique.
+        suffix = randomAlphanumeric(5)
+
+    base = lowercase(instance.nativeName ?? "vm")
+    name = base + "-" + suffix
+
+    // GCP caps instance names at 63 characters. Truncate the BASE, never the
+    // suffix, and never leave a trailing hyphen.
+    if name.length &gt; 63:
+        maxBase = 63 - (suffix.length + 1)
+        base    = trimTrailingHyphens(base.substring(0, maxBase))
+        name    = base + "-" + suffix
+
+    return name</code></pre>
+
+<div class="note">
+  <span class="lbl">Timezone</span>
+  <p style="margin-bottom:0">
+    The reference app renders all timestamps &mdash; including this name suffix &mdash; in US Central Time, because
+    that is what its users expect. For a multi-tenant product, use the viewing user's timezone or UTC, but
+    <strong>be consistent</strong>: the suffix in the instance name and the snapshot time shown in the review
+    screen must agree, or users will believe they recovered the wrong point in time.
+  </p>
+</div>
+
+<h3>8.6 Submitting the batch</h3>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">bulk submission</span></div>
+<pre><code>function startRecovery():
+    instances   = selectedInstances.filter(i =&gt; selectedSnapshots[i.id] is not null)
+    submittedAt = now()
+
+    // Create tracking entries BEFORE submitting, so the progress view can be
+    // shown immediately rather than after the last request returns.
+    for instance in instances:
+        jobs[instance.id] = {
+            instanceId:  instance.id,
+            instanceName: instance.nativeName,
+            targetName:  perInstanceConfig[instance.id].targetName,
+            jobId:       null,
+            status:      "Submitting",
+            message:     "Sending recovery request to RSC...",
+            submittedAt: submittedAt,
+            error:       null
+        }
+
+    showProgressView(jobs)
+
+    // Submit all instances concurrently. Each is independent; one failure
+    // must not abort the others.
+    parallelForEach(instances, instance =&gt; {
+        entry    = jobs[instance.id]
+        snapshot = selectedSnapshots[instance.id]
+
+        try:
+            input = {
+                snapshotId:                   snapshot.id,
+                snapshotType:                 snapshot.type ?? "SOURCE",
+
+                targetGcpProjectRubrikId:     settings.targetProjectRubrikId,
+                sharedVpcHostProjectNativeId: settings.targetProjectNativeId,
+                targetZone:                   settings.zone,
+
+                targetInstanceName:           entry.targetName,
+                targetMachineType:            perInstanceConfig[instance.id].machineType,
+                targetSubnetName:             settings.subnet ?? "default",
+                targetNetworkTags:            settings.networkTags,
+
+                serviceAccountId:             settings.serviceAccountEmail,
+
+                diskEncryptionType:           settings.encryption,
+                kmsCryptoKey:                 settings.encryption == "CUSTOMER_MANAGED_KEY"
+                                                  ? settings.kmsKey : null,
+                kmsCryptoKeyResourceId:       null,
+
+                shouldCopyLabels:             settings.copyLabels,
+                shouldAddRubrikLabels:        settings.addRubrikLabels,
+                shouldPowerOff:               settings.launchStopped
+            }
+
+            data = gql("ExportGCPInstanceMutation", EXPORT_MUTATION, { input: input })
+
+            entry.jobId   = data.gcpNativeExportGceInstance.jobId
+            entry.status  = "Pending"
+            entry.message = "Waiting for RSC to register activity..."
+
+        catch error:
+            // Isolate the failure to this instance only.
+            entry.status  = "Failure"
+            entry.error   = error.message
+            entry.message = "Submission failed: " + error.message
+
+        refreshProgressView()
+    })
+
+    // Activity series take a moment to appear after submission.
+    scheduleAfter(2 seconds, () =&gt; pollProgress())</code></pre>
+
+<div class="note">
+  <span class="lbl">Why <code>jobId</code> alone is not enough</span>
+  <p style="margin-bottom:0">
+    The mutation returns a <code>jobId</code>, but progress is <strong>not</strong> queryable by that job ID. Progress is
+    reported through the activity series API, which is keyed on the <strong>instance FID</strong>. Section 9 covers
+    the correlation.
+  </p>
+</div>
+
+<!-- ============================================================ 9 -->
+<h2 id="tracking"><span class="num">9</span> Tracking recovery progress</h2>
+
+<p>
+  After submission, recovery progress is reported through RSC's activity series API. The reference app
+  polls every 10 seconds and stops once every tracked instance reaches a terminal state.
+</p>
+
+<h3>9.1 Listing activity series</h3>
+
+<div class="codehdr"><span>EventSeriesListQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query EventSeriesListQuery($after: String, $filters: ActivitySeriesFilter, $first: Int, $sortBy: ActivitySeriesSortField, $sortOrder: SortOrder) {
+  activitySeriesConnection(after: $after, first: $first, filters: $filters, sortBy: $sortBy, sortOrder: $sortOrder) {
+    edges { node {
+      id activitySeriesId lastUpdated lastActivityType lastActivityStatus
+      objectId objectName objectType severity progress
+      clusterUuid clusterName username
+      activityConnection(first: 1) { nodes { message } }
+    } }
+  }
+}</code></pre>
+
+<div class="codehdr"><span>Filter shape</span><span class="tag">tracking a submitted batch</span></div>
+<pre><code>{
+  "first": 100,
+  "filters": {
+    "objectFid":         ["8f3d1c2a-4b5e-4d6f-9a70-1e2b3c4d5e6f",
+                          "2b4e6a8c-0d1f-4e3a-b5c7-d9e1f3a5b7c9"],
+    "objectType":        null,
+    "lastActivityStatus":null,
+    "lastActivityType":  ["RECOVERY", "BULK_RECOVERY"],
+    "severity":          null,
+    "clusterId":         null,
+    "lastUpdatedTimeGt": "2026-09-23T18:04:50.000Z",
+    "orgIds":            [],
+    "userIds":           null,
+    "objectName":        ""
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">Filter construction</span>
+  <p style="margin-bottom:0">
+    RSC expects the full filter object with explicit <code>null</code> values for unused criteria, not a sparse
+    object. <code>objectFid</code> accepts an array of instance FIDs, which is what makes batch tracking a single
+    query rather than N queries. Set <code>lastUpdatedTimeGt</code> to slightly before your submission time
+    (the reference app uses submission time minus 10 seconds) to avoid matching older recovery runs against
+    the same instances.
+  </p>
+</div>
+
+<h3>9.2 Correlating activities back to submissions</h3>
+
+<p>
+  Activity series are keyed on <code>objectId</code> (the instance FID), not on the <code>jobId</code> returned by the
+  mutation. If an instance has been recovered more than once, multiple series will match. The reference app
+  disambiguates by submission time.
+</p>
+
+<div class="codehdr"><span>Pseudocode</span><span class="tag">correlation</span></div>
+<pre><code>function pollProgress():
+    earliest   = min(jobs.values().map(j =&gt; j.submittedAt))
+    lowerBound = earliest - 10 seconds
+
+    series = fetchActivitySeries({
+        objectFid:         jobs.keys().distinct(),
+        lastActivityTypes: ["RECOVERY", "BULK_RECOVERY"],
+        lastUpdatedTimeGt: lowerBound.toIso8601()
+    })
+
+    for entry in jobs.values():
+        candidates = series.filter(s =&gt; s.objectId == entry.instanceId)
+        if candidates.isEmpty(): continue     // not registered yet
+
+        candidates.sortAscendingBy(s =&gt; parseDate(s.lastUpdated))
+
+        // Our run is the first series updated at or after we submitted.
+        // Small negative tolerance absorbs clock skew between client and RSC.
+        match = candidates.findFirst(c =&gt;
+                    parseDate(c.lastUpdated) &gt;= entry.submittedAt - 5 seconds)
+                ?? candidates.last()
+
+        entry.activitySeriesId = match.activitySeriesId
+        entry.clusterUuid      = match.clusterUuid
+        entry.status           = match.lastActivityStatus
+        entry.message          = match.latestMessage ?? entry.message
+        entry.progress         = match.progress ?? entry.progress
+        entry.lastEventTime    = match.lastUpdated
+
+    // Stop polling once everything has settled.
+    if jobs.values().anyMatch(j =&gt; not isTerminal(j.status)):
+        scheduleAfter(10 seconds, pollProgress)
+    else:
+        markAllComplete()
+
+
+function isTerminal(status):
+    if status is empty: return false
+    s = lowercase(status)
+    return s in ["success", "failure", "canceled", "tasksuccess", "taskfailure"]</code></pre>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th style="width:170px">Status</th><th style="width:100px">Terminal</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>Queued</code></td><td>No</td><td>Accepted, not yet started.</td></tr>
+    <tr><td><code>Running</code></td><td>No</td><td>In progress. <code>progress</code> carries a percentage string.</td></tr>
+    <tr><td><code>Warning</code></td><td>No</td><td>Progressing with non-fatal issues reported.</td></tr>
+    <tr><td><code>Success</code></td><td>Yes</td><td>Instance recovered successfully.</td></tr>
+    <tr><td><code>TaskSuccess</code></td><td>Yes</td><td>Sub-task completion variant. Treat as success.</td></tr>
+    <tr><td><code>Failure</code></td><td>Yes</td><td>Recovery failed. Fetch details for the error message.</td></tr>
+    <tr><td><code>TaskFailure</code></td><td>Yes</td><td>Sub-task failure variant. Treat as failure.</td></tr>
+    <tr><td><code>Canceled</code></td><td>Yes</td><td>Cancelled by a user or by the system.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <span class="lbl">Status comparison</span>
+  <p style="margin-bottom:0">
+    Compare status values <strong>case-insensitively</strong>. RSC returns mixed casing across contexts, and
+    exact-match comparison against <code>"Success"</code> will intermittently miss.
+  </p>
+</div>
+
+<h3>9.3 Per-activity detail</h3>
+
+<p>
+  For a timeline of individual events within one recovery &mdash; and for the error text when something fails &mdash;
+  fetch the series detail.
+</p>
+
+<div class="codehdr"><span>EventSeriesDetailsQuery</span><span class="tag">verbatim</span></div>
+<pre><code>query EventSeriesDetailsQuery($activitySeriesId: UUID!, $clusterUuid: UUID) {
+  activitySeries(input: {activitySeriesId: $activitySeriesId, clusterUuid: $clusterUuid}) {
+    activityConnection { nodes { activityInfo errorInfo message status time severity } }
+    startTime
+    lastUpdated
+    lastActivityType
+    lastActivityStatus
+    objectName
+    objectType
+    location
+    clusterName
+    username
+    organizations { id name }
+  }
+}</code></pre>
+
+<div class="note">
+  <span class="lbl">The <code>clusterUuid</code> argument</span>
+  <p style="margin-bottom:0">
+    Cloud-native activities are not associated with a physical Rubrik cluster. Pass the
+    <code>clusterUuid</code> from the list response when present; where it is absent, the reference app passes the
+    all-zero UUID <code>00000000-0000-0000-0000-000000000000</code>.
+  </p>
+</div>
+
+<h3>9.4 Listing recent recoveries independently of a session</h3>
+
+<p>
+  To show recovery history that is not tied to a submission the user made in the current session &mdash; after a
+  page reload, or from a different device &mdash; filter by object type instead of by FID.
+</p>
+
+<div class="codehdr"><span>Filter shape</span><span class="tag">recent GCE recoveries</span></div>
+<pre><code>{
+  "first": 100,
+  "filters": {
+    "objectFid":         null,
+    "objectType":        ["GCP_NATIVE_GCE_INSTANCE"],
+    "lastActivityType":  ["RECOVERY", "BULK_RECOVERY"],
+    "lastActivityStatus":null,
+    "severity":          null,
+    "clusterId":         null,
+    "lastUpdatedTimeGt": "2026-09-16T18:04:50.000Z",
+    "orgIds":            [],
+    "userIds":           null,
+    "objectName":        ""
+  }
+}</code></pre>
+
+<p>
+  The reference app bounds this to the last 7 days and 100 items. Adjust to taste, but bound it &mdash; the
+  activity series connection will happily return a very large history.
+</p>
+
+<!-- ============================================================ 10 -->
+<h2 id="appendix"><span class="num">10</span> Appendix: operation quick reference</h2>
+
+<div class="tablewrap">
+<table>
+  <thead>
+    <tr><th style="width:60px">Step</th><th style="width:255px">Operation</th><th style="width:100px">Kind</th><th>Returns</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td colspan="2"><code>POST {access_token_uri}</code> <span class="opt">(REST, not GraphQL)</span></td><td><code>access_token</code></td></tr>
+    <tr><td>3</td><td><code>GCPInstancesListQuery</code></td><td>Query</td><td>GCE instance inventory</td></tr>
+    <tr><td>3</td><td><code>GCPInstancesSearchQuery</code> <span class="opt">(filtered variant)</span></td><td>Query</td><td>GCE instances matching a search</td></tr>
+    <tr><td>5</td><td><code>SnapshotsListSingleQuery</code></td><td>Query</td><td>Snapshots for one instance</td></tr>
+    <tr><td>6</td><td><code>ListGCPProjectsQuery</code></td><td>Query</td><td>Target project candidates</td></tr>
+    <tr><td>7</td><td><code>GcpCloudAccountInfoQuery</code></td><td>Query</td><td><code>effectiveServiceAccount</code></td></tr>
+    <tr><td>7</td><td><code>ListGCPRegionsForProjectQuery</code></td><td>Query</td><td>Regions with nested zones</td></tr>
+    <tr><td>7</td><td><code>ListGCPNetworksQuery</code></td><td>Query</td><td>Networks with nested subnets</td></tr>
+    <tr><td>7</td><td><code>ListGCPMachineTypeQuery</code></td><td>Query</td><td>Compatible machine types</td></tr>
+    <tr><td>8</td><td><code>ExportGCPInstanceMutation</code></td><td><strong>Mutation</strong></td><td><code>jobId</code></td></tr>
+    <tr><td>9</td><td><code>EventSeriesListQuery</code></td><td>Query</td><td>Activity series summaries</td></tr>
+    <tr><td>9</td><td><code>EventSeriesDetailsQuery</code></td><td>Query</td><td>Event timeline for one series</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Identifier cheat sheet</h3>
+
+<div class="tablewrap">
+<table>
+  <thead><tr><th style="width:250px">Identifier</th><th style="width:230px">Comes from</th><th>Used as</th></tr></thead>
+  <tbody>
+    <tr><td>Instance FID</td><td><code>gcpNativeGceInstances.node.id</code></td>
+        <td><code>snappableId</code> (snapshots), <code>objectFid</code> (activity), selection key</td></tr>
+    <tr><td>Snapshot ID</td><td><code>snapshotsListConnection.node.id</code></td>
+        <td><code>snapshotId</code> (mutation and machine-type query)</td></tr>
+    <tr><td>Project FID</td><td><code>gcpNativeProjects.node.id</code></td>
+        <td><code>targetGcpProjectRubrikId</code>, <code>projectId</code> (regions and networks queries)</td></tr>
+    <tr><td>Project native ID</td><td><code>gcpNativeProjects.node.nativeId</code></td>
+        <td><code>sharedVpcHostProjectNativeId</code></td></tr>
+    <tr><td>Cloud account FID</td><td><code>gcpNativeProjects.node.cloudAccountId</code></td>
+        <td><code>input.projectId</code> in <code>GcpCloudAccountInfoQuery</code> only</td></tr>
+    <tr><td>Service account email</td><td><code>project.effectiveServiceAccount</code></td>
+        <td><code>serviceAccountId</code> <span class="opt">(name is misleading)</span></td></tr>
+    <tr><td>Activity series ID</td><td><code>activitySeriesConnection.node.activitySeriesId</code></td>
+        <td><code>activitySeriesId</code> in <code>EventSeriesDetailsQuery</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Implementation checklist</h3>
+
+<ul>
+  <li>Make all RSC calls server-side. Never ship the service account secret to a browser.</li>
+  <li>Cache the bearer token; re-authenticate on expiry or on HTTP 401, not per request.</li>
+  <li>Treat HTTP 200 with an <code>errors</code> array as a failure.</li>
+  <li>Paginate the inventory query. The reference app does not, and that is a known limitation.</li>
+  <li>Filter server-side with <code>gceInstanceFilters</code> rather than bulk-loading and filtering locally. Build the filter object from only the criteria the user set; omit the rest.</li>
+  <li>Filter snapshots on <code>isSnapshotPresent == true</code> before applying any selection rule.</li>
+  <li>Tell the user explicitly which instances are being skipped for lack of an eligible snapshot.</li>
+  <li>Show the resolved snapshot timestamp per instance, not just the selection rule.</li>
+  <li>Pass the service account <em>email</em> as <code>serviceAccountId</code>.</li>
+  <li>Always send <code>sharedVpcHostProjectNativeId</code>, Shared VPC or not.</li>
+  <li>Validate target instance names against GCP rules: lowercase, digits, hyphens, 63 chars, no trailing hyphen.</li>
+  <li>Submit one mutation per instance, in parallel, with per-instance failure isolation.</li>
+  <li>Correlate progress by instance FID and submission time; the <code>jobId</code> is not queryable.</li>
+  <li>Compare activity statuses case-insensitively and stop polling on terminal states.</li>
+</ul>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    Rubrik Security Cloud GCP Recovery API Integration Guide.<br>
+    Derived from the Rubrik GCP Mass Recovery reference application (<code>rsc_gcp_mass_recovery.html</code>).
+    All example payloads use synthetic placeholder values.
+  </div>
+</footer>
+
+</body>
+</html>
