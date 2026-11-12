@@ -325,8 +325,9 @@ STEP 3   GET THE TEMPLATE ID
     exists under the other host root
 
 STEP 4   GET INVENTORY: the hosts, whether each has the template, and each fileset's SLA state
-    from the CSV:  IF a host list was given, a listed host that is not in the inventory is skipped ("not in inventory")
-                   ELSE use every host in the inventory
+    from the CSV:  KEEP only the hosts the inventory has on the -clusterName cluster (warn about the others)
+                   IF a host list was given, a listed host that is not in the inventory for that cluster is skipped ("not in inventory")
+                   ELSE use every host in the inventory for that cluster
     from RSC:      FOR EACH host name: LOOK UP the host under -hostRoot on the -clusterName cluster; require exactly one exact-name match
     FOR EACH host:
         PICK the template that belongs to the host's cluster (must be exactly one)
@@ -580,7 +581,7 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
   and the Apply CSV say which and why:</p>
   <table>
     <tr><th>Skipped</th><th>When</th><th>Where it shows</th></tr>
-    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV. (In a live run a host that is not found stops
+    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV for the <code>-clusterName</code> cluster (including a host the inventory has only on another cluster). (In a live run a host that is not found stops
     the run instead, before any change.)</td><td>Plan, end-of-run warning, a <code>NotInInventory</code> row in the Apply CSV</td></tr>
     <tr><td>Pending SLA</td><td>The fileset has <strong>any</strong> pending SLA. An assignment is already in flight, and sending another would only queue a
     second pending action.</td><td>Plan action <code>Skip: pending</code>, status <code>SkippedPending</code>, a note at the end of the run</td></tr>
@@ -1186,7 +1187,10 @@ host03.example.com,</code></pre>
     <li><strong>A listed host that is not in the inventory at all is skipped.</strong> The script prints a warning at the
     start and again at the end, and writes a <code>NotInInventory</code> row for it in the Apply CSV (and <code>Skipped: not in inventory</code> in the host CSV). The rest of the list still runs. If <em>every</em> listed host is missing, nothing is assigned, the
     Apply CSV is still written (with only the columns <code>workload, host, object, objectId, hostStatus, status, error</code>), and the script exits 1.</li>
-    <li>With no host list, every host in the inventory is used, so every host without the template gets it applied.</li>
+    <li>With no host list, every host in the inventory <strong>on the <code>-clusterName</code> cluster</strong> is used, so every host without the template gets it applied.</li>
+    <li><strong>Hosts on another cluster are not used.</strong> The saved <code>clusterId</code> of each host is compared with the <code>-clusterName</code> cluster. If the inventory has hosts on other clusters the script prints
+    a warning and leaves them out, and a listed host that is in the inventory only on another cluster is skipped like a host that is not in the inventory (a <code>NotInInventory</code> row, <code>Skipped: not in inventory</code> in the host CSV, and a console line that says it is on a different cluster).
+    This keeps an inventory taken on the wrong cluster from putting an SLA on another cluster's hosts.</li>
     <li>Used with Apply only: <code>-action Test</code> needs live data, and <code>-inventoryCsv</code> is rejected
     there.</li>
   </ul>

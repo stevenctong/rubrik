@@ -12,6 +12,9 @@ CLAUDE.md
 computer/Artifacts/csv-report-viewer/example_reports/
 computer/Artifacts/*/Internal*/
 
+# RSC test harness (fake RSC + scenarios) -- kept local, not committed
+computer/Artifacts/RSC-Test-Harness/
+
 # Plaintext credentials committed under the old rubrik_add_hosts stub.
 # These hold a live client_secret and bearer token -- rotate them.
 ansible/rubrik_add_hosts/variables.yml

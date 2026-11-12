@@ -178,12 +178,16 @@
   <code>MssqlInstance</code> object under a SQL host, so the script resolves every host on your list to its
   instances and assigns one SLA to all of them. The work splits into two runs: an optional <strong>inventory</strong>
   run that snapshots the environment to a CSV, and an <strong>Apply</strong> run that assigns the SLA, either from that
-  CSV or by querying RSC live.
+  CSV or by querying RSC live. A SQL run works on <strong>one cluster</strong>, given by the required <code>-clusterName</code>:
+  every host lookup, the inventory and every assignment call are limited to it.
 </p>
 <div class="callout">
   <strong>Prerequisite:</strong> every host on your list must already be added to Rubrik, and SQL discovery must have
   finished so its instances appear in RSC. The script does not add hosts. In a live run, a host that is not found, or
-  that has no SQL instances, stops the run before anything is changed.
+  that has no SQL instances, stops the run before anything is changed. Every run also needs
+  <code>-clusterName</code>, the exact name of the one cluster to work on. Without it the script stops with
+  "Runs need -clusterName. Every lookup, and every assignment call, is on that one cluster." (and, for the inventory,
+  "-getSqlInventory needs -clusterName. The SQL inventory covers one cluster.").
 </div>
 
 <div class="flow-divider">Prerequisite (outside the script)</div>
@@ -198,12 +202,12 @@
 <div class="flow">
   <div class="box script">
     <div class="tag">Inventory 1</div>
-    Authenticate to RSC
+    Authenticate to RSC, look up the <code>-clusterName</code> cluster
   </div>
   <div class="arrow">&rarr;</div>
   <div class="box script">
     <div class="tag">Inventory 2</div>
-    List SQL hosts, their instances, current SLAs and any pending SLA
+    List the SQL hosts on that cluster, their instances, current SLAs and any pending SLA
   </div>
   <div class="arrow">&rarr;</div>
   <div class="box script">
@@ -216,17 +220,17 @@
 <div class="flow">
   <div class="box script">
     <div class="tag">Apply 1</div>
-    Authenticate, resolve the SLA name to an ID
+    Authenticate, look up the <code>-clusterName</code> cluster, resolve the SLA name to an ID
   </div>
   <div class="arrow">&rarr;</div>
   <div class="box script">
     <div class="tag">Apply 2: Get Inventory</div>
-    Get each host, its instances, and each instance's SLA state including any pending SLA (live from RSC, or from the inventory CSV)
+    Get each host on that cluster, its instances, and each instance's SLA state including any pending SLA (live from RSC, or from the inventory CSV)
   </div>
   <div class="arrow">&rarr;</div>
   <div class="box script">
     <div class="tag">Apply 3</div>
-    Decide what is skipped: host not found, any pending SLA, or effective SLA already the target
+    Decide what is skipped: host not found (or only on another cluster, with an inventory), any pending SLA, or effective SLA already the target
   </div>
   <div class="arrow">&rarr;</div>
   <div class="box script">
@@ -261,8 +265,10 @@
 
 <h2>2. Script Logic (Pseudocode)</h2>
 <pre><code>INVENTORY RUN  (-getSqlInventory, optional host list; needs no -action, SLA or confirmation)
+    VALIDATE: -clusterName must be given (the script stops without it), and the apply and SLA parameters are rejected
     AUTHENTICATE to RSC
-    LIST SQL hosts (all of them, or only the hosts named), each with its cluster and non-archived instances, and each instance's
+    LOOK UP the cluster named by -clusterName; STOP if none, or more than one, matches
+    LIST SQL hosts on that cluster only (all of them, or only the hosts named), each with its cluster and non-archived instances, and each instance's
          effective SLA and any pending SLA
     WRITE one CSV row per instance (a host with no instances gets one "Host" row)
     EXIT
@@ -270,59 +276,63 @@
 APPLY RUN  (-action Apply)
 INPUT: hosts (-sqlHosts, or -sqlCsvPath which wins if both are given; -inventoryCsv supplies the IDs and state),
        one SLA (-slaName or -slaID) that applies to every host,
+       required -clusterName (the one cluster everything is looked up and assigned on),
        optional -applyMode Bulk|Single, -batchSize, -skipPolling, -assignLog, -dryRun, -skipConfirm,
        -assignMutation AssignSla|AssignSlasForSnappableHierarchies, -pollIntervalSec, -timeoutSec,
        -inventoryMaxAgeHours, -csvOutputPrefix
        (parameters are validated first, see section 5; a run with no parameters prints a usage summary and EXITs 0)
 
 STEP 0   AUTHENTICATE to RSC using the Service Account JSON (client_id/client_secret -&gt; bearer token)
-STEP 1   RESOLVE the SLA name to its ID (DO_NOT_PROTECT and NO_ASSIGNMENT need no lookup; -slaID is used as given)
+STEP 1   LOOK UP the cluster named by -clusterName (required); STOP if none, or more than one, matches
+STEP 2   RESOLVE the SLA name to its ID (DO_NOT_PROTECT and NO_ASSIGNMENT need no lookup; -slaID is used as given)
 
-STEP 2   GET INVENTORY (SQL hosts and their instances, each with its effective SLA and any pending SLA)
+STEP 3   GET INVENTORY (SQL hosts on the -clusterName cluster and their instances, each with its effective SLA and any pending SLA)
 IF -inventoryCsv was given, from the CSV:
     READ the CSV; check it is a SQL inventory; print its age, warn if older than -inventoryMaxAgeHours
+    KEEP only the hosts the inventory has on the -clusterName cluster (warn about the others)
     IF a host list was given:
-        a listed host that is not in the inventory is skipped ("not in inventory")
+        a listed host that is not in the inventory for that cluster is skipped ("not in inventory"; the console says
+            when it is in the inventory on a different cluster)
         a listed host that is in the inventory but has no instances is an error
-    ELSE: use every host in the inventory (a host with no instances is skipped with a warning)
+    ELSE: use every host in the inventory for that cluster (a host with no instances is skipped with a warning)
     a host name that appears under more than one host ID in the CSV is an error
     take each instance's assignment, effective SLA and pending SLA from the CSV columns
     IF any error: print it and STOP before changing anything
 ELSE, from RSC, FOR EACH host name:
-    LOOK UP the SQL host by name; require exactly one exact-name match
+    LOOK UP the SQL host by name on the -clusterName cluster; require exactly one exact-name match
     COLLECT its cluster and its non-archived SQL instances (id, name, assignment, effective SLA, pending SLA)
     IF the host is not found or has no instances: record an error
     IF any host had an error: print them and STOP before changing anything
 
-STEP 3   DECIDE what is skipped, from the state gathered in Step 2 (live from RSC, or the CSV columns with -inventoryCsv).
+STEP 4   DECIDE what is skipped, from the state gathered in Step 3 (live from RSC, or the CSV columns with -inventoryCsv).
     Three things are skipped, and the plan, the console and the Apply CSV say which and why:
-    a host that is not found / not in the inventory       (a live run stops instead, before any change)
+    a host that is not found / not in the inventory for the cluster   (a live run stops instead, before any change)
     an instance with ANY pending SLA                      -&gt; SkippedPending (an assignment is already in flight)
     an instance whose effective SLA is already the target -&gt; AlreadyOnTarget (assigned directly or inherited)
     everything else is ASSIGNED   (the pending check comes first)
     IF no instance was found at all and no host was skipped for not being in the inventory: STOP with an error
 
-STEP 4   PRINT the plan: hosts, instances, how many to assign, what is skipped and why, number of calls, per cluster
+STEP 5   PRINT the plan: hosts, instances, how many to assign, what is skipped and why, number of calls
     IF -dryRun: STOP, no changes
     ASK the user to type YES, otherwise STOP        (exactly YES, upper case; only asked when something is to be assigned;
                                                      -skipConfirm skips the question and goes ahead; the plan is still printed)
     CREATE the Apply CSV (every instance's starting SLA, status Pending) before changing anything
 
-STEP 5   BUILD call groups from the instances to assign:
-    Bulk (default): per cluster, batches of up to -batchSize (default 50) instance IDs; a call never mixes clusters
+STEP 6   BUILD call groups from the instances to assign (all on the one -clusterName cluster):
+    Bulk (default): batches of up to -batchSize (default 50) instance IDs
     Single:         one group per host
     (an instance ID is sent only once per run; an instance with no cluster ID stops the run with an error before any call)
-STEP 6   FOR EACH group: SEND the assignment mutation with that group's instance IDs
+STEP 7   FOR EACH group: SEND the assignment mutation with that group's instance IDs
     ON failure: mark the group CallFailed and continue with the next group
     ON success: mark the instances Submitted
 
-STEP 7   IF not -skipPolling:
+STEP 8   IF not -skipPolling:
     LOOP every -pollIntervalSec until all Submitted instances show the SLA or -timeoutSec is reached:
         READ the state of the instances still waiting (one batched query)
         PRINT "n/total effective, s elapsed"
     MARK each instance Applied or Timeout
 
-STEP 8   REWRITE the Apply CSV with each instance's outcome and its host's status
+STEP 9   REWRITE the Apply CSV with each instance's outcome and its host's status
     IF the hosts came from -sqlCsvPath: WRITE each host's outcome into the CSV's "executed" column (keep a .bak of the original)
     PRINT a note for instances skipped for a pending SLA, and a warning for hosts skipped for not being in the inventory
     EXIT 1 if any instance is CallFailed, Timeout or NotAttempted, or the run stopped with an error, otherwise EXIT 0
@@ -360,7 +370,32 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label">Query</span>
-  <h3><span class="step-num">1</span>Resolve the SLA name to an ID</h3>
+  <h3><span class="step-num">1</span>Resolve <code>-clusterName</code> to a cluster ID (required)</h3>
+  <p><strong>Function:</strong> <code>Get-ClusterIdByName</code></p>
+  <p>SQL runs work on one cluster. <code>-clusterName</code> is required and limits the host lookup (Step 3) and every assignment call to that cluster. The name is looked up once at the start (before the SLA name is resolved in Step 2) and
+  turned into an ID, because the host lookups filter by <code>CLUSTER_ID</code>. The run stops before any change if no cluster, or
+  more than one cluster, has that exact name. It is required for every SQL run (Apply, Test and <code>-getSqlInventory</code>).
+  Without it the script stops with "Runs need -clusterName. Every lookup, and every assignment call, is on that one cluster." The inventory run does the same lookup itself, first, after it authenticates (see step I1 in section 4).</p>
+  <pre><code>query ClusterByNameQuery($filter: ClusterFilterInput) {
+  allClusterConnection(filter: $filter, sortBy: ClusterName, sortOrder: ASC) {
+    nodes {
+      id
+      name
+    }
+  }
+}</code></pre>
+  <p class="vars-title">Variables</p>
+  <pre><code>{
+  "filter": { "name": ["vault-r-madison"] }
+}</code></pre>
+  <p>The name filter can match partially, so the script keeps only the cluster whose name matches exactly. A host that is on a different
+  cluster is not found by the Step 3 lookup, so it is reported as an error before anything changes, and the same host name on two
+  clusters no longer clashes. Run once per cluster.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">2</span>Resolve the SLA name to an ID</h3>
   <p><strong>Function:</strong> <code>Get-SLADomainByName</code> / <code>Resolve-SlaSpec</code></p>
   <p>Skipped when <code>-slaID</code> is given (the ID is used as given and is not checked here), or when the name is
   <code>DO_NOT_PROTECT</code> or <code>NO_ASSIGNMENT</code>. Give <code>-slaName</code> or <code>-slaID</code>, not both. The name filter can match partially, so the script keeps only an exact name match and
@@ -392,13 +427,15 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label">Query</span>
-  <h3><span class="step-num">2</span>Get Inventory: each SQL host, its instances, and each instance's SLA state</h3>
+  <h3><span class="step-num">3</span>Get Inventory: each SQL host, its instances, and each instance's SLA state</h3>
   <p><strong>Function:</strong> <code>Get-SqlHostInstances</code> (skipped when <code>-inventoryCsv</code> is used)</p>
   <p>One call per host name, paginated 100 at a time. The <code>NAME</code> filter can match partially, so the script
   keeps only the host whose name matches exactly (case-insensitive) and stops with an error if there are none or
   several. The instances come back under the host, with their current assignment, effective SLA and any pending SLA, so no second
   lookup is needed. Archived instances are excluded. The host's own SLA is not used, because SQL protection is on the
-  instances. The host's cluster comes back too and is used to keep every assignment call within one cluster (Step 5).</p>
+  instances. Because <code>-clusterName</code> is required, a <code>CLUSTER_ID</code> filter (the cluster ID from Step 1) is always sent, so a host on
+  another cluster is reported as not found. The host's cluster comes back too and is shown in the plan and the CSVs. Every host is on the
+  <code>-clusterName</code> cluster.</p>
   <pre><code>query MssqlHostInstancesQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!]) {
   mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: [MSSQL_HOST]) {
     edges {
@@ -426,13 +463,14 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
     pageInfo { endCursor hasNextPage }
   }
 }</code></pre>
-  <p class="vars-title">Variables (first page)</p>
+  <p class="vars-title">Variables (first page; <code>-clusterName 'vault-r-madison'</code> is required, so the cluster filter is always sent)</p>
   <pre><code>{
   "first": 100,
   "filter": [
     { "field": "NAME", "texts": ["sql01.example.com"] },
     { "field": "IS_RELIC", "texts": ["false"] },
-    { "field": "IS_REPLICATED", "texts": ["false"] }
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
   ],
   "instanceFilter": [
     { "field": "IS_ARCHIVED", "texts": ["false"] }
@@ -445,7 +483,8 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
   "filter": [
     { "field": "NAME", "texts": ["sql01.example.com"] },
     { "field": "IS_RELIC", "texts": ["false"] },
-    { "field": "IS_REPLICATED", "texts": ["false"] }
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
   ],
   "instanceFilter": [
     { "field": "IS_ARCHIVED", "texts": ["false"] }
@@ -456,14 +495,14 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label logic">Local logic</span>
-  <h3><span class="step-num">3</span>Decide what is skipped</h3>
+  <h3><span class="step-num">4</span>Decide what is skipped</h3>
   <p>No API call. Every instance already carries its SLA state from the lookup in the previous step: its assignment type, its
   effective SLA, and any <strong>pending</strong> SLA (live from RSC, or from the inventory CSV). The script uses that to decide, for
   each instance, whether to assign the target SLA or leave it. <strong>Three things are skipped</strong>, and the plan, the console
   and the Apply CSV say which and why:</p>
   <table>
     <tr><th>Skipped</th><th>When</th><th>Where it shows</th></tr>
-    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV. (In a live run a host that is not found stops
+    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV for the <code>-clusterName</code> cluster (including a host the inventory has only on another cluster). (In a live run a host that is not found stops
     the run instead, before any change.)</td><td>Plan, end-of-run warning, a <code>NotInInventory</code> row in the Apply CSV</td></tr>
     <tr><td>Pending SLA</td><td>The instance has <strong>any</strong> pending SLA. An assignment is already in flight, and sending another would only queue a
     second pending action.</td><td>Plan action <code>Skip: pending</code>, status <code>SkippedPending</code>, a note at the end of the run</td></tr>
@@ -483,16 +522,16 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
     <li>With <code>-inventoryCsv</code> the state comes from the saved columns <code>slaAssignment</code>, <code>effectiveSlaId</code> and
     <code>pendingSlaId</code>, with no RSC call. An inventory written before the pending columns existed has none, so every instance reads as
     having nothing pending. Create a new inventory to get the pending check from a file.</li>
-    <li>The completion polling in Step 7 asks a different question: whether the assignment has <em>finished</em>, where a pending SLA does mean
+    <li>The completion polling in Step 8 asks a different question: whether the assignment has <em>finished</em>, where a pending SLA does mean
     "not yet". It uses its own query, shown there.</li>
   </ul>
 </div>
 
 <div class="step-card">
   <span class="label logic">Local logic</span>
-  <h3><span class="step-num">4</span>Plan, confirm, and create the Apply CSV</h3>
+  <h3><span class="step-num">5</span>Plan, confirm, and create the Apply CSV</h3>
   <p>No API call. The script prints the plan: a few summary lines (source, workload, mutation, target SLA, apply mode, whether polling is on, how many hosts and instances, how many
-  calls, which clusters, and everything that will be skipped and why), then a table with one row per instance. The columns are
+  calls, and everything that will be skipped and why), then a table with one row per instance. The columns are
   <code>hostName</code>, <code>cluster</code>, <code>object</code>, <code>action</code>, <code>currentSla</code>, <code>pendingSla</code> and <code>assignment</code>. The
   <code>action</code> is one of:</p>
   <table>
@@ -501,8 +540,8 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
     <tr><td><code>Skip: on target</code></td><td>The effective SLA is already the target</td></tr>
     <tr><td><code>Skip: pending</code></td><td>An SLA is already pending on it, so nothing is sent</td></tr>
   </table>
-  <p>The cluster column is there so you can see which cluster each instance is on. Calls never mix clusters, so the plan's call count is
-  per cluster.</p>
+  <p>The cluster column shows the cluster each instance is on (the <code>-clusterName</code> cluster). The plan's call count uses the same
+  grouping as the real run, so it shows the number of calls that will actually be sent.</p>
   <ul class="pill-list">
     <li><code>-dryRun</code> stops here, nothing changes.</li>
     <li>The script asks you to type <code>YES</code> (exactly, upper case) before it changes anything. Anything else cancels, exits 0 and writes nothing. If there is nothing to assign (every instance is already on the target or skipped), there is nothing to confirm and no calls are made.</li>
@@ -515,21 +554,16 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label logic">Local logic</span>
-  <h3><span class="step-num">5</span>Build the call groups</h3>
+  <h3><span class="step-num">6</span>Build the call groups</h3>
   <p>No API call. The instances that still need the SLA are split into groups, and one assignment call is sent per
   group.</p>
   <table>
-    <tr><th>-applyMode</th><th>Groups</th><th>Example: 120 instances on 6 hosts, 60 on cluster A (4 hosts) and 60 on cluster B (2 hosts)</th></tr>
-    <tr><td><code>Bulk</code> (default)</td><td>Each cluster's instances are split into batches of up to <code>-batchSize</code> instance IDs (default 50). A call never mixes clusters.</td><td>4 calls: cluster A 50 and 10, cluster B 50 and 10</td></tr>
+    <tr><th>-applyMode</th><th>Groups</th><th>Example: 120 instances on 6 hosts, all on the <code>-clusterName</code> cluster, batch size 50</th></tr>
+    <tr><td><code>Bulk</code> (default)</td><td>The instances are split into batches of up to <code>-batchSize</code> instance IDs (default 50).</td><td>3 calls: 50, 50 and 20 instances</td></tr>
     <tr><td><code>Single</code></td><td>One group per host, holding all of that host's instances</td><td>6 calls, one per host</td></tr>
   </table>
-  <p><strong>Why batches stay within one cluster:</strong> objects sent in one call for one cluster are handled as a single
-  pending action and a single cluster job, so they pay the fixed cost and the lock wait once. Objects from different
-  clusters cannot share that job, so the script groups by cluster first and then splits each cluster's objects by
-  <code>-batchSize</code>. The cluster of each object comes from its host, so you never supply it. The plan's call count uses
-  the same grouping as the real run, so it shows the number of calls that will actually be sent.</p>
   <p><strong>Where the instance IDs come from.</strong> The IDs sent in each call are the IDs of the SQL instances (not the host IDs). They come from the
-  Get Inventory step (Step 2): the live host lookup, or the inventory CSV. Instances already exist and nothing is created in a SQL run, so there is no second
+  Get Inventory step (Step 3): the live host lookup, or the inventory CSV. Instances already exist and nothing is created in a SQL run, so there is no second
   lookup.</p>
   <p>An instance ID is sent only once per run, because the same ID twice in one call can fail validation for the whole batch. If an
   instance to assign has no cluster ID, the run stops with an error before any call, because it could not be batched safely.</p>
@@ -539,17 +573,17 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label mutation">Mutation</span>
-  <h3><span class="step-num">6</span>Apply the SLA for all instances</h3>
+  <h3><span class="step-num">7</span>Apply the SLA for all instances</h3>
   <p><strong>Function:</strong> <code>Set-ObjectSla</code></p>
   <p>Two mutations are supported and a run uses only one of them, so no object is sent to both in the same run. The default is <code>assignSla</code>. <code>-assignMutation AssignSlasForSnappableHierarchies</code> selects the one the RSC UI uses. Both take the same object IDs. The object IDs are <strong>instance IDs</strong>, not host IDs. The
-  call returns as soon as RSC accepts it; RSC applies the change afterwards (Step 7).</p>
+  call returns as soon as RSC accepts it; RSC applies the change afterwards (Step 8).</p>
   <div class="callout warn">
     <strong>Check the first SQL run:</strong> <code>assignSla</code> has been confirmed on Windows filesets on one cluster but not yet on
     SQL instances, so add <code>-assignLog</code> the first time you use it on SQL, or choose
     <code>-assignMutation AssignSlasForSnappableHierarchies</code>.
   </div>
     <p><strong>Default: <code>assignSla</code></strong></p>
-  <p>All objects in one call for one cluster go into a single pending action and a single cluster job, which is why the script batches by cluster. One SLA is sent per call.</p>
+  <p>All objects in one call go into a single pending action and a single cluster job. One SLA is sent per call.</p>
   <pre><code>mutation AssignSlaMutation($input: AssignSlaInput!) {
   assignSla(input: $input) {
     success
@@ -653,7 +687,7 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
   "shouldApplyToNonPolicySnapshots": false,
   "userNote": ""
 }</code></pre>
-  <p><code>objectIds</code> holds one call group, all on one cluster: up to <code>-batchSize</code> instance IDs with
+  <p><code>objectIds</code> holds one call group (all on the <code>-clusterName</code> cluster): up to <code>-batchSize</code> instance IDs with
   <code>-applyMode Bulk</code>, or all of one host's instances with <code>-applyMode Single</code>. The
   <code>doNotProtect</code> variables match a captured RSC UI call. The <code>protectWithSlaId</code> variables follow
   the same field names and the existing <code>Check-Assign-SLA-SQL-AG.ps1</code>.</p>
@@ -671,7 +705,7 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
   <span class="label">Query</span>
-  <h3><span class="step-num">7</span>Poll until RSC shows the SLA</h3>
+  <h3><span class="step-num">8</span>Poll until RSC shows the SLA</h3>
   <p><strong>Function:</strong> <code>Wait-SlaEffectiveWithProgress</code> (skipped with <code>-skipPolling</code>, alias <code>-noWait</code>)</p>
   <p>The assignment mutation is <strong>asynchronous</strong>. <code>success: true</code> only means RSC accepted the
   request. In a captured UI session the effective SLA kept its old value, with the new SLA shown as
@@ -723,7 +757,7 @@ a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query
 
 <div class="step-card">
     <span class="label logic">Output</span>
-  <h3><span class="step-num">8</span>The Apply CSV, host status, and exit code</h3>
+  <h3><span class="step-num">9</span>The Apply CSV, host status, and exit code</h3>
   <p>Each Apply run writes <strong>one</strong> CSV, <code>&lt;prefix&gt;sql_sla_apply-&lt;timestamp&gt;.csv</code>. The
   timestamp includes seconds, so two runs never share a file. The file is written twice:</p>
   <ul class="pill-list">
@@ -823,13 +857,17 @@ sql03.example.com,</code></pre>
   <h3><span class="step-num">I1</span>Create the inventory: <code>-getSqlInventory</code></h3>
   <p><strong>Function:</strong> <code>Get-AllSqlHostInstances</code></p>
   <p>A read-only switch. It needs no <code>-action</code>, no SLA and no confirmation, and it rejects the
-  action, SLA and apply or test parameters if you pass them. It lists every SQL host and each host's instances with
-  the current SLA, writes a timestamped CSV, and exits. With no host list it covers every host RSC returns; with
+  action, SLA and apply or test parameters if you pass them. It lists every SQL host on one cluster and each host's instances with
+  the current SLA, writes a timestamped CSV, and exits. With no host list it covers every host RSC returns for that cluster; with
   <code>-sqlHosts</code> or <code>-sqlCsvPath</code> it is limited to those hosts, and a named host that is not found only
   prints a warning. It can be limited with the SQL host parameters only, not the fileset ones.</p>
-  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory -sqlHosts sql01,sql02</code></pre>
-  <p>It uses the Step 2 query (host <code>cluster</code> and each instance's <code>pendingSla</code> included, only the edge <code>cursor</code> is left out). With no host list the
+  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory -clusterName 'vault-r-madison'
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory -clusterName 'vault-r-madison' -sqlHosts sql01,sql02</code></pre>
+  <p><code>-clusterName</code> is required with this switch (without it the script stops with "-getSqlInventory needs -clusterName. The SQL inventory covers one cluster.").
+  The name is looked up first (the Step 1 query) and turned into a cluster ID. The host query below then carries a <code>CLUSTER_ID</code>
+  filter for that cluster, so the file covers that one cluster only. The run stops, and writes no file, if no cluster or more than one cluster has that name.
+  The cluster columns stay in the CSV.</p>
+  <p>It uses the Step 3 query (host <code>cluster</code> and each instance's <code>pendingSla</code> included, only the edge <code>cursor</code> is left out). With no host list the
   <code>NAME</code> filter is left out and the pages are walked 100 at a time.</p>
   <pre><code>query MssqlInventoryQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!]) {
   mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: [MSSQL_HOST]) {
@@ -857,12 +895,13 @@ sql03.example.com,</code></pre>
     pageInfo { endCursor hasNextPage }
   }
 }</code></pre>
-  <p class="vars-title">Variables: every host (first page)</p>
+  <p class="vars-title">Variables: every host on the cluster (first page; the <code>NAME</code> filter is omitted with no host list)</p>
   <pre><code>{
   "first": 100,
   "filter": [
     { "field": "IS_RELIC", "texts": ["false"] },
-    { "field": "IS_REPLICATED", "texts": ["false"] }
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
   ],
   "instanceFilter": [
     { "field": "IS_ARCHIVED", "texts": ["false"] }
@@ -874,7 +913,8 @@ sql03.example.com,</code></pre>
   "filter": [
     { "field": "NAME", "texts": ["sql01.example.com"] },
     { "field": "IS_RELIC", "texts": ["false"] },
-    { "field": "IS_REPLICATED", "texts": ["false"] }
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
   ],
   "instanceFilter": [
     { "field": "IS_ARCHIVED", "texts": ["false"] }
@@ -888,7 +928,7 @@ sql03.example.com,</code></pre>
     <tr><td><code>inventoryVersion</code>, <code>workload</code></td><td><code>1</code>, <code>SQL</code></td></tr>
     <tr><td><code>collectedAt</code></td><td>UTC time of the run. Apply uses it for the age warning.</td></tr>
     <tr><td><code>host</code>, <code>hostId</code></td><td>SQL host <code>name</code>, <code>id</code></td></tr>
-    <tr><td><code>clusterName</code>, <code>clusterId</code></td><td>Host <code>cluster</code></td></tr>
+    <tr><td><code>clusterName</code>, <code>clusterId</code></td><td>Host <code>cluster</code> (the same cluster on every row, the <code>-clusterName</code> cluster). Apply compares <code>clusterId</code> with the <code>-clusterName</code> cluster.</td></tr>
     <tr><td><code>rowType</code></td><td><code>Instance</code>, or <code>Host</code> for a host with no instances</td></tr>
     <tr><td><code>objectName</code>, <code>objectId</code>, <code>objectType</code></td><td>Instance <code>name</code>, <code>id</code>, <code>MssqlInstance</code></td></tr>
     <tr><td><code>slaAssignment</code></td><td><code>Direct</code>, <code>Derived</code> or <code>Unassigned</code></td></tr>
@@ -908,17 +948,20 @@ sql03.example.com,</code></pre>
   <h3><span class="step-num">I2</span>Feed the inventory into Apply: <code>-inventoryCsv</code></h3>
   <p><strong>Function:</strong> <code>Read-InventoryCsv</code></p>
   <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -action Apply `
-  -inventoryCsv ./rubrik_sql_inventory-2026-11-11_090000.csv -sqlHosts sql01,sql02 -slaName 'Gold'</code></pre>
+  -inventoryCsv ./rubrik_sql_inventory-2026-11-11_090000.csv -sqlHosts sql01,sql02 -slaName 'Gold' -clusterName 'vault-r-madison'</code></pre>
   <ul class="pill-list">
-    <li>The host and instance IDs come from the CSV. <strong>Step 2 is skipped</strong>: no host search, no
-    instance lookup. <strong>Step 3 still runs</strong>, but on the saved state: the starting SLA state (assignment, effective SLA and any pending SLA) comes from the CSV, so an instance
-    whose saved SLA already matches the target, or that has a saved pending SLA, is skipped without asking RSC. Step 1 (SLA name) still runs, and the
-    completion polling in Step 7 still reads RSC. If the inventory is stale, a skip or an assignment can be based on an
+    <li>The host and instance IDs come from the CSV. <strong>Step 3 is skipped</strong>: no host search, no
+    instance lookup. <strong>Step 4 still runs</strong>, but on the saved state: the starting SLA state (assignment, effective SLA and any pending SLA) comes from the CSV, so an instance
+    whose saved SLA already matches the target, or that has a saved pending SLA, is skipped without asking RSC. Step 1 (the cluster lookup) and Step 2 (the SLA name) still run, and the
+    completion polling in Step 8 still reads RSC. If the inventory is stale, a skip or an assignment can be based on an
     old SLA, so refresh it when SLAs may have changed.</li>
     <li>The file must be a SQL inventory with the expected columns, otherwise the run stops with a message saying which
     column or workload is wrong. If you give no host parameters, the workload is read from the file.</li>
     <li>The script prints when the inventory was collected and warns if it is older than
     <code>-inventoryMaxAgeHours</code> (default 24).</li>
+    <li><strong>Hosts on another cluster are not used.</strong> The saved <code>clusterId</code> of each host is compared with the <code>-clusterName</code> cluster. If the inventory has hosts on other clusters the script prints
+    a warning ("The inventory has N host(s) on other clusters...") and leaves them out, and a listed host that is in the inventory only on another cluster is skipped like a host that is not in the inventory (a <code>NotInInventory</code> row, <code>Skipped: not in inventory</code> in the host CSV, and a console line that says it is on a different cluster).
+    This keeps an inventory taken on the wrong cluster from putting an SLA on another cluster's hosts.</li>
     <li><strong>A listed host that is not in the inventory is skipped.</strong> The script prints a warning at the start
     and again at the end, and writes a <code>NotInInventory</code> row for it in the Apply CSV with the other hosts'
     outcomes. The rest of the list still runs. If <em>every</em> listed host is missing, nothing is assigned, the log
@@ -926,9 +969,10 @@ sql03.example.com,</code></pre>
     <li>A listed host that <em>is</em> in the inventory but has no instances stops the run before any change. With no
     host list, a host with no instances is skipped with a warning instead, so one empty host does not block an
     environment-wide run.</li>
-    <li>With no host list, every host in the inventory is used.</li>
+    <li>With no host list, every host in the inventory <strong>on the <code>-clusterName</code> cluster</strong> is used.</li>
     <li>Used with Apply only. <code>-action Test</code> needs live data, and <code>-inventoryCsv</code> is rejected there.</li>
   </ul>
+  <p><code>-clusterName</code> is still required and the cluster is still looked up (Step 1). Use an inventory taken for the same cluster.</p>
   <p>Instances added after the inventory was taken are not in the CSV and are not touched. Rerun the inventory after
   onboarding new hosts. An instance that was removed since the inventory is passed to the assignment call by its saved
   ID, and RSC decides what to do with it, so keep the inventory fresh.</p>
@@ -942,15 +986,16 @@ sql03.example.com,</code></pre>
 <h2>5. Command Reference</h2>
 <table>
   <tr><th>Goal</th><th>Command</th></tr>
-  <tr><td>Create the inventory</td><td><code>-getSqlInventory</code> (no <code>-action</code>); limit with <code>-sqlHosts</code> or <code>-sqlCsvPath</code></td></tr>
-  <tr><td>Preview, change nothing</td><td><code>-action Apply -sqlHosts sql01,sql02 -slaName 'Gold' -dryRun</code></td></tr>
-  <tr><td>Apply to hosts from a CSV</td><td><code>-action Apply -sqlCsvPath ./sql_hosts.csv -slaName 'Gold'</code> (host column <code>host</code>, <code>hostname</code>, <code>name</code> or <code>sqlhost</code>; the CSV's <code>executed</code> column is filled in; the CSV wins over <code>-sqlHosts</code>)</td></tr>
-  <tr><td>Apply from the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -sqlCsvPath ./sql_hosts.csv -slaName 'Gold'</code> (or <code>-sqlHosts sql01,sql02</code>)</td></tr>
-  <tr><td>Apply to every host in the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -slaName 'Gold'</code></td></tr>
+  <tr><td>Create the inventory</td><td><code>-getSqlInventory -clusterName 'vault-r-madison'</code> (no <code>-action</code>); limit with <code>-sqlHosts</code> or <code>-sqlCsvPath</code></td></tr>
+  <tr><td>Preview, change nothing</td><td><code>-action Apply -sqlHosts sql01,sql02 -slaName 'Gold' -clusterName 'vault-r-madison' -dryRun</code></td></tr>
+  <tr><td>Apply to hosts from a CSV</td><td><code>-action Apply -sqlCsvPath ./sql_hosts.csv -slaName 'Gold' -clusterName 'vault-r-madison'</code> (host column <code>host</code>, <code>hostname</code>, <code>name</code> or <code>sqlhost</code>; the CSV's <code>executed</code> column is filled in; the CSV wins over <code>-sqlHosts</code>)</td></tr>
+  <tr><td>Apply from the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -sqlCsvPath ./sql_hosts.csv -slaName 'Gold' -clusterName 'vault-r-madison'</code> (or <code>-sqlHosts sql01,sql02</code>)</td></tr>
+  <tr><td>Apply to every host in the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -slaName 'Gold' -clusterName 'vault-r-madison'</code></td></tr>
   <tr><td>Change the inventory age warning</td><td><code>-inventoryMaxAgeHours 48</code></td></tr>
-  <tr><td>Use an SLA ID</td><td><code>-action Apply -sqlHosts sql01 -slaID &lt;SLA ID&gt;</code></td></tr>
+  <tr><td>Use an SLA ID</td><td><code>-action Apply -sqlHosts sql01 -slaID &lt;SLA ID&gt; -clusterName 'vault-r-madison'</code></td></tr>
   <tr><td>One call per host</td><td><code>-applyMode Single</code></td></tr>
-  <tr><td>Change the batch size (default 50, never mixing clusters)</td><td><code>-batchSize 25</code></td></tr>
+  <tr><td>Cluster (required for every SQL run)</td><td><code>-clusterName 'vault-r-madison'</code> (exact name; every lookup and every assignment call are on this one cluster)</td></tr>
+  <tr><td>Change the batch size (default 50)</td><td><code>-batchSize 25</code></td></tr>
   <tr><td>Record every assignment call to a text file</td><td><code>-assignLog</code> (with <code>-assignMutation AssignSla</code> to check that mutation)</td></tr>
   <tr><td>Submit only, do not poll for completion (each object's state is <code>Submitted</code>)</td><td><code>-skipPolling</code> (alias <code>-noWait</code>)</td></tr>
   <tr><td>Do Not Protect</td><td><code>-slaName 'DO_NOT_PROTECT'</code></td></tr>
@@ -975,12 +1020,13 @@ sql03.example.com,</code></pre>
 <p>Input rules checked before anything is sent:</p>
 <ul class="pill-list">
   <li><code>-RscServiceAccountJson</code> is required. <code>-action</code> must be <code>Apply</code> or <code>Test</code>, unless <code>-getSqlInventory</code> is used.</li>
-  <li>Give hosts with <code>-sqlHosts</code> and/or <code>-sqlCsvPath</code> (the CSV wins). With <code>-inventoryCsv</code> and no host list, a SQL inventory is detected from the file. SQL and fileset parameters cannot be mixed, and the fileset-only options (including <code>-clusterName</code> and <code>-recheckFilesetIDs</code>) are rejected in a SQL run.</li>
+  <li>Give hosts with <code>-sqlHosts</code> and/or <code>-sqlCsvPath</code> (the CSV wins). With <code>-inventoryCsv</code> and no host list, a SQL inventory is detected from the file. SQL and fileset parameters cannot be mixed, and the fileset-only options (including <code>-recheckFilesetIDs</code>) are rejected in a SQL run.</li>
+  <li><code>-clusterName</code> is required for every SQL run (Apply, Test and <code>-getSqlInventory</code>). It is the exact name of one cluster, and the run stops if no cluster, or more than one cluster, has that name.</li>
   <li>Give exactly one of <code>-slaName</code> or <code>-slaID</code>.</li>
   <li><code>-batchSize</code>, <code>-pollIntervalSec</code> and <code>-inventoryMaxAgeHours</code> must be 1 or greater.</li>
   <li><code>-inventoryCsv</code> only works with <code>-action Apply</code> and the file must exist.</li>
   <li><code>-mode</code> and <code>-setHostLogRetention</code> are rejected with Apply. <code>-applyMode</code>, <code>-batchSize</code>, <code>-skipPolling</code> and <code>-assignLog</code> are rejected with Test.</li>
-  <li><code>-getSqlInventory</code> rejects <code>-action</code>, the SLA, the apply and test options, <code>-inventoryCsv</code> and the fileset options.</li>
+  <li><code>-getSqlInventory</code> needs <code>-clusterName</code> and rejects <code>-action</code>, the SLA, the apply and test options, <code>-inventoryCsv</code> and the fileset options.</li>
 </ul>
 <p>Every command also needs <code>-RscServiceAccountJson &lt;file&gt;</code>, and Apply commands need
 <code>-action Apply</code>. The script has a separate <code>-action Test</code> pathway that times Single versus Bulk

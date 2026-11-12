@@ -14,7 +14,7 @@ One SLA (-slaName or -slaID) is applied to every object in the list. -action cho
 - Finds the objects on the listed hosts. For filesets, each host must have the fileset template (given by
   -filesetName or -filesetTemplateId) applied to it. The template itself must already exist and is never
   created or changed. Hosts that already have the template applied are left alone. Hosts that do not have it
-  get it applied with bulkCreateFilesets (one call per cluster, after confirmation). Then the SLA is assigned
+  get it applied with bulkCreateFilesets (one call, after confirmation). Then the SLA is assigned
   to the filesets on all of those hosts.
 - Gets each object's SLA state in the same lookup that finds it (live from RSC, or from the inventory CSV): its effective
   SLA and any pending SLA. Three things are skipped, and the plan, the console and the Apply CSV say which and why: a host
@@ -24,7 +24,7 @@ One SLA (-slaName or -slaID) is applied to every object in the list. -action cho
 - Shows the plan and asks for confirmation (-dryRun shows the plan only, -skipConfirm skips the prompt).
 - Creates one Apply CSV with the starting assignment of every object before changing anything, then sends the
   assignments and rewrites the same file with the outcomes.
-  -applyMode Bulk (default) sends up to -batchSize objects per call (default 50), never mixing clusters. -applyMode
+  -applyMode Bulk (default) sends up to -batchSize objects per call (default 50), all on the -clusterName cluster. -applyMode
   Single sends one call per host. A failed call does not stop the remaining calls. -assignLog records every call.
 - Unless -skipPolling is used, polls every object until RSC shows the SLA (pendingSla empty and the effective SLA
   matching), printing progress, for up to -timeoutSec. With -skipPolling the assignments are only submitted and each
@@ -52,7 +52,7 @@ each object is effective, failures and timeouts are recorded.
   sets the host log retention before each assignment. That is opt-in with -setHostLogRetention because it
   immediately deletes log backup files on the host.
 - Fileset: the start SLA is not checked. Hosts that do not have the template get it applied with
-  bulkCreateFilesets (one call per cluster, after confirmation, not timed). Created filesets are left on the
+  bulkCreateFilesets (one call, after confirmation, not timed). Created filesets are left on the
   hosts. The revert phase sets the filesets to DO_NOT_PROTECT.
 If the test fails or is interrupted (or a revert phase does not complete), every object is set back to
 DO_NOT_PROTECT.
@@ -149,9 +149,10 @@ Host type used to look up fileset hosts and templates: WINDOWS_HOST_ROOT or LINU
 to one host type, so a template is only found under the host root it was created for. Default: WINDOWS_HOST_ROOT
 
 .PARAMETER clusterName
-Fileset runs and -getFilesetInventory: required. Exact name of the one cluster to work on. The fileset template lookup, the host
-lookup and the fileset inventory are limited to that cluster, and the template is applied to hosts on that cluster only. The name is
-looked up once at the start and the run stops if no cluster, or more than one cluster, has that name. Not used for SQL.
+Required for every run: SQL and fileset, Apply, Test and both inventory switches. Exact name of the one cluster to work on. The host
+lookup, the fileset template lookup and the inventory are limited to that cluster, so every assignment call is on one cluster (the
+fileset template is applied to hosts on that cluster only). With -inventoryCsv, hosts the inventory has on another cluster are skipped
+with a warning. The name is looked up once at the start and the run stops if no cluster, or more than one cluster, has that name.
 
 .PARAMETER recheckFilesetIDs
 Apply only, fileset hosts. By default the fileset object IDs returned when the template is applied are added straight to the list of
@@ -181,11 +182,11 @@ Test only, SQL only. Switch to also call bulkUpdateMssqlPropertiesOnHost (hostLo
 assignment, as the RSC UI does. This immediately deletes log files on the host regardless of age.
 
 .PARAMETER applyMode
-Apply only. Bulk (default) sends up to -batchSize objects per call, never mixing clusters. Single sends one call per host.
+Apply only. Bulk (default) sends up to -batchSize objects per call. Single sends one call per host. All calls are on the -clusterName cluster.
 
 .PARAMETER batchSize
-Apply only. Maximum number of objects per call with -applyMode Bulk. Default: 50. A call never mixes clusters, so the
-objects on each cluster are split into batches of this size on their own. Objects are batched together because RSC treats
+Apply only. Maximum number of objects per call with -applyMode Bulk. Default: 50. A run is on one cluster
+(-clusterName), so the objects are split into batches of this size. Objects are batched together because RSC treats
 the objects in one call on one cluster as a single pending action and a single cluster job.
 
 .PARAMETER assignLog
@@ -238,11 +239,11 @@ Switch to resolve the hosts and show the plan, then exit without changing anythi
 Switch to skip the 'type YES' confirmation prompt.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -dryRun
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -dryRun -clusterName 'cluster01'
 Show which SQL instances would get the 'Gold' SLA, which are already on it, and how many calls would be sent.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlCsvPath "./sql_hosts.csv" -slaName 'Gold'
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlCsvPath "./sql_hosts.csv" -slaName 'Gold' -clusterName 'cluster01'
 Assign 'Gold' to all SQL instances on the hosts in the CSV, in bulk calls of up to 50 instances (-batchSize), and wait for completion.
 
 .EXAMPLE
@@ -254,15 +255,15 @@ Assign 'Gold' to the 'Temp' filesets on the listed hosts. Hosts that do not have
 Assign 'Gold' using a fileset template ID, one call per host. Hosts without the template get it applied first.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlHosts sql01 -slaName 'DO_NOT_PROTECT' -skipPolling
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -sqlHosts sql01 -slaName 'DO_NOT_PROTECT' -skipPolling -clusterName 'cluster01'
 Set the instances on sql01 to Do Not Protect, submit the assignments and exit without polling for completion. The state of each instance is Submitted.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Test -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -dryRun
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Test -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -dryRun -clusterName 'cluster01'
 Resolve the hosts and show what the SQL timing test would do, without changing anything.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Test -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -setHostLogRetention
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Test -sqlHosts sql01,sql02,sql03 -slaName 'Gold' -setHostLogRetention -clusterName 'cluster01'
 Time Single versus Bulk assigning 'Gold' (DO_NOT_PROTECT to Gold) and reverting it, also setting host log retention as the UI does.
 
 .EXAMPLE
@@ -282,7 +283,7 @@ Assign the SLA (with the default assignSla mutation) and write the full details 
 After the template is applied, look each of those hosts up again (one lookup per host) instead of using the fileset IDs returned by the template call.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -getSqlInventory
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -getSqlInventory -clusterName 'cluster01'
 Write an inventory of every SQL host and its instances with their current SLAs to ./rubrik_sql_inventory-<timestamp>.csv.
 
 .EXAMPLE
@@ -290,7 +291,7 @@ Write an inventory of every SQL host and its instances with their current SLAs t
 Write an inventory of every Windows host, its filesets with their templates, and all fileset templates.
 
 .EXAMPLE
-./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -inventoryCsv "./rubrik_sql_inventory-2026-11-11_0900.csv" -sqlHosts sql01,sql02 -slaName 'Gold'
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson "./rsc-sa.json" -action Apply -inventoryCsv "./rubrik_sql_inventory-2026-11-11_0900.csv" -sqlHosts sql01,sql02 -slaName 'Gold' -clusterName 'cluster01'
 Assign 'Gold' to the instances of sql01 and sql02 using the saved IDs, without searching RSC for hosts or instances.
 
 .EXAMPLE
@@ -371,7 +372,7 @@ param (
   [ValidateSet('Bulk', 'Single')]
   [string]$applyMode = 'Bulk',
 
-  # Apply only: maximum number of objects per call with -applyMode Bulk. A call never mixes clusters: each cluster's objects are batched on their own
+  # Apply only: maximum number of objects per call with -applyMode Bulk. A run is on one cluster (-clusterName), so the objects are split into batches of this size
   [Parameter(Mandatory=$false)]
   [int]$batchSize = 50,
 
@@ -438,8 +439,8 @@ if ($PSBoundParameters.Count -eq 0) {
   Write-Host "Use -action Apply to assign. Hosts come from a CSV (or a host list), and -action is not needed for an inventory."
   Write-Host ""
   Write-Host "SQL HOSTS" -ForegroundColor Cyan
-  Write-Host "  Inventory:  ./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson `"./rsc-sa.json`" -getSqlInventory"
-  Write-Host "  Apply:      ./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson `"./rsc-sa.json`" -action Apply -sqlCsvPath `"./sql_hosts.csv`" -slaName `"Gold`""
+  Write-Host "  Inventory:  ./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson `"./rsc-sa.json`" -getSqlInventory -clusterName `"cluster01`""
+  Write-Host "  Apply:      ./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson `"./rsc-sa.json`" -action Apply -sqlCsvPath `"./sql_hosts.csv`" -slaName `"Gold`" -clusterName `"cluster01`""
   Write-Host "  From an inventory: add -inventoryCsv `"./sql_inventory-<time>.csv`" to the Apply command"
   Write-Host "  Creates:    sql_inventory-<time>.csv       from -getSqlInventory (Apply never changes it)"
   Write-Host "              sql_sla_apply-<time>.csv       from each Apply: every instance's starting SLA, then its outcome and host status"
@@ -459,6 +460,7 @@ if ($PSBoundParameters.Count -eq 0) {
   Write-Host "              and the original is kept once as <file>.bak"
   Write-Host ""
   Write-Host "ALL RUNS" -ForegroundColor Cyan
+  Write-Host "  -clusterName is required: every lookup and every assignment call is on that one cluster."
   Write-Host "  New files go in the current folder, or where -csvOutputPrefix points."
   Write-Host "  Add -dryRun to preview an Apply: it writes nothing. Apply changes real SLAs and never reverts them."
   Write-Host "  Apply asks you to type YES before it changes anything. Add -skipConfirm to skip that and just run it."
@@ -498,12 +500,12 @@ if ($inventoryRequested) {
       exit 1
     }
   }
-  if ($clusterName -and $getSqlInventory) {
-    Write-Error "-clusterName only applies to fileset runs."
-    exit 1
-  }
-  if ($getFilesetInventory -and -not $clusterName) {
-    Write-Error "-getFilesetInventory needs -clusterName. The fileset inventory covers one cluster."
+  if (($getSqlInventory -or $getFilesetInventory) -and -not $clusterName) {
+    if ($getSqlInventory) {
+      Write-Error "-getSqlInventory needs -clusterName. The SQL inventory covers one cluster."
+    } else {
+      Write-Error "-getFilesetInventory needs -clusterName. The fileset inventory covers one cluster."
+    }
     exit 1
   }
   if ($getSqlInventory -and ($filesetHosts -or $filesetCsvPath)) {
@@ -697,14 +699,6 @@ if ($action -eq 'Inventory') {
 } else {
   $sqlRequested = [bool]($sqlHosts -or $sqlCsvPath)
   $filesetRequested = [bool]($filesetHosts -or $filesetCsvPath -or $filesetName -or $filesetTemplateId)
-  if ($clusterName -and -not $filesetRequested -and $action -ne 'Inventory') {
-    Write-Error "-clusterName only applies to fileset runs (-filesetHosts / -filesetCsvPath with a template)."
-    exit 1
-  }
-  if ($filesetRequested -and -not $clusterName) {
-    Write-Error "Fileset runs need -clusterName. Every fileset lookup and the template application are done on that one cluster."
-    exit 1
-  }
 
   # With an inventory CSV and no host parameters, the inventory itself says which workload this is
   if ($inventoryCsv -and -not $sqlRequested -and -not $filesetRequested) {
@@ -721,6 +715,11 @@ if ($action -eq 'Inventory') {
 
   if (-not $sqlRequested -and -not $filesetRequested) {
     Write-Error "Provide SQL hosts with -sqlHosts and/or -sqlCsvPath, or filesets with -filesetHosts/-filesetCsvPath and -filesetName or -filesetTemplateId."
+    exit 1
+  }
+
+  if (-not $clusterName) {
+    Write-Error "Runs need -clusterName. Every lookup, and every assignment call, is on that one cluster."
     exit 1
   }
 
@@ -1004,14 +1003,18 @@ Function Get-SqlHostInstances {
   }'
   $nodes = @()
   $afterCursor = ''
+  $sqlHostFilter = @(
+    @{ "field" = "NAME"; "texts" = @($hostName) },
+    @{ "field" = "IS_RELIC"; "texts" = @("false") },
+    @{ "field" = "IS_REPLICATED"; "texts" = @("false") }
+  )
+  if ($script:clusterFilterId) {
+    $sqlHostFilter += @{ "field" = "CLUSTER_ID"; "texts" = @($script:clusterFilterId) }
+  }
   do {
     $variables = @{
       "first" = 100
-      "filter" = @(
-        @{ "field" = "NAME"; "texts" = @($hostName) },
-        @{ "field" = "IS_RELIC"; "texts" = @("false") },
-        @{ "field" = "IS_REPLICATED"; "texts" = @("false") }
-      )
+      "filter" = $sqlHostFilter
       "instanceFilter" = @(
         @{ "field" = "IS_ARCHIVED"; "texts" = @("false") }
       )
@@ -1837,8 +1840,8 @@ Function Split-IntoBatches {
 }  ### Function Split-IntoBatches
 
 
-# Split objects into call groups. A call never mixes clusters (objects in one call for one cluster become one pending
-# action and one cluster job). Bulk: each cluster's objects are split into batches of $size. Single: one call per host.
+# Split objects into call groups. A run is on one cluster (-clusterName), so Bulk splits the objects into batches of $size and
+# Single is one call per host. The grouping is still done by cluster as a safeguard: a call never mixes clusters.
 # Returns an array of groups, each group an array of objects that all share one cluster.
 Function Get-CallGroups {
   param (
@@ -1924,7 +1927,7 @@ Function Invoke-ApplySla {
     throw "$($noCluster.Count) object(s) have no cluster ID, so they cannot be batched safely: $((@($noCluster | Select-Object -First 3 | ForEach-Object { "$($_.hostName)/$($_.instanceName)" })) -join ', ')"
   }
 
-  # Build the call groups: Bulk is batches of $batchSize objects within each cluster, Single is one call per host
+  # Build the call groups: Bulk is batches of $batchSize objects, Single is one call per host
   $groups = Get-CallGroups -objects $todo -mode $applyMode -size $batchSize
 
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -2024,6 +2027,9 @@ Function Get-AllSqlHostInstances {
     )
     if ($hostName) {
       $filter = @(@{ "field" = "NAME"; "texts" = @($hostName) }) + $filter
+    }
+    if ($script:clusterFilterId) {
+      $filter += @{ "field" = "CLUSTER_ID"; "texts" = @($script:clusterFilterId) }
     }
     $variables = @{
       "first" = 100
@@ -2254,6 +2260,10 @@ if ($action -eq 'Inventory') {
   $collectedAt = (Get-Date).ToUniversalTime().ToString('o')
   $inventoryRows = @()
 
+  # The inventory covers the one cluster named by -clusterName: resolve it once, the lookups then filter by it
+  $script:clusterFilterId = Get-ClusterIdByName -name $clusterName
+  Write-Host "Limiting the inventory to cluster '$clusterName' ($script:clusterFilterId)"
+
   if ($getSqlInventory) {
     if ($hostNames.Count -gt 0) {
       Write-Host "Listing SQL instances on $($hostNames.Count) host(s)"
@@ -2292,9 +2302,6 @@ if ($action -eq 'Inventory') {
     Write-Host "SQL inventory: $hostCount host(s), $(@($inventoryRows | Where-Object { $_.rowType -eq 'Instance' }).Count) instance(s)" -ForegroundColor Green
     Write-Host "  $inventoryFile"
   } else {
-    # The fileset inventory covers the one cluster named by -clusterName: resolve it once, the lookups then filter by it
-    $script:clusterFilterId = Get-ClusterIdByName -name $clusterName
-    Write-Host "Limiting the fileset inventory to cluster '$clusterName' ($script:clusterFilterId)"
     if ($hostNames.Count -gt 0) {
       Write-Host "Listing filesets on $($hostNames.Count) host(s) (host root $hostRoot)"
       $fsHostNodes = @()
@@ -2356,11 +2363,9 @@ if ($action -eq 'Inventory') {
 }
 
 # Resolve -clusterName once. Template and host lookups then filter by this cluster ID.
-$script:clusterFilterId = ''
-if ($clusterName) {
-  $script:clusterFilterId = Get-ClusterIdByName -name $clusterName
-  Write-Host "Limiting fileset lookups to cluster '$clusterName' ($script:clusterFilterId)"
-}
+$script:clusterFilterId = Get-ClusterIdByName -name $clusterName
+Write-Host "Limiting lookups to cluster '$clusterName' ($script:clusterFilterId)"
+
 
 # Resolve the target SLA. In Test the objects are returned to DO_NOT_PROTECT after each method.
 $targetSpec = Resolve-SlaSpec -name $slaName -id $slaID
@@ -2380,6 +2385,15 @@ if ($inventoryCsv) {
   $inventoryRowsAll = @(Read-InventoryCsv -path $inventoryCsv -expectedWorkload $workload)
   $invHosts = @($inventoryRowsAll | Where-Object { $_.rowType -in @('Host', 'Instance', 'Fileset') } | Group-Object -Property hostId)
 
+  # Only hosts on the -clusterName cluster are used. A host that the inventory has on another cluster is skipped and logged
+  # with the other not-in-inventory hosts, so an inventory taken on the wrong cluster can not put an SLA on other clusters.
+  $invHostsAll = $invHosts
+  $invHosts = @($invHostsAll | Where-Object { $_.Group[0].clusterId -eq $script:clusterFilterId })
+  $otherCluster = @($invHostsAll | Where-Object { $_.Group[0].clusterId -ne $script:clusterFilterId })
+  if ($otherCluster.Count -gt 0) {
+    Write-Host "The inventory has $($otherCluster.Count) host(s) on other clusters, which are not used because -clusterName is '$clusterName'." -ForegroundColor Yellow
+  }
+
   # The hosts to use: the host list if one was given, otherwise every host in the inventory
   $wantedHosts = @()
   if ($hostNames.Count -gt 0) {
@@ -2387,6 +2401,9 @@ if ($inventoryCsv) {
       $match = @($invHosts | Where-Object { $_.Group[0].host -eq $hn })
       if ($match.Count -eq 0) {
         $inventorySkipped += $hn
+        if (@($otherCluster | Where-Object { $_.Group[0].host -eq $hn }).Count -gt 0) {
+          Write-Host "  $hn is in the inventory on a different cluster than '$clusterName', so it is skipped" -ForegroundColor Yellow
+        }
       } elseif ($match.Count -gt 1) {
         throw "Host '$hn' appears more than once in the inventory with different host IDs. Rerun the inventory."
       } else {
@@ -2471,7 +2488,7 @@ if ($inventoryCsv) {
     throw "Could not use all hosts from the inventory. Fix the list above (or rerun the inventory) and try again."
   }
   if ($inventorySkipped.Count -gt 0) {
-    Write-Host "Skipping $($inventorySkipped.Count) host(s) that are not in the inventory: $($inventorySkipped -join ', ')" -ForegroundColor Yellow
+    Write-Host "Skipping $($inventorySkipped.Count) host(s) that are not in the inventory for cluster '$clusterName': $($inventorySkipped -join ', ')" -ForegroundColor Yellow
   }
   if ($workload -eq 'Fileset') {
     $pendingHosts = @($hostObjs | Where-Object { @($_.instances).Count -eq 0 })
@@ -2696,7 +2713,6 @@ if ($action -eq 'Apply') {
   # Get-CallGroups returns the groups wrapped in one extra array (so a single group is not flattened), so take the call count from the inner array
   $plannedGroups = Get-CallGroups -objects $todoObjects -mode $applyMode -size $batchSize
   $callCount = $plannedGroups.Count
-  $clusterCount = @($todoObjects | Select-Object -ExpandProperty clusterId -Unique).Count
 
   # Show the plan
   Write-Host ""
@@ -2711,7 +2727,7 @@ if ($action -eq 'Apply') {
   Write-Host "  Assign mutation:          $assignMutation"
   Write-Host "  Target SLA:               $($targetSpec.label)"
   if ($applyMode -eq 'Bulk') {
-    Write-Host "  Apply mode:               Bulk (up to $batchSize objects per call, never mixing clusters)"
+    Write-Host "  Apply mode:               Bulk (up to $batchSize objects per call)"
   } else {
     Write-Host "  Apply mode:               Single (one call per host)"
   }
@@ -2739,7 +2755,7 @@ if ($action -eq 'Apply') {
       Write-Host "    Objects with an SLA already pending ($($skippedPendingObjs.Count)): $((@($skippedPendingObjs | ForEach-Object { "$($_.hostName)/$($_.instanceName) (pending $($_.state.pendingSla.name))" })) -join ', ')" -ForegroundColor Yellow
     }
   }
-  Write-Host "  API calls to assign:      $callCount across $clusterCount cluster(s) (plus any for the new filesets)"
+  Write-Host "  API calls to assign:      $callCount (plus any for the new filesets)"
   Write-Host ""
   $planRows = @(foreach ($o in $applyObjects) {
     [pscustomobject]@{
