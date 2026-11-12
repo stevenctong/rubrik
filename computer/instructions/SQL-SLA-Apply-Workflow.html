@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL Server SLA Apply - Inventory &amp; Workflow Reference</title>
+<style>
+  :root {
+    --rubrik-teal: #00B2A9;
+    --ink: #1a1a1a;
+    --muted: #5f6b6a;
+    --border: #dfe6e5;
+    --bg-soft: #f4f9f8;
+    --code-bg: #0f1717;
+    --code-ink: #d9f2ef;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 20px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #ffffff;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header.doc-header {
+    border-bottom: 4px solid var(--rubrik-teal);
+    padding: 32px 0 20px;
+  }
+  header.doc-header h1 { margin: 0 0 6px; font-size: 1.9rem; color: var(--ink); }
+  header.doc-header p.subtitle { margin: 0; color: var(--muted); font-size: 1rem; }
+  h2 {
+    color: var(--ink);
+    border-left: 5px solid var(--rubrik-teal);
+    padding-left: 12px;
+    margin-top: 48px;
+    font-size: 1.35rem;
+  }
+  h3 { font-size: 1.08rem; margin-top: 28px; color: var(--ink); }
+  h3 .step-num {
+    display: inline-block;
+    background: var(--rubrik-teal);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    margin-right: 8px;
+  }
+  p { color: var(--ink); }
+  .callout {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--rubrik-teal);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .callout.warn { background: #fff8e6; border-color: #f0d9a0; border-left-color: #d99a00; }
+  .callout strong { color: var(--ink); }
+
+  /* Flow diagram */
+  .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; margin: 24px 0; }
+  .flow .box {
+    flex: 1 1 150px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fff;
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .flow .box .tag {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .flow .box.outside { background: #f6f6f6; border-color: #d8d8d8; }
+  .flow .box.outside .tag { color: #8a8a8a; }
+  .flow .box.script { background: #e6f7f5; border-color: var(--rubrik-teal); }
+  .flow .box.script .tag { color: #007a73; }
+  .flow .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 1.3rem;
+    flex: 0 0 auto;
+    padding: 0 2px;
+  }
+  .flow-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 14px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .flow-divider::before, .flow-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 0.88rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); color: var(--ink); font-weight: 700; }
+  code {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 10px 0 18px;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+  .vars-title { margin: 14px 0 0; font-size: 0.82rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .step-card { border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px 4px; margin: 18px 0 28px; }
+  .step-card .label {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #007a73;
+    background: #e6f7f5;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-bottom: 6px;
+    margin-right: 4px;
+  }
+  .label.mutation { color: #9a4b00; background: #fdeee0; }
+  .label.rest { color: #5b3d9a; background: #efe8fb; }
+  .label.logic { color: #555; background: #ececec; }
+  ul { padding-left: 22px; }
+  .pill-list li { margin-bottom: 6px; }
+  footer {
+    margin-top: 60px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  @media (max-width: 640px) {
+    .flow { flex-direction: column; }
+    .flow .arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-header">
+  <h1>SQL Server &mdash; SLA Apply Workflow</h1>
+  <p class="subtitle">Inventory, then apply: production workflow and API reference for <code>Set-SLA-SQL-Fileset.ps1</code> (SQL instances)</p>
+</header>
+
+<h2>1. Overall Workflow</h2>
+<p>
+  SLAs are assigned to <strong>SQL instances</strong>, not hosts. RSC attaches protection to each
+  <code>MssqlInstance</code> object under a SQL host, so the script resolves every host on your list to its
+  instances and assigns one SLA to all of them. The work splits into two runs: an optional <strong>inventory</strong>
+  run that snapshots the environment to a CSV, and an <strong>Apply</strong> run that assigns the SLA, either from that
+  CSV or by querying RSC live.
+</p>
+<div class="callout">
+  <strong>Prerequisite:</strong> every host on your list must already be added to Rubrik, and SQL discovery must have
+  finished so its instances appear in RSC. The script does not add hosts. In a live run, a host that is not found, or
+  that has no SQL instances, stops the run before anything is changed.
+</div>
+
+<div class="flow-divider">Prerequisite (outside the script)</div>
+<div class="flow">
+  <div class="box outside">
+    <div class="tag">Prerequisite</div>
+    Each SQL host is already added to Rubrik and SQL discovery has finished, so its instances appear in RSC
+  </div>
+</div>
+
+<div class="flow-divider">Run 1: inventory (optional, read-only)</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Inventory 1</div>
+    Authenticate to RSC
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Inventory 2</div>
+    List SQL hosts, their instances, current SLAs and any pending SLA
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Inventory 3</div>
+    Write timestamped <code>sql_inventory-&lt;time&gt;.csv</code>
+  </div>
+</div>
+
+<div class="flow-divider">Run 2: apply</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Apply 1</div>
+    Authenticate, resolve the SLA name to an ID
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 2: Get Inventory</div>
+    Get each host, its instances, and each instance's SLA state including any pending SLA (live from RSC, or from the inventory CSV)
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 3</div>
+    Decide what is skipped: host not found, any pending SLA, or effective SLA already the target
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 4</div>
+    Show the plan and ask for <code>YES</code> (add <code>-skipConfirm</code> to skip the question and go ahead), then create the Apply CSV with every instance's starting SLA
+  </div>
+</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Apply 5</div>
+    Apply the SLA for all instances
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 6</div>
+    Poll until RSC shows the SLA on every instance
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 7</div>
+    Rewrite the Apply CSV with the outcomes, update the host CSV's <code>executed</code> column, warn about skipped hosts, exit non-zero on any failure
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Why an inventory CSV:</strong> in a large estate, finding every host, instance and ID with GraphQL on
+  each production run is slow and repeats work. With the inventory CSV the Apply run skips the host search and
+  instance lookup and uses the saved host and instance IDs. <strong>It also trusts the SLA state saved in the CSV and
+  does not read each instance's state again</strong>: you pass the inventory as the starting state. An instance whose
+  saved SLA already matches the target is skipped. Refresh the inventory if SLAs may have changed since it was taken.
+</div>
+
+<h2>2. Script Logic (Pseudocode)</h2>
+<pre><code>INVENTORY RUN  (-getSqlInventory, optional host list; needs no -action, SLA or confirmation)
+    AUTHENTICATE to RSC
+    LIST SQL hosts (all of them, or only the hosts named), each with its cluster and non-archived instances, and each instance's
+         effective SLA and any pending SLA
+    WRITE one CSV row per instance (a host with no instances gets one "Host" row)
+    EXIT
+
+APPLY RUN  (-action Apply)
+INPUT: hosts (-sqlHosts, or -sqlCsvPath which wins if both are given; -inventoryCsv supplies the IDs and state),
+       one SLA (-slaName or -slaID) that applies to every host,
+       optional -applyMode Bulk|Single, -batchSize, -skipPolling, -assignLog, -dryRun, -skipConfirm,
+       -assignMutation AssignSla|AssignSlasForSnappableHierarchies, -pollIntervalSec, -timeoutSec,
+       -inventoryMaxAgeHours, -csvOutputPrefix
+       (parameters are validated first, see section 5; a run with no parameters prints a usage summary and EXITs 0)
+
+STEP 0   AUTHENTICATE to RSC using the Service Account JSON (client_id/client_secret -&gt; bearer token)
+STEP 1   RESOLVE the SLA name to its ID (DO_NOT_PROTECT and NO_ASSIGNMENT need no lookup; -slaID is used as given)
+
+STEP 2   GET INVENTORY (SQL hosts and their instances, each with its effective SLA and any pending SLA)
+IF -inventoryCsv was given, from the CSV:
+    READ the CSV; check it is a SQL inventory; print its age, warn if older than -inventoryMaxAgeHours
+    IF a host list was given:
+        a listed host that is not in the inventory is skipped ("not in inventory")
+        a listed host that is in the inventory but has no instances is an error
+    ELSE: use every host in the inventory (a host with no instances is skipped with a warning)
+    a host name that appears under more than one host ID in the CSV is an error
+    take each instance's assignment, effective SLA and pending SLA from the CSV columns
+    IF any error: print it and STOP before changing anything
+ELSE, from RSC, FOR EACH host name:
+    LOOK UP the SQL host by name; require exactly one exact-name match
+    COLLECT its cluster and its non-archived SQL instances (id, name, assignment, effective SLA, pending SLA)
+    IF the host is not found or has no instances: record an error
+    IF any host had an error: print them and STOP before changing anything
+
+STEP 3   DECIDE what is skipped, from the state gathered in Step 2 (live from RSC, or the CSV columns with -inventoryCsv).
+    Three things are skipped, and the plan, the console and the Apply CSV say which and why:
+    a host that is not found / not in the inventory       (a live run stops instead, before any change)
+    an instance with ANY pending SLA                      -&gt; SkippedPending (an assignment is already in flight)
+    an instance whose effective SLA is already the target -&gt; AlreadyOnTarget (assigned directly or inherited)
+    everything else is ASSIGNED   (the pending check comes first)
+    IF no instance was found at all and no host was skipped for not being in the inventory: STOP with an error
+
+STEP 4   PRINT the plan: hosts, instances, how many to assign, what is skipped and why, number of calls, per cluster
+    IF -dryRun: STOP, no changes
+    ASK the user to type YES, otherwise STOP        (exactly YES, upper case; only asked when something is to be assigned;
+                                                     -skipConfirm skips the question and goes ahead; the plan is still printed)
+    CREATE the Apply CSV (every instance's starting SLA, status Pending) before changing anything
+
+STEP 5   BUILD call groups from the instances to assign:
+    Bulk (default): per cluster, batches of up to -batchSize (default 50) instance IDs; a call never mixes clusters
+    Single:         one group per host
+    (an instance ID is sent only once per run; an instance with no cluster ID stops the run with an error before any call)
+STEP 6   FOR EACH group: SEND the assignment mutation with that group's instance IDs
+    ON failure: mark the group CallFailed and continue with the next group
+    ON success: mark the instances Submitted
+
+STEP 7   IF not -skipPolling:
+    LOOP every -pollIntervalSec until all Submitted instances show the SLA or -timeoutSec is reached:
+        READ the state of the instances still waiting (one batched query)
+        PRINT "n/total effective, s elapsed"
+    MARK each instance Applied or Timeout
+
+STEP 8   REWRITE the Apply CSV with each instance's outcome and its host's status
+    IF the hosts came from -sqlCsvPath: WRITE each host's outcome into the CSV's "executed" column (keep a .bak of the original)
+    PRINT a note for instances skipped for a pending SLA, and a warning for hosts skipped for not being in the inventory
+    EXIT 1 if any instance is CallFailed, Timeout or NotAttempted, or the run stopped with an error, otherwise EXIT 0
+         (a skip, for a pending SLA or a host not in the inventory, does not by itself change the exit code,
+          unless every listed host was skipped, which exits 1)
+</code></pre>
+
+<h2>3. Detailed Steps &amp; GraphQL Reference</h2>
+<p>Each step corresponds to a function or logic block in <code>Set-SLA-SQL-Fileset.ps1</code>. Every GraphQL call is
+a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query": ..., "variables": ... }</code>. The
+<strong>Variables</strong> blocks show the full <code>variables</code> object the script sends.</p>
+
+<div class="step-card">
+  <span class="label rest">REST</span>
+  <h3><span class="step-num">0</span>Authenticate to RSC</h3>
+  <p>The script reads the RSC Service Account JSON (<code>-RscServiceAccountJson</code>), confirms it contains
+  <code>client_id</code>, <code>client_secret</code> and <code>access_token_uri</code>, and exchanges them for a
+  bearer token. It requires PowerShell 7+. This is the same block as <code>computer/Core/RSC-Authentication.ps1</code>,
+  copied inline.</p>
+  <table>
+    <tr><th>Method</th><td>POST</td></tr>
+    <tr><th>URL</th><td><code>&lt;access_token_uri from the service account JSON&gt;</code></td></tr>
+  </table>
+  <p class="vars-title">Request body</p>
+  <pre><code>{
+  "grant_type": "client_credentials",
+  "client_id": "&lt;from service account JSON&gt;",
+  "client_secret": "&lt;from service account JSON&gt;"
+}</code></pre>
+  <p>The tenant base URL is <code>access_token_uri</code> with <code>/api/client_token</code> removed. Every later
+  call is a GraphQL POST to <code>&lt;base URL&gt;/api/graphql</code> with an
+  <code>Authorization: Bearer &lt;access_token&gt;</code> header. The service account needs permission to view SQL
+  hosts and instances, view SLA Domains, and assign SLAs.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">1</span>Resolve the SLA name to an ID</h3>
+  <p><strong>Function:</strong> <code>Get-SLADomainByName</code> / <code>Resolve-SlaSpec</code></p>
+  <p>Skipped when <code>-slaID</code> is given (the ID is used as given and is not checked here), or when the name is
+  <code>DO_NOT_PROTECT</code> or <code>NO_ASSIGNMENT</code>. Give <code>-slaName</code> or <code>-slaID</code>, not both. The name filter can match partially, so the script keeps only an exact name match and
+  stops if there are zero or more than one.</p>
+  <pre><code>query SLADomainsForNameFilterQuery($filter: [GlobalSlaFilterInput!]) {
+  slaDomains(filter: $filter) {
+    nodes {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables</p>
+  <pre><code>{
+  "filter": [
+    { "field": "NAME", "text": "Gold" }
+  ]
+}</code></pre>
+  <p>The resulting target is one of three assignment types:</p>
+  <table>
+    <tr><th>-slaName / -slaID</th><th>Assignment type sent</th></tr>
+    <tr><td>An SLA Domain name or ID</td><td><code>protectWithSlaId</code></td></tr>
+    <tr><td><code>DO_NOT_PROTECT</code></td><td><code>doNotProtect</code></td></tr>
+    <tr><td><code>NO_ASSIGNMENT</code></td><td><code>noAssignment</code> (removes the direct assignment so the object inherits again)</td></tr>
+  </table>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">2</span>Get Inventory: each SQL host, its instances, and each instance's SLA state</h3>
+  <p><strong>Function:</strong> <code>Get-SqlHostInstances</code> (skipped when <code>-inventoryCsv</code> is used)</p>
+  <p>One call per host name, paginated 100 at a time. The <code>NAME</code> filter can match partially, so the script
+  keeps only the host whose name matches exactly (case-insensitive) and stops with an error if there are none or
+  several. The instances come back under the host, with their current assignment, effective SLA and any pending SLA, so no second
+  lookup is needed. Archived instances are excluded. The host's own SLA is not used, because SQL protection is on the
+  instances. The host's cluster comes back too and is used to keep every assignment call within one cluster (Step 5).</p>
+  <pre><code>query MssqlHostInstancesQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!]) {
+  mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: [MSSQL_HOST]) {
+    edges {
+      cursor
+      node {
+        id
+        name
+        objectType
+        ... on MssqlHost {
+          cluster { id name }
+          instanceDescendantConnection: descendantConnection(filter: $instanceFilter, typeFilter: [MssqlInstance]) {
+            edges {
+              node {
+                id
+                name
+                slaAssignment
+                effectiveSlaDomain { id name }
+                pendingSla { id name }
+              }
+            }
+          }
+        }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (first page)</p>
+  <pre><code>{
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": ["sql01.example.com"] },
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] }
+  ],
+  "instanceFilter": [
+    { "field": "IS_ARCHIVED", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p class="vars-title">Variables (later pages: the same, plus the cursor from the previous page)</p>
+  <pre><code>{
+  "first": 100,
+  "after": "&lt;pageInfo.endCursor from the previous page&gt;",
+  "filter": [
+    { "field": "NAME", "texts": ["sql01.example.com"] },
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] }
+  ],
+  "instanceFilter": [
+    { "field": "IS_ARCHIVED", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p>Replicated copies and relics are excluded so only the primary, live objects are touched.</p>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">3</span>Decide what is skipped</h3>
+  <p>No API call. Every instance already carries its SLA state from the lookup in the previous step: its assignment type, its
+  effective SLA, and any <strong>pending</strong> SLA (live from RSC, or from the inventory CSV). The script uses that to decide, for
+  each instance, whether to assign the target SLA or leave it. <strong>Three things are skipped</strong>, and the plan, the console
+  and the Apply CSV say which and why:</p>
+  <table>
+    <tr><th>Skipped</th><th>When</th><th>Where it shows</th></tr>
+    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV. (In a live run a host that is not found stops
+    the run instead, before any change.)</td><td>Plan, end-of-run warning, a <code>NotInInventory</code> row in the Apply CSV</td></tr>
+    <tr><td>Pending SLA</td><td>The instance has <strong>any</strong> pending SLA. An assignment is already in flight, and sending another would only queue a
+    second pending action.</td><td>Plan action <code>Skip: pending</code>, status <code>SkippedPending</code>, a note at the end of the run</td></tr>
+    <tr><td>Already on the target</td><td>The instance's <strong>effective</strong> SLA is already the target, whether it was assigned directly or inherited.</td>
+    <td>Plan action <code>Skip: on target</code>, status <code>AlreadyOnTarget</code></td></tr>
+  </table>
+  <p>How "already on the target" is checked, by target:</p>
+  <table>
+    <tr><th>Target</th><th>Already on target when</th></tr>
+    <tr><td>An SLA Domain</td><td><code>effectiveSlaDomain.id</code> equals the SLA ID</td></tr>
+    <tr><td>DO_NOT_PROTECT</td><td><code>effectiveSlaDomain.id == "DO_NOT_PROTECT"</code></td></tr>
+    <tr><td>NO_ASSIGNMENT</td><td><code>slaAssignment</code> is not <code>"Direct"</code>, so the instance already inherits</td></tr>
+  </table>
+  <ul class="pill-list">
+    <li>The pending SLA is checked first, so an instance with a different SLA pending is skipped too. Rerun once it has finished.</li>
+    <li>An instance that is on the target by inheritance is skipped, so no direct assignment is added on top of it.</li>
+    <li>With <code>-inventoryCsv</code> the state comes from the saved columns <code>slaAssignment</code>, <code>effectiveSlaId</code> and
+    <code>pendingSlaId</code>, with no RSC call. An inventory written before the pending columns existed has none, so every instance reads as
+    having nothing pending. Create a new inventory to get the pending check from a file.</li>
+    <li>The completion polling in Step 7 asks a different question: whether the assignment has <em>finished</em>, where a pending SLA does mean
+    "not yet". It uses its own query, shown there.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">4</span>Plan, confirm, and create the Apply CSV</h3>
+  <p>No API call. The script prints the plan: a few summary lines (source, workload, mutation, target SLA, apply mode, whether polling is on, how many hosts and instances, how many
+  calls, which clusters, and everything that will be skipped and why), then a table with one row per instance. The columns are
+  <code>hostName</code>, <code>cluster</code>, <code>object</code>, <code>action</code>, <code>currentSla</code>, <code>pendingSla</code> and <code>assignment</code>. The
+  <code>action</code> is one of:</p>
+  <table>
+    <tr><th>action</th><th>Meaning</th></tr>
+    <tr><td><code>Assign</code></td><td>The target SLA will be sent</td></tr>
+    <tr><td><code>Skip: on target</code></td><td>The effective SLA is already the target</td></tr>
+    <tr><td><code>Skip: pending</code></td><td>An SLA is already pending on it, so nothing is sent</td></tr>
+  </table>
+  <p>The cluster column is there so you can see which cluster each instance is on. Calls never mix clusters, so the plan's call count is
+  per cluster.</p>
+  <ul class="pill-list">
+    <li><code>-dryRun</code> stops here, nothing changes.</li>
+    <li>The script asks you to type <code>YES</code> (exactly, upper case) before it changes anything. Anything else cancels, exits 0 and writes nothing. If there is nothing to assign (every instance is already on the target or skipped), there is nothing to confirm and no calls are made.</li>
+    <li><strong>To skip the prompt and just run it,</strong> add <code>-skipConfirm</code>. The plan is still printed and the Apply CSV is still written
+    before any change. Only the question is skipped, so use it for a run you have already previewed with <code>-dryRun</code>, or for an
+    unattended run. It applies to <code>-action Apply</code>.</li>
+    <li>Before any change, the Apply CSV is created with every instance's starting assignment and SLA (status <code>Pending</code>). This is the rollback record, and it is rewritten with the results at the end. The script never reverts anything itself.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">5</span>Build the call groups</h3>
+  <p>No API call. The instances that still need the SLA are split into groups, and one assignment call is sent per
+  group.</p>
+  <table>
+    <tr><th>-applyMode</th><th>Groups</th><th>Example: 120 instances on 6 hosts, 60 on cluster A (4 hosts) and 60 on cluster B (2 hosts)</th></tr>
+    <tr><td><code>Bulk</code> (default)</td><td>Each cluster's instances are split into batches of up to <code>-batchSize</code> instance IDs (default 50). A call never mixes clusters.</td><td>4 calls: cluster A 50 and 10, cluster B 50 and 10</td></tr>
+    <tr><td><code>Single</code></td><td>One group per host, holding all of that host's instances</td><td>6 calls, one per host</td></tr>
+  </table>
+  <p><strong>Why batches stay within one cluster:</strong> objects sent in one call for one cluster are handled as a single
+  pending action and a single cluster job, so they pay the fixed cost and the lock wait once. Objects from different
+  clusters cannot share that job, so the script groups by cluster first and then splits each cluster's objects by
+  <code>-batchSize</code>. The cluster of each object comes from its host, so you never supply it. The plan's call count uses
+  the same grouping as the real run, so it shows the number of calls that will actually be sent.</p>
+  <p><strong>Where the instance IDs come from.</strong> The IDs sent in each call are the IDs of the SQL instances (not the host IDs). They come from the
+  Get Inventory step (Step 2): the live host lookup, or the inventory CSV. Instances already exist and nothing is created in a SQL run, so there is no second
+  lookup.</p>
+  <p>An instance ID is sent only once per run, because the same ID twice in one call can fail validation for the whole batch. If an
+  instance to assign has no cluster ID, the run stops with an error before any call, because it could not be batched safely.</p>
+  <p>Calls are sent one after the other. A failed call marks only that group <code>CallFailed</code>; the remaining
+  groups still run.</p>
+</div>
+
+<div class="step-card">
+  <span class="label mutation">Mutation</span>
+  <h3><span class="step-num">6</span>Apply the SLA for all instances</h3>
+  <p><strong>Function:</strong> <code>Set-ObjectSla</code></p>
+  <p>Two mutations are supported and a run uses only one of them, so no object is sent to both in the same run. The default is <code>assignSla</code>. <code>-assignMutation AssignSlasForSnappableHierarchies</code> selects the one the RSC UI uses. Both take the same object IDs. The object IDs are <strong>instance IDs</strong>, not host IDs. The
+  call returns as soon as RSC accepts it; RSC applies the change afterwards (Step 7).</p>
+  <div class="callout warn">
+    <strong>Check the first SQL run:</strong> <code>assignSla</code> has been confirmed on Windows filesets on one cluster but not yet on
+    SQL instances, so add <code>-assignLog</code> the first time you use it on SQL, or choose
+    <code>-assignMutation AssignSlasForSnappableHierarchies</code>.
+  </div>
+    <p><strong>Default: <code>assignSla</code></strong></p>
+  <p>All objects in one call for one cluster go into a single pending action and a single cluster job, which is why the script batches by cluster. One SLA is sent per call.</p>
+  <pre><code>mutation AssignSlaMutation($input: AssignSlaInput!) {
+  assignSla(input: $input) {
+    success
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables: assign an SLA Domain</p>
+  <pre><code>{
+  "input": {
+    "slaDomainAssignType": "protectWithSlaId",
+    "slaOptionalId": "9b604570-62ec-43d1-82f6-35e7cf360ad4",
+    "objectIds": [
+      "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+      "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+    ],
+    "existingSnapshotRetention": null,
+    "shouldApplyToExistingSnapshots": false,
+    "shouldApplyToNonPolicySnapshots": false,
+    "userNote": ""
+  }
+}</code></pre>
+  <p class="vars-title">Variables: Do Not Protect or remove the assignment</p>
+  <pre><code>{
+  "input": {
+    "slaDomainAssignType": "doNotProtect",
+    "slaOptionalId": null,
+    "objectIds": [
+      "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+      "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+    ],
+    "existingSnapshotRetention": "RETAIN_SNAPSHOTS",
+    "shouldApplyToExistingSnapshots": null,
+    "shouldApplyToNonPolicySnapshots": false,
+    "userNote": ""
+  }
+}</code></pre>
+  <p>For remove-the-assignment, <code>slaDomainAssignType</code> is <code>"noAssignment"</code>.</p>
+
+  <p><strong>Alternative: <code>-assignMutation AssignSlasForSnappableHierarchies</code></strong></p>
+  <p>The mutation the RSC UI uses. With <code>applicableSnappableTypes</code> left empty, as here, it behaves like <code>assignSla</code>. The script never sets that argument.</p>
+  <pre><code>mutation AssignSlasForSnappableHierarchiesMutation(
+  $globalExistingSnapshotRetention: GlobalExistingSnapshotRetention,
+  $globalSlaOptionalFid: UUID,
+  $globalSlaAssignType: SlaAssignTypeEnum!,
+  $objectIds: [UUID!]!,
+  $applicableSnappableTypes: [WorkloadLevelHierarchy!],
+  $shouldApplyToExistingSnapshots: Boolean,
+  $shouldApplyToNonPolicySnapshots: Boolean,
+  $userNote: String
+) {
+  assignSlasForSnappableHierarchies(
+    globalExistingSnapshotRetention: $globalExistingSnapshotRetention,
+    globalSlaOptionalFid: $globalSlaOptionalFid,
+    globalSlaAssignType: $globalSlaAssignType,
+    objectIds: $objectIds,
+    applicableSnappableTypes: $applicableSnappableTypes,
+    shouldApplyToExistingSnapshots: $shouldApplyToExistingSnapshots,
+    shouldApplyToNonPolicySnapshots: $shouldApplyToNonPolicySnapshots,
+    userNote: $userNote
+  ) {
+    success
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables: assign an SLA Domain (<code>-slaName 'Gold'</code> or <code>-slaID</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+    "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+  ],
+  "globalSlaAssignType": "protectWithSlaId",
+  "globalSlaOptionalFid": "9b604570-62ec-43d1-82f6-35e7cf360ad4",
+  "globalExistingSnapshotRetention": null,
+  "shouldApplyToExistingSnapshots": false,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p class="vars-title">Variables: Do Not Protect (<code>-slaName 'DO_NOT_PROTECT'</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+    "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+  ],
+  "globalSlaAssignType": "doNotProtect",
+  "globalSlaOptionalFid": null,
+  "globalExistingSnapshotRetention": "RETAIN_SNAPSHOTS",
+  "shouldApplyToExistingSnapshots": null,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p class="vars-title">Variables: remove the direct assignment (<code>-slaName 'NO_ASSIGNMENT'</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+    "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+  ],
+  "globalSlaAssignType": "noAssignment",
+  "globalSlaOptionalFid": null,
+  "globalExistingSnapshotRetention": "RETAIN_SNAPSHOTS",
+  "shouldApplyToExistingSnapshots": null,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p><code>objectIds</code> holds one call group, all on one cluster: up to <code>-batchSize</code> instance IDs with
+  <code>-applyMode Bulk</code>, or all of one host's instances with <code>-applyMode Single</code>. The
+  <code>doNotProtect</code> variables match a captured RSC UI call. The <code>protectWithSlaId</code> variables follow
+  the same field names and the existing <code>Check-Assign-SLA-SQL-AG.ps1</code>.</p>
+  <p>The call counts as accepted only if every returned <code>success</code> is <code>true</code>. A GraphQL
+  <code>errors</code> array also fails the group.</p>
+
+  <p><strong>Recording the calls with <code>-assignLog</code>.</strong> Add the switch to an Apply run to write every
+  assignment call to <code>&lt;prefix&gt;sql_sla_assign_log-&lt;timestamp&gt;.txt</code>. Each entry has the call number and time,
+  the mutation used, the workload, the target SLA, the cluster, the object count, the seconds taken, <code>Result: OK</code> or
+  <code>FAILED</code> with the error, and then the full query, the full variables and the raw response. It is meant for checking
+  how a mutation behaves, for example <code>-assignMutation AssignSla</code>, and for sending to someone else. It contains
+  object IDs and the SLA ID, and nothing is hidden. If the file already exists the new calls are appended. A problem writing
+  the log is reported but never stops an assignment. Without the switch no file is written.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">7</span>Poll until RSC shows the SLA</h3>
+  <p><strong>Function:</strong> <code>Wait-SlaEffectiveWithProgress</code> (skipped with <code>-skipPolling</code>, alias <code>-noWait</code>)</p>
+  <p>The assignment mutation is <strong>asynchronous</strong>. <code>success: true</code> only means RSC accepted the
+  request. In a captured UI session the effective SLA kept its old value, with the new SLA shown as
+  <code>pendingSla</code>, for tens of seconds to minutes before both flipped together. The script therefore
+  polls the instances it submitted, with the batched query shown below, every
+  <code>-pollIntervalSec</code> seconds (default 5), until each one is effective or <code>-timeoutSec</code>
+  (default 600) runs out in total.</p>
+  <p>An instance counts as effective only when nothing is pending on it and:</p>
+  <table>
+    <tr><th>Target</th><th>Effective when</th></tr>
+    <tr><td>An SLA Domain</td><td><code>slaAssignment</code> is <code>Direct</code> and <code>effectiveSlaDomain.id</code> equals the SLA ID</td></tr>
+    <tr><td>DO_NOT_PROTECT</td><td><code>slaAssignment</code> is <code>Direct</code> and <code>effectiveSlaDomain.id</code> is <code>DO_NOT_PROTECT</code></td></tr>
+    <tr><td>NO_ASSIGNMENT</td><td><code>slaAssignment</code> is not <code>Direct</code></td></tr>
+  </table>
+  <p>With <code>-skipPolling</code> none of this runs: no polling query is sent and every accepted instance ends as <code>Submitted</code>.</p>
+  <p class="vars-title">Variables (one entry for each instance still waiting)</p>
+  <pre><code>{
+  "id0": "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+}</code></pre>
+  <ul class="pill-list">
+    <li>Each poll sends one batched query for only the instances still waiting (shown below).</li>
+    <li>It prints a progress line each time, for example <code>12/40 effective, 95s elapsed</code>.</li>
+    <li>A failed poll is reported and retried at the next interval; it does not stop the run.</li>
+    <li>Timing is only as precise as the poll interval.</li>
+  </ul>
+  <p>Each poll asks for many objects at once using GraphQL aliases (<code>o0</code>, <code>o1</code>, ...), at most 50 per request, so the query text and
+  the variable names grow with the number of objects. It returns each object's assignment type, effective SLA and any pending SLA. The
+  instances both support these fields.</p>
+  <pre><code>query PendingSlaBatchQuery($id0: UUID!, $id1: UUID!) {
+  o0: hierarchyObject(fid: $id0) {
+    id
+    slaAssignment
+    effectiveSlaDomain { id name }
+    ... on CdmHierarchyObject { pendingSla { id name } }
+  }
+  o1: hierarchyObject(fid: $id1) {
+    id
+    slaAssignment
+    effectiveSlaDomain { id name }
+    ... on CdmHierarchyObject { pendingSla { id name } }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (two objects; one entry per object still waiting, up to 50)</p>
+  <pre><code>{
+  "id0": "2c5bc144-a473-51f9-b6c7-c56aee68877d",
+  "id1": "fbe7c3e4-44e1-5475-af41-f10d863f7c87"
+}</code></pre>
+</div>
+
+<div class="step-card">
+    <span class="label logic">Output</span>
+  <h3><span class="step-num">8</span>The Apply CSV, host status, and exit code</h3>
+  <p>Each Apply run writes <strong>one</strong> CSV, <code>&lt;prefix&gt;sql_sla_apply-&lt;timestamp&gt;.csv</code>. The
+  timestamp includes seconds, so two runs never share a file. The file is written twice:</p>
+  <ul class="pill-list">
+    <li><strong>Before any change</strong>, right after you confirm, with one row per instance: its starting assignment and
+    SLA, and status <code>Pending</code>. If the run is interrupted, this file still holds the starting state, so it is the
+    rollback record. The script never reverts anything itself.</li>
+    <li><strong>At the end</strong>, rewritten with each instance's outcome and the status of its host. A host with no
+    instance to show, such as one that is not in the inventory, gets a row with no object.</li>
+  </ul>
+  <p>The file is written to a temporary file and moved into place, so a failure part way cannot leave a half-written
+  CSV. A <code>-dryRun</code>, or answering anything other than <code>YES</code>, writes no file.</p>
+  <p>One special case: if the host list came with <code>-inventoryCsv</code> and <em>none</em> of the listed hosts is in the inventory,
+  the script writes a short Apply CSV with only the columns <code>workload, host, object, objectId, hostStatus, status, error</code>, one
+  <code>NotInInventory</code> row per host, and exits 1.</p>
+  <p>Columns: <code>workload, host, cluster, hostStatus, object, objectId, beforeAssignment, beforeSla, beforeSlaId,
+  beforePendingSla, targetSla, assignMutation, applyMode, callGroup, callSec, effectiveSec, status, error</code>. The
+  <code>cluster</code> is the host's cluster, the <code>before*</code> columns are the starting state (<code>beforePendingSla</code> is any SLA that was pending), <code>callGroup</code> and <code>callSec</code> say which call carried
+  the instance and how long it took, and <code>effectiveSec</code> is how long after the first call RSC showed the SLA.</p>
+  <p><strong><code>status</code></strong> is per instance:</p>
+  <table>
+    <tr><th>status</th><th>Meaning</th><th>Exit code</th></tr>
+    <tr><td><code>Pending</code></td><td>Only in the first write. Seen at the end only if the run was interrupted.</td><td>-</td></tr>
+    <tr><td><code>Applied</code></td><td>Accepted and seen effective</td><td>0</td></tr>
+    <tr><td><code>AlreadyOnTarget</code></td><td>The effective SLA was already the target (assigned directly or inherited) before any call, skipped</td><td>0</td></tr>
+    <tr><td><code>SkippedPending</code></td><td>Any SLA was already pending on the instance, so nothing was sent. Rerun once the pending SLA has finished</td><td>0</td></tr>
+    <tr><td><code>Submitted</code></td><td>Accepted, not checked. With <code>-skipPolling</code> every accepted object ends as <code>Submitted</code> and nothing is polled</td><td>0</td></tr>
+    <tr><td><code>CallFailed</code></td><td>The call for its group failed; <code>error</code> has the message</td><td>1</td></tr>
+    <tr><td><code>Timeout</code></td><td>Accepted but not effective within <code>-timeoutSec</code></td><td>1</td></tr>
+    <tr><td><code>NotAttempted</code></td><td>The run stopped before this instance's call (an error stopped the run part way)</td><td>1</td></tr>
+    <tr><td><code>NotInInventory</code></td><td>A host row only: the host was listed but is not in the inventory CSV, so it was skipped</td><td>0 (1 if every listed host was skipped)</td></tr>
+  </table>
+  <p><strong><code>hostStatus</code></strong> repeats on every row of a host, so you can filter by host:</p>
+  <table>
+    <tr><th>hostStatus</th><th>Meaning</th></tr>
+    <tr><td><code>Assigned</code></td><td>No instance on the host failed, timed out, was not attempted or was skipped for a pending SLA: each is <code>Applied</code>, <code>Submitted</code> or <code>AlreadyOnTarget</code></td></tr>
+    <tr><td><code>Partial</code></td><td>At least one instance is <code>Applied</code>, <code>Submitted</code> or <code>AlreadyOnTarget</code>, and at least one failed, timed out, was not attempted or was skipped for a pending SLA</td></tr>
+    <tr><td><code>Failed</code></td><td>At least one instance failed, timed out or was not attempted, and none reached the target SLA</td></tr>
+    <tr><td><code>Skipped</code></td><td>Every instance on the host was skipped for a pending SLA, and none failed</td></tr>
+    <tr><td><code>NotInInventory</code></td><td>The host was not in the inventory CSV</td></tr>
+    <tr><td><code>Pending</code></td><td>Only in the first write</td></tr>
+  </table>
+  <p>The console prints the same results as counts by status and by host status, lists any instance that needs attention, lists the instances skipped for a pending SLA,
+  and warns about hosts that were skipped for not being in the inventory. If the hosts came from the host CSV, its
+  <code>executed</code> column is updated too (see section 4). A <code>Timeout</code> does not mean the assignment failed,
+  only that it was not visible in time, so check those instances in RSC.</p>
+  <p><strong>Exit code.</strong> <code>1</code> if any instance is <code>CallFailed</code>, <code>Timeout</code> or <code>NotAttempted</code>, if the
+  run stopped with an error after the Apply CSV was created, or if every listed host was missing from the inventory. Otherwise
+  <code>0</code>, including a <code>-dryRun</code>, a cancelled prompt, a run where nothing needed assigning, and runs with hosts or instances
+  skipped. A problem found before any change (host not found, no instances, bad parameters, unreadable inventory) stops the script with an
+  error and no assignment is made. Nothing is ever reverted.</p>
+</div>
+
+<h2>4. Host CSV and Inventory Workflow</h2>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">H</span>The host CSV and the <code>executed</code> column</h3>
+  <p>Hosts can be given on the command line (<code>-sqlHosts</code>) or in a CSV (<code>-sqlCsvPath</code>). The CSV holds
+  <strong>only the host names and the run's state</strong>. The SLA is not in the CSV: it is given with
+  <code>-slaName</code> or <code>-slaID</code> and applies to every host in the file. If both <code>-sqlHosts</code> and
+  <code>-sqlCsvPath</code> are given, <strong>the CSV wins</strong> and <code>-sqlHosts</code> is ignored, with a note printed.</p>
+  <pre><code>host,executed
+sql01.example.com,
+sql02.example.com,
+sql03.example.com,</code></pre>
+  <p>The header needs one host column named <code>host</code>, <code>hostname</code>, <code>name</code> or
+  <code>sqlhost</code>. Any other columns you add are kept. A ready-made example is
+  <code>computer/Powershell/Set-SLA-SQL-Fileset-example.csv</code>.</p>
+  <p>After an Apply run the script writes each host's outcome into the <code>executed</code> column of the <strong>same
+  file</strong>, as a status followed by the time. The column is added if it is missing.</p>
+  <table>
+    <tr><th><code>executed</code> value</th><th>Meaning</th></tr>
+    <tr><td><code>Assigned 2026-11-11 14:52</code></td><td>No instance on the host failed or was skipped for a pending SLA. With <code>-skipPolling</code> this reads <code>Assigned</code> once the calls were accepted, although nothing was checked</td></tr>
+    <tr><td><code>AlreadyOnTarget &lt;time&gt;</code></td><td>Every instance on the host was already on the target SLA, so nothing was sent</td></tr>
+    <tr><td><code>Partial: 2 of 3 objects, ... &lt;time&gt;</code></td><td>Some instances reached the target SLA and some did not (failed, timed out, not attempted or skipped for a pending SLA); each one that did not is listed as <code>object: status</code></td></tr>
+    <tr><td><code>Failed: ... &lt;time&gt;</code></td><td>No instance on the host reached the target SLA</td></tr>
+    <tr><td><code>Skipped: pending SLA, ... &lt;time&gt;</code></td><td>Every instance on the host had an SLA pending, so nothing was sent; the instances are listed. Rerun later</td></tr>
+    <tr><td><code>Skipped: not in inventory &lt;time&gt;</code></td><td>With <code>-inventoryCsv</code>, the host is not in the inventory</td></tr>
+    <tr><td><code>Not run: &lt;reason&gt; &lt;time&gt;</code></td><td>The run stopped before any change because of a problem resolving hosts (for example a host not found). The host named in the error shows that error. Every other host shows <code>Not run: stopped before any change</code>.</td></tr>
+  </table>
+  <ul class="pill-list">
+    <li><strong>The file is only changed by a real Apply run.</strong> <code>-dryRun</code>, answering anything other than
+    <code>YES</code>, and the inventory switches never touch it. A run that stops before any change does record
+    <code>Not run</code> so you can see which host to fix.</li>
+    <li>The file is written to a temporary file and then moved into place, and the original is kept once as
+    <code>&lt;file&gt;.bak</code>. If the write fails, the script says so and the results are still in the Apply CSV.</li>
+    <li>The write uses standard CSV quoting, so every field ends up in quotes even if the original had none. Excel and
+    PowerShell read it the same.</li>
+    <li>A rerun does not skip hosts that already have a value in <code>executed</code>. It processes every host again
+    and overwrites the column. Skipping completed hosts is not built.</li>
+  </ul>
+</div>
+
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">I1</span>Create the inventory: <code>-getSqlInventory</code></h3>
+  <p><strong>Function:</strong> <code>Get-AllSqlHostInstances</code></p>
+  <p>A read-only switch. It needs no <code>-action</code>, no SLA and no confirmation, and it rejects the
+  action, SLA and apply or test parameters if you pass them. It lists every SQL host and each host's instances with
+  the current SLA, writes a timestamped CSV, and exits. With no host list it covers every host RSC returns; with
+  <code>-sqlHosts</code> or <code>-sqlCsvPath</code> it is limited to those hosts, and a named host that is not found only
+  prints a warning. It can be limited with the SQL host parameters only, not the fileset ones.</p>
+  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getSqlInventory -sqlHosts sql01,sql02</code></pre>
+  <p>It uses the Step 2 query (host <code>cluster</code> and each instance's <code>pendingSla</code> included, only the edge <code>cursor</code> is left out). With no host list the
+  <code>NAME</code> filter is left out and the pages are walked 100 at a time.</p>
+  <pre><code>query MssqlInventoryQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!]) {
+  mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: [MSSQL_HOST]) {
+    edges {
+      node {
+        id
+        name
+        objectType
+        ... on MssqlHost {
+          cluster { id name }
+          instanceDescendantConnection: descendantConnection(filter: $instanceFilter, typeFilter: [MssqlInstance]) {
+            edges {
+              node {
+                id
+                name
+                slaAssignment
+                effectiveSlaDomain { id name }
+                pendingSla { id name }
+              }
+            }
+          }
+        }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables: every host (first page)</p>
+  <pre><code>{
+  "first": 100,
+  "filter": [
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] }
+  ],
+  "instanceFilter": [
+    { "field": "IS_ARCHIVED", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p class="vars-title">Variables: one named host</p>
+  <pre><code>{
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": ["sql01.example.com"] },
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] }
+  ],
+  "instanceFilter": [
+    { "field": "IS_ARCHIVED", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p>Output: <code>&lt;prefix&gt;sql_inventory-&lt;timestamp&gt;.csv</code>, one row per instance. A host with no
+  instances gets one <code>Host</code> row so it is still recorded. The columns are shared with the fileset inventory,
+  so some are empty for SQL.</p>
+  <table>
+    <tr><th>Column</th><th>Content for SQL</th></tr>
+    <tr><td><code>inventoryVersion</code>, <code>workload</code></td><td><code>1</code>, <code>SQL</code></td></tr>
+    <tr><td><code>collectedAt</code></td><td>UTC time of the run. Apply uses it for the age warning.</td></tr>
+    <tr><td><code>host</code>, <code>hostId</code></td><td>SQL host <code>name</code>, <code>id</code></td></tr>
+    <tr><td><code>clusterName</code>, <code>clusterId</code></td><td>Host <code>cluster</code></td></tr>
+    <tr><td><code>rowType</code></td><td><code>Instance</code>, or <code>Host</code> for a host with no instances</td></tr>
+    <tr><td><code>objectName</code>, <code>objectId</code>, <code>objectType</code></td><td>Instance <code>name</code>, <code>id</code>, <code>MssqlInstance</code></td></tr>
+    <tr><td><code>slaAssignment</code></td><td><code>Direct</code>, <code>Derived</code> or <code>Unassigned</code></td></tr>
+    <tr><td><code>effectiveSla</code>, <code>effectiveSlaId</code></td><td>Instance <code>effectiveSlaDomain</code></td></tr>
+    <tr><td><code>pendingSla</code>, <code>pendingSlaId</code></td><td>Instance <code>pendingSla</code>: the SLA still being applied (empty when nothing is pending). Apply skips an instance that has one.</td></tr>
+    <tr><td><code>templateId</code>, <code>templateName</code>, <code>includes</code>, <code>excludes</code>, <code>exceptions</code></td><td>Empty (fileset only)</td></tr>
+  </table>
+  <p>The 21 columns are written in this order. Example rows:</p>
+  <pre><code>"inventoryVersion","workload","collectedAt","host","hostId","clusterName","clusterId","rowType","objectName","objectId","objectType","slaAssignment","effectiveSla","effectiveSlaId","pendingSla","pendingSlaId","templateId","templateName","includes","excludes","exceptions"
+"1","SQL","2026-11-11T22:46:27Z","sql01.example.com","2e246781-4e5b-594f-8ca0-ae5533717168","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","Instance","MSSQLSERVER","2c5bc144-a473-51f9-b6c7-c56aee68877d","MssqlInstance","Direct","DO_NOT_PROTECT","DO_NOT_PROTECT","","","","","","",""
+"1","SQL","2026-11-11T22:46:27Z","sql02.example.com","3f357892-5f5c-6a5f-9da1-bf6644828279","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","Instance","MSSQLSERVER","fbe7c3e4-44e1-5475-af41-f10d863f7c87","MssqlInstance","Direct","Silver","b2f3c4d5-1111-4222-8333-444455556666","Gold","71ede730-34a2-53e0-a0f2-829d9a0b4b30","","","","",""
+"1","SQL","2026-11-11T22:46:27Z","sql04.example.com","7a4a0536-7253-59c9-a541-6fb05cf55549","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","Host","","","","","","","","","","","","",""</code></pre>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">I2</span>Feed the inventory into Apply: <code>-inventoryCsv</code></h3>
+  <p><strong>Function:</strong> <code>Read-InventoryCsv</code></p>
+  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -action Apply `
+  -inventoryCsv ./rubrik_sql_inventory-2026-11-11_090000.csv -sqlHosts sql01,sql02 -slaName 'Gold'</code></pre>
+  <ul class="pill-list">
+    <li>The host and instance IDs come from the CSV. <strong>Step 2 is skipped</strong>: no host search, no
+    instance lookup. <strong>Step 3 still runs</strong>, but on the saved state: the starting SLA state (assignment, effective SLA and any pending SLA) comes from the CSV, so an instance
+    whose saved SLA already matches the target, or that has a saved pending SLA, is skipped without asking RSC. Step 1 (SLA name) still runs, and the
+    completion polling in Step 7 still reads RSC. If the inventory is stale, a skip or an assignment can be based on an
+    old SLA, so refresh it when SLAs may have changed.</li>
+    <li>The file must be a SQL inventory with the expected columns, otherwise the run stops with a message saying which
+    column or workload is wrong. If you give no host parameters, the workload is read from the file.</li>
+    <li>The script prints when the inventory was collected and warns if it is older than
+    <code>-inventoryMaxAgeHours</code> (default 24).</li>
+    <li><strong>A listed host that is not in the inventory is skipped.</strong> The script prints a warning at the start
+    and again at the end, and writes a <code>NotInInventory</code> row for it in the Apply CSV with the other hosts'
+    outcomes. The rest of the list still runs. If <em>every</em> listed host is missing, nothing is assigned, the log
+    is still written, and the script exits 1.</li>
+    <li>A listed host that <em>is</em> in the inventory but has no instances stops the run before any change. With no
+    host list, a host with no instances is skipped with a warning instead, so one empty host does not block an
+    environment-wide run.</li>
+    <li>With no host list, every host in the inventory is used.</li>
+    <li>Used with Apply only. <code>-action Test</code> needs live data, and <code>-inventoryCsv</code> is rejected there.</li>
+  </ul>
+  <p>Instances added after the inventory was taken are not in the CSV and are not touched. Rerun the inventory after
+  onboarding new hosts. An instance that was removed since the inventory is passed to the assignment call by its saved
+  ID, and RSC decides what to do with it, so keep the inventory fresh.</p>
+</div>
+
+<div class="callout">
+  <strong>Handling the inventory file:</strong> it lists host and instance names and IDs for your environment. Keep
+  it out of any committed folder.
+</div>
+
+<h2>5. Command Reference</h2>
+<table>
+  <tr><th>Goal</th><th>Command</th></tr>
+  <tr><td>Create the inventory</td><td><code>-getSqlInventory</code> (no <code>-action</code>); limit with <code>-sqlHosts</code> or <code>-sqlCsvPath</code></td></tr>
+  <tr><td>Preview, change nothing</td><td><code>-action Apply -sqlHosts sql01,sql02 -slaName 'Gold' -dryRun</code></td></tr>
+  <tr><td>Apply to hosts from a CSV</td><td><code>-action Apply -sqlCsvPath ./sql_hosts.csv -slaName 'Gold'</code> (host column <code>host</code>, <code>hostname</code>, <code>name</code> or <code>sqlhost</code>; the CSV's <code>executed</code> column is filled in; the CSV wins over <code>-sqlHosts</code>)</td></tr>
+  <tr><td>Apply from the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -sqlCsvPath ./sql_hosts.csv -slaName 'Gold'</code> (or <code>-sqlHosts sql01,sql02</code>)</td></tr>
+  <tr><td>Apply to every host in the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_sql_inventory-&lt;time&gt;.csv -slaName 'Gold'</code></td></tr>
+  <tr><td>Change the inventory age warning</td><td><code>-inventoryMaxAgeHours 48</code></td></tr>
+  <tr><td>Use an SLA ID</td><td><code>-action Apply -sqlHosts sql01 -slaID &lt;SLA ID&gt;</code></td></tr>
+  <tr><td>One call per host</td><td><code>-applyMode Single</code></td></tr>
+  <tr><td>Change the batch size (default 50, never mixing clusters)</td><td><code>-batchSize 25</code></td></tr>
+  <tr><td>Record every assignment call to a text file</td><td><code>-assignLog</code> (with <code>-assignMutation AssignSla</code> to check that mutation)</td></tr>
+  <tr><td>Submit only, do not poll for completion (each object's state is <code>Submitted</code>)</td><td><code>-skipPolling</code> (alias <code>-noWait</code>)</td></tr>
+  <tr><td>Do Not Protect</td><td><code>-slaName 'DO_NOT_PROTECT'</code></td></tr>
+  <tr><td>Remove the direct assignment</td><td><code>-slaName 'NO_ASSIGNMENT'</code></td></tr>
+  <tr><td>Choose the assignment mutation</td><td><code>-assignMutation AssignSla</code> (the default) or <code>-assignMutation AssignSlasForSnappableHierarchies</code> (what the RSC UI uses)</td></tr>
+  <tr><td>Show the plan and stop</td><td><code>-dryRun</code> (writes nothing, exits 0)</td></tr>
+  <tr><td>Skip the <code>YES</code> prompt</td><td><code>-skipConfirm</code></td></tr>
+  <tr><td>Change the poll interval (default 5 seconds) or the total wait (default 600 seconds)</td><td><code>-pollIntervalSec 10 -timeoutSec 1200</code></td></tr>
+  <tr><td>Write CSVs to a folder</td><td><code>-csvOutputPrefix ./reports/rubrik_</code> (the folder must exist; the default is <code>./rubrik_</code>)</td></tr>
+  <tr><td>Show usage</td><td>Run the script with no parameters (prints a summary and exits 0)</td></tr>
+</table>
+
+<p>Files written (the timestamp is <code>yyyy-MM-dd_HHmmss</code>):</p>
+<table>
+  <tr><th>File</th><th>When</th></tr>
+  <tr><td><code>&lt;prefix&gt;sql_inventory-&lt;timestamp&gt;.csv</code></td><td><code>-getSqlInventory</code></td></tr>
+  <tr><td><code>&lt;prefix&gt;sql_sla_apply-&lt;timestamp&gt;.csv</code></td><td>Every real Apply run (one file, written twice)</td></tr>
+  <tr><td><code>&lt;prefix&gt;sql_sla_assign_log-&lt;timestamp&gt;.txt</code></td><td>Apply with <code>-assignLog</code></td></tr>
+  <tr><td>Your <code>-sqlCsvPath</code> file, plus <code>&lt;file&gt;.bak</code></td><td>Updated in place after a real Apply run</td></tr>
+</table>
+
+<p>Input rules checked before anything is sent:</p>
+<ul class="pill-list">
+  <li><code>-RscServiceAccountJson</code> is required. <code>-action</code> must be <code>Apply</code> or <code>Test</code>, unless <code>-getSqlInventory</code> is used.</li>
+  <li>Give hosts with <code>-sqlHosts</code> and/or <code>-sqlCsvPath</code> (the CSV wins). With <code>-inventoryCsv</code> and no host list, a SQL inventory is detected from the file. SQL and fileset parameters cannot be mixed, and the fileset-only options (including <code>-clusterName</code> and <code>-recheckFilesetIDs</code>) are rejected in a SQL run.</li>
+  <li>Give exactly one of <code>-slaName</code> or <code>-slaID</code>.</li>
+  <li><code>-batchSize</code>, <code>-pollIntervalSec</code> and <code>-inventoryMaxAgeHours</code> must be 1 or greater.</li>
+  <li><code>-inventoryCsv</code> only works with <code>-action Apply</code> and the file must exist.</li>
+  <li><code>-mode</code> and <code>-setHostLogRetention</code> are rejected with Apply. <code>-applyMode</code>, <code>-batchSize</code>, <code>-skipPolling</code> and <code>-assignLog</code> are rejected with Test.</li>
+  <li><code>-getSqlInventory</code> rejects <code>-action</code>, the SLA, the apply and test options, <code>-inventoryCsv</code> and the fileset options.</li>
+</ul>
+<p>Every command also needs <code>-RscServiceAccountJson &lt;file&gt;</code>, and Apply commands need
+<code>-action Apply</code>. The script has a separate <code>-action Test</code> pathway that times Single versus Bulk
+assignment on test hosts. It is not part of the production flow and is not covered here.</p>
+
+<footer>
+  Reference: <code>computer/Powershell/Set-SLA-SQL-Fileset.ps1</code> &mdash; requires PowerShell 7+ and an RSC
+  Service Account with permission to view SQL hosts/instances and SLA Domains and to assign SLA Domains.
+</footer>
+
+</div>
+</body>
+</html>

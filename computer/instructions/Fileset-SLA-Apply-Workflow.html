@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fileset SLA Apply - Inventory &amp; Workflow Reference</title>
+<style>
+  :root {
+    --rubrik-teal: #00B2A9;
+    --ink: #1a1a1a;
+    --muted: #5f6b6a;
+    --border: #dfe6e5;
+    --bg-soft: #f4f9f8;
+    --code-bg: #0f1717;
+    --code-ink: #d9f2ef;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 20px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #ffffff;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header.doc-header {
+    border-bottom: 4px solid var(--rubrik-teal);
+    padding: 32px 0 20px;
+  }
+  header.doc-header h1 { margin: 0 0 6px; font-size: 1.9rem; color: var(--ink); }
+  header.doc-header p.subtitle { margin: 0; color: var(--muted); font-size: 1rem; }
+  h2 {
+    color: var(--ink);
+    border-left: 5px solid var(--rubrik-teal);
+    padding-left: 12px;
+    margin-top: 48px;
+    font-size: 1.35rem;
+  }
+  h3 { font-size: 1.08rem; margin-top: 28px; color: var(--ink); }
+  h3 .step-num {
+    display: inline-block;
+    background: var(--rubrik-teal);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border-radius: 50%;
+    min-width: 24px;
+    height: 24px;
+    line-height: 24px;
+    text-align: center;
+    margin-right: 8px;
+    padding: 0 4px;
+  }
+  p { color: var(--ink); }
+  .callout {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--rubrik-teal);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .callout.warn { background: #fff8e6; border-color: #f0d9a0; border-left-color: #d99a00; }
+  .callout strong { color: var(--ink); }
+
+  /* Flow diagram */
+  .flow { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; margin: 24px 0; }
+  .flow .box {
+    flex: 1 1 150px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fff;
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .flow .box .tag {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .flow .box.outside { background: #f6f6f6; border-color: #d8d8d8; }
+  .flow .box.outside .tag { color: #8a8a8a; }
+  .flow .box.script { background: #e6f7f5; border-color: var(--rubrik-teal); }
+  .flow .box.script .tag { color: #007a73; }
+  .flow .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    font-size: 1.3rem;
+    flex: 0 0 auto;
+    padding: 0 2px;
+  }
+  .flow-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0 14px;
+    color: var(--muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .flow-divider::before, .flow-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 20px; font-size: 0.88rem; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--bg-soft); color: var(--ink); font-weight: 700; }
+  code {
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: "SFMono-Regular", Consolas, Menlo, monospace;
+    font-size: 0.88em;
+  }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border-radius: 8px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    margin: 10px 0 18px;
+  }
+  pre code { background: none; border: none; padding: 0; color: inherit; }
+  .vars-title { margin: 14px 0 0; font-size: 0.82rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .step-card { border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px 4px; margin: 18px 0 28px; }
+  .step-card .label {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #007a73;
+    background: #e6f7f5;
+    border-radius: 4px;
+    padding: 2px 8px;
+    margin-bottom: 6px;
+    margin-right: 4px;
+  }
+  .label.mutation { color: #9a4b00; background: #fdeee0; }
+  .label.rest { color: #5b3d9a; background: #efe8fb; }
+  .label.logic { color: #555; background: #ececec; }
+  ul { padding-left: 22px; }
+  .pill-list li { margin-bottom: 6px; }
+  footer {
+    margin-top: 60px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+  @media (max-width: 640px) {
+    .flow { flex-direction: column; }
+    .flow .arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc-header">
+  <h1>Fileset &mdash; SLA Apply Workflow</h1>
+  <p class="subtitle">Inventory, then apply: production workflow and API reference for <code>Set-SLA-SQL-Fileset.ps1</code> (filesets)</p>
+</header>
+
+<div class="callout">
+  <strong>Two kinds of ID.</strong> The <strong>fileset template ID</strong> identifies the template itself, for example "Temp". It is what you give the script with <code>-filesetTemplateId</code>, and the same template has a different ID on each
+  cluster. A <strong>fileset object ID</strong> identifies one fileset, which is the template applied to one host. The script
+  finds those itself, and they are what it sends to the SLA assignment calls. You never pass a fileset object ID to the script.
+</div>
+
+<h2>1. Overall Workflow</h2>
+<p>
+  A <strong>fileset</strong> is a fileset <em>template</em> (a name plus include, exclude and exception paths) applied
+  to a host. SLAs are assigned to the fileset objects, so each host needs the fileset template applied to it before it
+  can be protected. You give the script the template, by name (<code>-filesetName</code>) or by ID
+  (<code>-filesetTemplateId</code>), and a list of hosts. For each host the script checks whether the template is
+  already applied. <strong>Hosts that already have it are left alone. Hosts that do not get the template applied</strong>
+  (with <code>bulkCreateFilesets</code>, after you confirm). Then the SLA is assigned to the filesets on all of those
+  hosts. The script <strong>never creates or changes the template itself</strong>. A fileset run works on <strong>one cluster</strong>,
+  given by the required <code>-clusterName</code>: the template lookup, the host lookup and the template application are all limited to it.
+  The work splits into an optional <strong>inventory</strong> run that snapshots hosts, filesets and templates to a CSV,
+  and an <strong>Apply</strong> run that applies the template where needed and assigns one SLA, either from that CSV or
+  by querying RSC live.
+</p>
+
+<div class="flow-divider">Prerequisites (outside the script)</div>
+<div class="flow">
+  <div class="box outside">
+    <div class="tag">Prerequisite 1</div>
+    Each host is already added to Rubrik
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box outside">
+    <div class="tag">Prerequisite 2</div>
+    The fileset template already exists in RSC (its paths, excludes and so on are set up)
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box outside">
+    <div class="tag">Optional</div>
+    The template may or may not already be applied to each host. The script handles both cases.
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Prerequisites:</strong> hosts must already be added to Rubrik, and the fileset template must already exist.
+  The script cannot add a host and does not create or edit templates. In a live run, a host that is not found, or a
+  template that is not found, stops the run before anything is changed. Whether the template is already applied to a
+  host does <em>not</em> matter, because the script applies it only where it is missing. Fileset runs also need
+  <code>-clusterName</code>, the exact name of the one cluster to work on. Without it the script stops with
+  "Fileset runs need -clusterName. Every fileset lookup and the template application are done on that one cluster."
+</div>
+
+<div class="flow-divider">Run 1: inventory (optional, read-only)</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Inventory 1</div>
+    Authenticate to RSC
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Inventory 2</div>
+    List hosts, their filesets with template details, and all templates
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Inventory 3</div>
+    Write timestamped <code>fileset_inventory-&lt;time&gt;.csv</code>
+  </div>
+</div>
+
+<div class="flow-divider">Run 2: apply</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Apply 1</div>
+    Authenticate, look up the <code>-clusterName</code> cluster, resolve the SLA name to an ID
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 2: Get Inventory</div>
+    Get each host, whether it already has the fileset template, and each fileset's SLA state including any pending SLA (live from RSC, or from the inventory CSV)
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 3</div>
+    Decide what is skipped: host not found, any pending SLA, or effective SLA already the target
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 4</div>
+    Show the plan and ask for <code>YES</code> (add <code>-skipConfirm</code> to skip the question and go ahead; <code>-dryRun</code> stops after the plan)
+  </div>
+</div>
+<div class="flow">
+  <div class="box script">
+    <div class="tag">Apply 5</div>
+    Apply the fileset template to the hosts that lack it (hosts that already have it are ignored), then add the fileset IDs it returns to the list, then create the Apply CSV with every fileset's starting SLA
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 6</div>
+    Apply the SLA for all filesets, old and new
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 7</div>
+    Poll until RSC shows the SLA on every fileset (skipped with <code>-skipPolling</code>)
+  </div>
+  <div class="arrow">&rarr;</div>
+  <div class="box script">
+    <div class="tag">Apply 8</div>
+    Rewrite the Apply CSV with the outcomes, update the host CSV's <code>executed</code> column, warn about skipped hosts, exit non-zero on any failure
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Why an inventory CSV:</strong> finding every host, template and fileset (object) ID with GraphQL on each production
+  run is slow and repeats work. With the inventory CSV the Apply run skips the template, host and fileset lookups
+  and uses the saved IDs. <strong>It also trusts the SLA state saved in the CSV and does not read each fileset's state again</strong>:
+  you pass the inventory as the starting state, and a fileset whose saved SLA already matches the target is skipped.
+  Filesets created by applying a template in the same run are not in the CSV, so their IDs come from the template call itself (or from per-host lookups with <code>-recheckFilesetIDs</code>). Refresh the
+  inventory if SLAs may have changed since it was taken.
+</div>
+
+<h2>2. Script Logic (Pseudocode)</h2>
+<pre><code>INVENTORY RUN  (-getFilesetInventory, optional host list and -hostRoot; needs no -action, SLA or confirmation)
+    VALIDATE: -clusterName must be given (the script stops without it), and the apply and SLA parameters are rejected
+    AUTHENTICATE to RSC
+    LIST every fileset template under -hostRoot
+    LIST hosts (all of them, or only the hosts named), each with its cluster, and its filesets with their template, effective SLA
+         and any pending SLA
+    WRITE one row per template ("Template"), one per host ("Host"), and one per fileset ("Fileset")
+    EXIT   (this path exits before the cluster is looked up, see step I1 in section 4)
+
+APPLY RUN  (-action Apply)
+INPUT: hosts from -filesetHosts, or from -filesetCsvPath (which wins if both are given)
+       a fileset template, by -filesetName or -filesetTemplateId (the template, not a fileset on a host)
+       optionally -inventoryCsv, which supplies the IDs and the starting SLA state
+       one SLA (-slaName or -slaID) that applies to every host
+       required -clusterName (the one cluster everything is looked up and applied on)
+       optional -hostRoot, -applyMode Bulk|Single, -batchSize, -assignMutation, -assignLog, -skipPolling, -pollIntervalSec, -timeoutSec,
+                -recheckFilesetIDs, -inventoryMaxAgeHours, -csvOutputPrefix, -dryRun, -skipConfirm
+
+STEP 0   AUTHENTICATE to RSC using the Service Account JSON (client_id/client_secret -&gt; bearer token)
+STEP 1   LOOK UP the cluster named by -clusterName (required); STOP if none, or more than one, matches
+STEP 2   RESOLVE the SLA name to its ID (DO_NOT_PROTECT and NO_ASSIGNMENT need no lookup)
+
+IF -inventoryCsv was given: READ the CSV, check it is a fileset inventory, print its age, warn if older than -inventoryMaxAgeHours
+
+STEP 3   GET THE TEMPLATE ID
+    from the CSV:  FIND the template in the CSV's Template rows, by -filesetTemplateId or exact -filesetName
+    from RSC:      LOOK UP -filesetName (exact, under -hostRoot, on the -clusterName cluster only),
+                   or confirm -filesetTemplateId exists
+    IF not found: STOP before any change, saying which host root and cluster were searched and whether a template with that name
+    exists under the other host root
+
+STEP 4   GET INVENTORY: the hosts, whether each has the template, and each fileset's SLA state
+    from the CSV:  IF a host list was given, a listed host that is not in the inventory is skipped ("not in inventory")
+                   ELSE use every host in the inventory
+    from RSC:      FOR EACH host name: LOOK UP the host under -hostRoot on the -clusterName cluster; require exactly one exact-name match
+    FOR EACH host:
+        PICK the template that belongs to the host's cluster (must be exactly one)
+        COLLECT the host's filesets for that template, each with its effective SLA and any pending SLA
+        IF the host has none: it needs the template applied
+    IF any host or template error: print them and STOP before changing anything
+
+STEP 5   DECIDE what is skipped. Three things are skipped, and the plan, the console and the Apply CSV say which and why:
+    a host that is not found / not in the inventory     (a live run stops instead, before any change)
+    a fileset with ANY pending SLA                      -&gt; SkippedPending (an assignment is already in flight)
+    a fileset whose effective SLA is already the target -&gt; AlreadyOnTarget (assigned directly or inherited)
+    everything else is ASSIGNED
+
+STEP 6   PRINT the plan: hosts that have the template, hosts that need it applied, filesets, how many to assign, what is skipped and
+         why, number of calls (for the existing filesets)
+    IF -dryRun: STOP, no changes, no files
+    IF there is anything to assign or apply: ASK the user to type YES, otherwise STOP    (-skipConfirm skips the question and goes ahead; the plan is still printed)
+
+STEP 7   IF any host needs the template:
+    SEND one bulkCreateFilesets call with {hostId, templateId} for those hosts (all on the -clusterName cluster)
+        ON failure: record TemplateFailed for those hosts (no object) and continue
+    DEFAULT: CAPTURE the response and COLLECT the fileset object IDs from the returned array (data[].filesetSummary.slaAssignable.id),
+             then ADD them to the list of filesets to assign (Step 8 builds the call groups from this list, Step 9 sends it),
+             next to the filesets of the hosts that already had the template. No lookups. The IDs are not tied to a host in the
+             response, so the host is named only when exactly one host was in the call, otherwise the filesets show as
+             "(new on &lt;cluster&gt;)"
+             IF the number of IDs differs from the number of hosts sent (normally fewer): PRINT a WARNING and mark those hosts unverified
+    IF -recheckFilesetIDs: instead LOOK UP each of those hosts again (one lookup per host) and take its new filesets from the lookup.
+             A host where no fileset appears is recorded TemplateFailed
+
+STEP 8   CREATE the Apply CSV (every fileset in the list, old and new, with its starting SLA, status Pending) before any SLA call
+         DECIDE again for every fileset in the list (new ones included), collapse duplicate object IDs, then BUILD call groups:
+    Bulk (default): batches of up to -batchSize (default 50) fileset object IDs
+    Single:         one group per host
+STEP 9   FOR EACH group: SEND the assignment mutation (assignSla by default) with that group's fileset object IDs
+    ON failure: mark the group CallFailed and continue with the next group
+    ON success: mark the filesets Submitted
+
+STEP 10  IF not -skipPolling: POLL every -pollIntervalSec until all Submitted filesets show the SLA (Applied) or -timeoutSec is reached (Timeout)
+         ELSE the filesets stay Submitted and nothing is polled
+STEP 11  REWRITE the Apply CSV with each fileset's outcome and its host's status (plus one row per host the template could not be
+         applied to, and one per host skipped for not being in the inventory)
+    IF the hosts came from -filesetCsvPath: WRITE each host's outcome into the CSV's "executed" column (keep a .bak)
+    PRINT a note for filesets skipped for a pending SLA, and a warning for hosts skipped for not being in the inventory
+    EXIT 1 if any fileset is CallFailed, Timeout, NotAttempted or TemplateFailed (or the apply stopped with an error), otherwise EXIT 0
+         (a skip, for a pending SLA or a host not in the inventory, does not by itself change the exit code,
+          unless every listed host was skipped, which exits 1)
+</code></pre>
+
+<h2>3. Detailed Steps &amp; GraphQL Reference</h2>
+<p>Each step corresponds to a function or logic block in <code>Set-SLA-SQL-Fileset.ps1</code>. Every GraphQL call is
+a POST to <code>&lt;base URL&gt;/api/graphql</code> with the body <code>{ "query": ..., "variables": ... }</code>. The
+<strong>Variables</strong> blocks show the full <code>variables</code> object the script sends.</p>
+
+<div class="step-card">
+  <span class="label rest">REST</span>
+  <h3><span class="step-num">0</span>Authenticate to RSC</h3>
+  <p>The script reads the RSC Service Account JSON (<code>-RscServiceAccountJson</code>), confirms it contains
+  <code>client_id</code>, <code>client_secret</code> and <code>access_token_uri</code>, and exchanges them for a
+  bearer token. It requires PowerShell 7+. This is the same block as <code>computer/Core/RSC-Authentication.ps1</code>,
+  copied inline.</p>
+  <table>
+    <tr><th>Method</th><td>POST</td></tr>
+    <tr><th>URL</th><td><code>&lt;access_token_uri from the service account JSON&gt;</code></td></tr>
+  </table>
+  <p class="vars-title">Request body</p>
+  <pre><code>{
+  "grant_type": "client_credentials",
+  "client_id": "&lt;from service account JSON&gt;",
+  "client_secret": "&lt;from service account JSON&gt;"
+}</code></pre>
+  <p>The tenant base URL is <code>access_token_uri</code> with <code>/api/client_token</code> removed. Every later
+  call is a GraphQL POST to <code>&lt;base URL&gt;/api/graphql</code> with an
+  <code>Authorization: Bearer &lt;access_token&gt;</code> header. The service account needs permission to view hosts
+  and filesets, view SLA Domains, and assign SLAs.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">1</span>Resolve <code>-clusterName</code> to a cluster ID (required)</h3>
+  <p><strong>Function:</strong> <code>Get-ClusterIdByName</code></p>
+  <p>Fileset runs work on one cluster. The same template name can exist on several clusters, so <code>-clusterName</code> is
+  required and limits the template lookup (Step 3), the host lookup (Step 4) and the template application (Step 7) to that cluster. The name is looked up once at the start (before the SLA name is resolved in Step 2) and
+  turned into an ID, because the lookups filter by <code>CLUSTER_ID</code>. The run stops before any change if no cluster, or
+  more than one cluster, has that exact name. It is required for fileset runs (Apply, Test and <code>-getFilesetInventory</code>) and is rejected for SQL.
+  Without it the script stops with "Fileset runs need -clusterName...". The inventory run exits before this lookup (see step I1 in section 4).</p>
+  <pre><code>query ClusterByNameQuery($filter: ClusterFilterInput) {
+  allClusterConnection(filter: $filter, sortBy: ClusterName, sortOrder: ASC) {
+    nodes {
+      id
+      name
+    }
+  }
+}</code></pre>
+  <p class="vars-title">Variables</p>
+  <pre><code>{
+  "filter": { "name": ["vault-r-madison"] }
+}</code></pre>
+  <p>A host that is on a different cluster is not found by the Step 4 lookup, so it is reported as an error before anything changes.
+  Run once per cluster.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">2</span>Resolve the SLA name to an ID</h3>
+  <p><strong>Function:</strong> <code>Get-SLADomainByName</code> / <code>Resolve-SlaSpec</code></p>
+  <p>Skipped when <code>-slaID</code> is given, or when the name is <code>DO_NOT_PROTECT</code> or
+  <code>NO_ASSIGNMENT</code>. The name filter can match partially, so the script keeps only an exact name match and
+  stops if there are zero or more than one.</p>
+  <pre><code>query SLADomainsForNameFilterQuery($filter: [GlobalSlaFilterInput!]) {
+  slaDomains(filter: $filter) {
+    nodes {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables</p>
+  <pre><code>{
+  "filter": [
+    { "field": "NAME", "text": "Gold" }
+  ]
+}</code></pre>
+  <table>
+    <tr><th>-slaName / -slaID</th><th>Assignment type sent</th></tr>
+    <tr><td>An SLA Domain name or ID</td><td><code>protectWithSlaId</code></td></tr>
+    <tr><td><code>DO_NOT_PROTECT</code></td><td><code>doNotProtect</code></td></tr>
+    <tr><td><code>NO_ASSIGNMENT</code></td><td><code>noAssignment</code> (removes the direct assignment so the object inherits again)</td></tr>
+  </table>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">3</span>Get the fileset template ID</h3>
+  <p><strong>Function:</strong> <code>Get-FilesetTemplatesByName</code> / <code>Get-FilesetTemplateById</code> (used with
+  <code>-filesetHosts</code> / <code>-filesetCsvPath</code>; skipped when <code>-inventoryCsv</code> is used). The template is the
+  fileset template itself, given by name or ID. It is not a fileset on a host.</p>
+  <p>A template belongs to one cluster, so the same template name returns one row per cluster. The name filter can
+  match partially, so the script keeps only an exact name match and stops if none exists. Later, each host uses the
+  template that belongs to <em>its</em> cluster.</p>
+  <pre><code>query FilesetTemplatesByNameQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!) {
+  filesetTemplates(hostRoot: $hostRoot, first: $first, after: $after, filter: $filter, sortBy: NAME, sortOrder: ASC) {
+    edges {
+      node {
+        id
+        name
+        cluster { id name }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (<code>-clusterName 'vault-r-madison'</code> is required, so the cluster filter is always sent)</p>
+  <pre><code>{
+  "hostRoot": "WINDOWS_HOST_ROOT",
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": ["Temp"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
+  ]
+}</code></pre>
+  <p><code>hostRoot</code> is <code>WINDOWS_HOST_ROOT</code> by default, or <code>LINUX_HOST_ROOT</code> with
+  <code>-hostRoot</code>. <strong>A template is only found under the host root it was created for</strong>: a Windows template does
+  not appear under the Linux root, and the reverse. If the name is not found, the error says which root and cluster were searched and
+  whether a template with that name exists under the other one, for example "A template with that name exists under
+  LINUX_HOST_ROOT. Use -hostRoot LINUX_HOST_ROOT". Later pages add <code>"after": "&lt;pageInfo.endCursor&gt;"</code>.</p>
+  <p><strong>By ID instead:</strong> with <code>-filesetTemplateId</code> the script calls
+  <code>Get-FilesetTemplateById</code> and skips the name search. Use this when the name is not unique. The template's
+  name is read back and used in messages.</p>
+  <pre><code>query FilesetTemplateByIdQuery($fid: UUID!) {
+  filesetTemplate(fid: $fid) {
+    id
+    name
+    cluster { id name }
+  }
+}</code></pre>
+  <p class="vars-title">Variables</p>
+  <pre><code>{
+  "fid": "474539c4-4e69-53a5-a044-1467217c866b"
+}</code></pre>
+  <p>An ID RSC does not know stops the run before any change. A template ID belongs to one cluster, so if it is not on the
+  <code>-clusterName</code> cluster, every host is reported as an error (there is no template on its cluster).</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">4</span>Get Inventory: each host, whether it has the template, and each fileset's SLA state</h3>
+  <p><strong>Function:</strong> <code>Get-PhysicalHostFilesets</code> (skipped when <code>-inventoryCsv</code> is used; also used by <code>-recheckFilesetIDs</code> in Step 7)</p>
+  <p>One call per host name, paginated 100 at a time. The script keeps only the host whose name matches exactly
+  (case-insensitive) and stops with an error if there are none or several. Each fileset comes back with its template,
+  current assignment, effective SLA and any pending SLA, so the script then keeps the filesets whose template ID equals the
+  host cluster's template from Step 3.</p>
+  <pre><code>query PhysicalHostFilesetsQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!, $childFilter: [Filter!]) {
+  physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after, sortBy: NAME, sortOrder: ASC) {
+    edges {
+      node {
+        id
+        name
+        cluster { id name }
+        physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], filter: $childFilter) {
+          edges {
+            node {
+              id
+              name
+              objectType
+              slaAssignment
+              effectiveSlaDomain { id name }
+              pendingSla { id name }
+              ... on LinuxFileset   { filesetTemplate { id name } }
+              ... on WindowsFileset { filesetTemplate { id name } }
+            }
+          }
+        }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (first page)</p>
+  <pre><code>{
+  "hostRoot": "WINDOWS_HOST_ROOT",
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": ["host01.example.com"] },
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "IS_KUPR_HOST", "texts": ["false"] },
+    { "field": "CLUSTER_ID", "texts": ["3bc43be7-00ca-4ed8-ba13-cef249d337fa"] }
+  ],
+  "childFilter": [
+    { "field": "IS_GHOST", "texts": ["false"] },
+    { "field": "IS_RELIC", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p><code>hostRoot</code> is as in Step 3, and one run covers one host root. Because <code>-clusterName</code> is required, a
+  <code>CLUSTER_ID</code> filter (the cluster ID from Step 1) is sent here too. Later pages add
+  <code>"after": "&lt;pageInfo.endCursor&gt;"</code>.</p>
+  <p><strong>Hosts that already have the template are left alone</strong>; their filesets go straight to Step 5.
+  <strong>Hosts with no matching fileset need the template applied.</strong> The console lists each one and the plan
+  shows it as <code>Apply template</code>. Step 7 does the applying, after you confirm.</p>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">5</span>Decide what is skipped</h3>
+  <p>No API call. Every fileset already carries its SLA state from the lookup in the previous step: its assignment type, its
+  effective SLA, and any <strong>pending</strong> SLA (live from RSC, or from the inventory CSV). The script uses that to decide, for
+  each fileset, whether to assign the target SLA or leave it. <strong>Three things are skipped</strong>, and the plan, the console
+  and the Apply CSV say which and why:</p>
+  <table>
+    <tr><th>Skipped</th><th>When</th><th>Where it shows</th></tr>
+    <tr><td>Host not found</td><td>With an inventory, a listed host that is not in the inventory CSV. (In a live run a host that is not found stops
+    the run instead, before any change.)</td><td>Plan, end-of-run warning, a <code>NotInInventory</code> row in the Apply CSV</td></tr>
+    <tr><td>Pending SLA</td><td>The fileset has <strong>any</strong> pending SLA. An assignment is already in flight, and sending another would only queue a
+    second pending action.</td><td>Plan action <code>Skip: pending</code>, status <code>SkippedPending</code>, a note at the end of the run</td></tr>
+    <tr><td>Already on the target</td><td>The fileset's <strong>effective</strong> SLA is already the target, whether it was assigned directly or inherited.</td>
+    <td>Plan action <code>Skip: on target</code>, status <code>AlreadyOnTarget</code></td></tr>
+  </table>
+  <p>How "already on the target" is checked, by target:</p>
+  <table>
+    <tr><th>Target</th><th>Already on target when</th></tr>
+    <tr><td>An SLA Domain</td><td><code>effectiveSlaDomain.id</code> equals the SLA ID</td></tr>
+    <tr><td>DO_NOT_PROTECT</td><td><code>effectiveSlaDomain.id == "DO_NOT_PROTECT"</code></td></tr>
+    <tr><td>NO_ASSIGNMENT</td><td><code>slaAssignment</code> is not <code>"Direct"</code>, so the fileset already inherits</td></tr>
+  </table>
+  <ul class="pill-list">
+    <li>The pending SLA is checked first, so a fileset with a different SLA pending is skipped too. Rerun once it has finished.</li>
+    <li>A fileset that is on the target by inheritance is skipped, so no direct assignment is added on top of it.</li>
+    <li>With <code>-inventoryCsv</code> the state comes from the saved columns <code>slaAssignment</code>, <code>effectiveSlaId</code> and
+    <code>pendingSlaId</code>, with no RSC call. An inventory written before the pending columns existed has none, so every fileset reads as
+    having nothing pending. Create a new inventory to get the pending check from a file.</li>
+    <li>Filesets created in Step 7 are not in the lookup. Their IDs come from the template call (or, with <code>-recheckFilesetIDs</code>, from a
+    per-host lookup that returns their state). They have no pending SLA and no SLA, so they are always assigned. They are not counted in the plan, which covers only the filesets that already existed.</li>
+    <li>The completion polling in Step 10 asks a different question: whether the assignment has <em>finished</em>, where a pending SLA does mean
+    "not yet". It uses its own query, shown there.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">6</span>Plan and confirm</h3>
+  <p>No API call. The script prints the plan: a few summary lines (source, workload, mutation, target SLA, apply mode, whether it will poll,
+  the template, how many hosts already have it and how many need it applied, how many filesets exist, how many will be assigned, are already on the target or are
+  skipped for a pending SLA, the template applications, everything that will be skipped and why, and the number of calls), then a table with one row per fileset. The columns are
+  <code>hostName</code>, <code>cluster</code>, <code>object</code>, <code>action</code>, <code>currentSla</code>, <code>pendingSla</code> and <code>assignment</code>. The
+  <code>action</code> is one of:</p>
+  <table>
+    <tr><th>action</th><th>Meaning</th></tr>
+    <tr><td><code>Assign</code></td><td>The target SLA will be sent</td></tr>
+    <tr><td><code>Skip: on target</code></td><td>The effective SLA is already the target</td></tr>
+    <tr><td><code>Skip: pending</code></td><td>An SLA is already pending on it, so nothing is sent</td></tr>
+    <tr><td><code>Apply template</code></td><td>The host has no fileset from the template. The template is applied to it, then the new fileset gets the SLA</td></tr>
+  </table>
+  <p>The cluster column shows the cluster each fileset is on (the <code>-clusterName</code> cluster). The plan's
+  <code>API calls to assign</code> line counts only the calls for the filesets that already exist; it ends with "(plus any for the new filesets)".</p>
+  <ul class="pill-list">
+    <li><code>-dryRun</code> stops here, nothing changes.</li>
+    <li>The script asks you to type <code>YES</code> before it changes anything. Anything other than exactly <code>YES</code> (case-sensitive) cancels and writes nothing. If there is nothing to do (every fileset is already on the target or skipped, and no host needs the template), there is nothing to confirm and no calls are made.</li>
+    <li><strong>To skip the prompt and just run it,</strong> add <code>-skipConfirm</code>. The plan is still printed and the Apply CSV is still written
+    before the SLA calls. Only the question is skipped, so use it for a run you have already previewed with <code>-dryRun</code>, or for an
+    unattended run. It applies to <code>-action Apply</code>.</li>
+    <li>The Apply CSV is created later, in Step 8, after any template has been applied and before the first SLA call. A <code>-dryRun</code> or a cancelled run writes no file.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label mutation">Mutation</span>
+  <h3><span class="step-num">7</span>Apply the fileset template to the hosts that do not have it</h3>
+  <p><strong>Function:</strong> <code>New-FilesetsOnCluster</code> (fileset hosts only, and only when Step 4 found
+  hosts without the template)</p>
+  <p>This is the one step that adds something to a host. It applies the <strong>existing</strong> template to the
+  host, which creates a fileset on it. It does not create or change the template. Hosts that already have the
+  template never appear here, so they are ignored. The call runs after you confirm the plan. It is a single call, because the run is on one cluster (<code>-clusterName</code>).</p>
+  <pre><code>mutation BulkCreateFilesetsMutation($clusterUuid: String!, $definitions: [FilesetCreateInput!]!) {
+  bulkCreateFilesets(input: {clusterUuid: $clusterUuid, definitions: $definitions}) {
+    data {
+      filesetSummary {
+        hostId
+        templateId
+        slaAssignable { id }
+      }
+    }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (two hosts on one cluster, both getting the same template)</p>
+  <pre><code>{
+  "clusterUuid": "3bc43be7-00ca-4ed8-ba13-cef249d337fa",
+  "definitions": [
+    {
+      "hostId": "8fcf1319-f1bc-5f14-8630-a702bd3d16ee",
+      "templateId": "474539c4-4e69-53a5-a044-1467217c866b",
+      "isPassthrough": false,
+      "enableSymlinkResolution": false,
+      "enableHardlinkSupport": false
+    },
+    {
+      "hostId": "6a18127f-ba38-5eea-aa6d-80ea12771fc5",
+      "templateId": "474539c4-4e69-53a5-a044-1467217c866b",
+      "isPassthrough": false,
+      "enableSymlinkResolution": false,
+      "enableHardlinkSupport": false
+    }
+  ]
+}</code></pre>
+  <p>The shape matches a captured UI session that applied one template to four hosts in one call. The response lists one fileset per
+  host in <code>data[].filesetSummary.slaAssignable.id</code>, and that <code>id</code> is the fileset's object ID. The response does
+  <strong>not</strong> say which host each ID belongs to, and the script does not need it: the IDs are added to the list of filesets to assign,
+  next to the object IDs of the hosts that already had the template. The run is on one cluster (<code>-clusterName</code> is required), so
+  every returned ID is on that cluster and goes in the same call groups as the existing filesets.</p>
+  <div class="callout warn">
+    <strong>Capture the response and collect the IDs.</strong> The script must keep the <code>bulkCreateFilesets</code> response and pull the fileset
+    object IDs out of its array, <code>data.bulkCreateFilesets.data[].filesetSummary.slaAssignable.id</code>. Those IDs are the only handle on the
+    new filesets: Step 8 builds the call groups from them and Step 9 sends them to the SLA assignment. If they are not collected, the new filesets get
+    no SLA. (With <code>-recheckFilesetIDs</code> the IDs come from per-host lookups instead.)
+  </div>
+  <p class="vars-title">Response (two hosts): the IDs the script collects</p>
+  <pre><code>{
+  "data": {
+    "bulkCreateFilesets": {
+      "data": [
+        { "filesetSummary": { "hostId": "8fcf1319-f1bc-5f14-8630-a702bd3d16ee", "templateId": "474539c4-4e69-53a5-a044-1467217c866b",
+                              "slaAssignable": { "id": "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a" } } },
+        { "filesetSummary": { "hostId": "6a18127f-ba38-5eea-aa6d-80ea12771fc5", "templateId": "474539c4-4e69-53a5-a044-1467217c866b",
+                              "slaAssignable": { "id": "a13960a7-5d0e-576c-8c47-522f3a9eeb01" } } }
+      ]
+    }
+  }
+}
+
+collected: [ "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a", "a13960a7-5d0e-576c-8c47-522f3a9eeb01" ]</code></pre>
+  <p>The query asks for <code>hostId</code> as well, but the script uses only <code>slaAssignable.id</code>. Empty IDs are dropped.</p>
+  <ul class="pill-list">
+    <li><strong>Default: no lookups after the call.</strong> The new filesets appear in the Apply CSV with the template name as the <code>object</code>,
+    <code>Unassigned</code> as <code>beforeAssignment</code> and an empty <code>beforeSla</code>. The host is shown as <code>(new on &lt;cluster&gt;)</code>,
+    unless exactly one host was in the call, in which case the ID is named for that host.</li>
+    <li><strong><code>-recheckFilesetIDs</code> (optional):</strong> after the call the script looks each of those hosts up again, one host at a time,
+    and takes the fileset whose template matches. That names the host for every new
+    fileset and reads its state. A host that shows no fileset is recorded as <code>TemplateFailed</code>.</li>
+    <li>If the call fails, those hosts are recorded as <code>TemplateFailed</code> with the error and add nothing to the list.</li>
+    <li>If the number of IDs that come back differs from the number of hosts sent (normally fewer), the script prints a warning and treats those hosts as unverified.
+    Use <code>-recheckFilesetIDs</code> to confirm each host. The IDs that did come back are still assigned.</li>
+    <li>The template stays applied to the host afterwards. The script never undoes it, and a rerun treats that host as
+    already having it.</li>
+  </ul>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">8</span>Create the Apply CSV and build the call groups</h3>
+  <p>No API call. First the Apply CSV is created, with one row per fileset in the list (existing and new, including the ones that will be skipped), its starting
+  assignment and SLA, and status <code>Pending</code>. This is the rollback record, and it is rewritten with the results at the end (Step 11). It is written after the
+  template has been applied (Step 7) and before the first SLA call, so a run interrupted during Step 7 has no Apply CSV. The script never reverts anything itself.</p>
+  <p>Then the filesets that still need the SLA are split into groups, and one assignment call is sent per
+  group.</p>
+  <table>
+    <tr><th>-applyMode</th><th>Groups</th><th>Example: 120 filesets on 6 hosts, all on the <code>-clusterName</code> cluster</th></tr>
+    <tr><td><code>Bulk</code> (default)</td><td>The filesets are split into batches of up to <code>-batchSize</code> fileset object IDs (default 50).</td><td>3 calls: 50, 50 and 20 filesets</td></tr>
+    <tr><td><code>Single</code></td><td>One group per host, holding all of that host's filesets (new filesets shown as <code>(new on &lt;cluster&gt;)</code> are not tied to a host, so they go together in one group)</td><td>6 calls, one per host</td></tr>
+  </table>
+  <p>The plan's call count uses the same grouping, but only for the filesets that already exist, so it leaves out the calls for filesets the template creates (the plan says "plus any for the new filesets").</p>
+  <p><strong>Where the fileset object IDs come from.</strong> The IDs sent in each call are the IDs of the filesets on each host (the
+  template applied to that host), not the template ID. They are gathered before this step, from two sources, and joined into one
+  list. Everything is on the one cluster given by <code>-clusterName</code>:</p>
+  <table>
+    <tr><th>Hosts</th><th>Where their fileset object IDs come from</th></tr>
+    <tr><td>Hosts that <strong>already had</strong> the fileset template</td><td>The Get Inventory step (Step 4): the live host lookup, or the inventory CSV. Nothing else is needed.</td></tr>
+    <tr><td>Hosts the template was <strong>just applied to</strong> (Step 7)</td><td>By default, the object IDs returned by the template-application call (<code>data[].filesetSummary.slaAssignable.id</code>), added as they are with no lookups. With
+    <code>-recheckFilesetIDs</code>, a per-host lookup after the call instead.</td></tr>
+  </table>
+  <ul class="pill-list">
+    <li>The returned IDs are not tied to a host in the response, which is fine: each is a fileset on the cluster that needs the SLA.</li>
+    <li>The two sets are added together before the call groups are built, so one batch can hold a mix of existing filesets and newly created ones.</li>
+    <li>If the template call failed, those hosts are recorded as <code>TemplateFailed</code> and contribute no ID, so they are left out of every call.</li>
+    <li>In the host CSV, a host that had the template applied and whose filesets reached the target gets <code>TemplateApplied+Assigned</code>, or
+    <code>TemplateApplied+Assigned (unverified, fewer fileset IDs than hosts, use -recheckFilesetIDs)</code> when the ID count did not match. When the IDs are not tied to a host,
+    the hosts in the call share one result (see Step 11).</li>
+    <li>The new filesets have no SLA and nothing pending, so the skip decision (Step 5) always assigns them.</li>
+    <li>The skip decision is made again here for every fileset in the list. An object ID that appears twice is sent once, because the same ID twice in one call can fail the whole call.
+    Every object must have a cluster ID, otherwise the run stops before any call.</li>
+  </ul>
+  <p>Calls are sent one after the other. A failed call marks only that group <code>CallFailed</code>; the remaining
+  groups still run.</p>
+</div>
+
+<div class="step-card">
+  <span class="label mutation">Mutation</span>
+  <h3><span class="step-num">9</span>Apply the SLA for all filesets</h3>
+  <p><strong>Function:</strong> <code>Set-ObjectSla</code></p>
+  <p>Two mutations are supported and a run uses only one of them, so no object is sent to both in the same run. The default is <code>assignSla</code>. <code>-assignMutation AssignSlasForSnappableHierarchies</code> selects the one the RSC UI uses. Both take the same object IDs. The object IDs are the <strong>fileset object IDs</strong> (the IDs of the filesets on hosts, not the template ID).
+  The call returns as soon as RSC accepts it; RSC applies the change afterwards (Step 10).</p>
+    <p><strong>Default: <code>assignSla</code></strong></p>
+  <p>All objects in one call go into a single pending action and a single cluster job, which is why Bulk mode batches the filesets. One SLA is sent per call.</p>
+  <pre><code>mutation AssignSlaMutation($input: AssignSlaInput!) {
+  assignSla(input: $input) {
+    success
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables: assign an SLA Domain</p>
+  <pre><code>{
+  "input": {
+    "slaDomainAssignType": "protectWithSlaId",
+    "slaOptionalId": "71ede730-34a2-53e0-a0f2-829d9a0b4b30",
+    "objectIds": [
+      "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+      "a13960a7-5d0e-576c-8c47-522f3a9eeb01"
+    ],
+    "existingSnapshotRetention": null,
+    "shouldApplyToExistingSnapshots": false,
+    "shouldApplyToNonPolicySnapshots": false,
+    "userNote": ""
+  }
+}</code></pre>
+  <p class="vars-title">Variables: Do Not Protect or remove the assignment</p>
+  <pre><code>{
+  "input": {
+    "slaDomainAssignType": "doNotProtect",
+    "slaOptionalId": null,
+    "objectIds": [
+      "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+      "a13960a7-5d0e-576c-8c47-522f3a9eeb01"
+    ],
+    "existingSnapshotRetention": "RETAIN_SNAPSHOTS",
+    "shouldApplyToExistingSnapshots": null,
+    "shouldApplyToNonPolicySnapshots": false,
+    "userNote": ""
+  }
+}</code></pre>
+  <p>For remove-the-assignment, <code>slaDomainAssignType</code> is <code>"noAssignment"</code>.</p>
+
+  <p><strong>Alternative: <code>-assignMutation AssignSlasForSnappableHierarchies</code></strong></p>
+  <p>The mutation the RSC UI uses. With <code>applicableSnappableTypes</code> left empty, as here, it behaves like <code>assignSla</code>. The script never sets that argument.</p>
+  <pre><code>mutation AssignSlasForSnappableHierarchiesMutation(
+  $globalExistingSnapshotRetention: GlobalExistingSnapshotRetention,
+  $globalSlaOptionalFid: UUID,
+  $globalSlaAssignType: SlaAssignTypeEnum!,
+  $objectIds: [UUID!]!,
+  $applicableSnappableTypes: [WorkloadLevelHierarchy!],
+  $shouldApplyToExistingSnapshots: Boolean,
+  $shouldApplyToNonPolicySnapshots: Boolean,
+  $userNote: String
+) {
+  assignSlasForSnappableHierarchies(
+    globalExistingSnapshotRetention: $globalExistingSnapshotRetention,
+    globalSlaOptionalFid: $globalSlaOptionalFid,
+    globalSlaAssignType: $globalSlaAssignType,
+    objectIds: $objectIds,
+    applicableSnappableTypes: $applicableSnappableTypes,
+    shouldApplyToExistingSnapshots: $shouldApplyToExistingSnapshots,
+    shouldApplyToNonPolicySnapshots: $shouldApplyToNonPolicySnapshots,
+    userNote: $userNote
+  ) {
+    success
+    __typename
+  }
+}</code></pre>
+  <p class="vars-title">Variables: assign an SLA Domain (<code>-slaName 'Gold'</code> or <code>-slaID</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+    "a13960a7-5d0e-576c-8c47-522f3a9eeb01",
+    "a19efd87-fee4-5587-9513-0dbee7ca1391",
+    "d0371004-1d14-5206-980f-1a08b1dd2218"
+  ],
+  "globalSlaAssignType": "protectWithSlaId",
+  "globalSlaOptionalFid": "71ede730-34a2-53e0-a0f2-829d9a0b4b30",
+  "globalExistingSnapshotRetention": null,
+  "shouldApplyToExistingSnapshots": false,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p class="vars-title">Variables: Do Not Protect (<code>-slaName 'DO_NOT_PROTECT'</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+    "a13960a7-5d0e-576c-8c47-522f3a9eeb01"
+  ],
+  "globalSlaAssignType": "doNotProtect",
+  "globalSlaOptionalFid": null,
+  "globalExistingSnapshotRetention": "RETAIN_SNAPSHOTS",
+  "shouldApplyToExistingSnapshots": null,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p class="vars-title">Variables: remove the direct assignment (<code>-slaName 'NO_ASSIGNMENT'</code>)</p>
+  <pre><code>{
+  "objectIds": [
+    "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+    "a13960a7-5d0e-576c-8c47-522f3a9eeb01"
+  ],
+  "globalSlaAssignType": "noAssignment",
+  "globalSlaOptionalFid": null,
+  "globalExistingSnapshotRetention": "RETAIN_SNAPSHOTS",
+  "shouldApplyToExistingSnapshots": null,
+  "shouldApplyToNonPolicySnapshots": false,
+  "userNote": ""
+}</code></pre>
+  <p><code>objectIds</code> holds one call group: up to <code>-batchSize</code> fileset object IDs with
+  <code>-applyMode Bulk</code>, or all of one host's filesets with <code>-applyMode Single</code>. The first two
+  examples match captured RSC UI calls: one that assigned an SLA to four filesets in a single call, and one that set
+  filesets to Do Not Protect. No <code>applicableSnappableTypes</code> is sent, as in the captures. The
+  remove-the-assignment variables follow the same field names and have not been seen in a capture.</p>
+  <p>The call counts as accepted only if every returned <code>success</code> is <code>true</code>; a GraphQL
+  <code>errors</code> array also fails the group.</p>
+
+  <p><strong>Recording the calls with <code>-assignLog</code>.</strong> Add the switch to an Apply run to write every
+  assignment call to <code>&lt;prefix&gt;&lt;workload&gt;_sla_assign_log-&lt;timestamp&gt;.txt</code>. Each entry has the call number and time,
+  the mutation used, the workload, the target SLA, the cluster, the object count, the seconds taken, <code>Result: OK</code> or
+  <code>FAILED</code> with the error, and then the full query, the full variables and the raw response. It is meant for checking
+  how a mutation behaves, for example by comparing the default <code>assignSla</code> with <code>-assignMutation AssignSlasForSnappableHierarchies</code>, and for sending to someone else. It contains
+  object IDs and the SLA ID, and nothing is hidden. If the file already exists the new calls are appended. A problem writing
+  the log is reported but never stops an assignment. Without the switch no file is written.</p>
+</div>
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">10</span>Poll until RSC shows the SLA</h3>
+  <p><strong>Function:</strong> <code>Wait-SlaEffectiveWithProgress</code> (skipped with <code>-skipPolling</code>)</p>
+  <p>The assignment mutation is <strong>asynchronous</strong>. <code>success: true</code> only means RSC accepted the
+  request; the new SLA first appears as <code>pendingSla</code> and the effective SLA changes later. The script polls
+  the filesets it submitted, with the batched query shown below, every
+  <code>-pollIntervalSec</code> seconds (default 5), until each one is effective or <code>-timeoutSec</code>
+  (default 600) runs out in total.</p>
+  <ul class="pill-list">
+    <li>Each poll sends one batched query for only the filesets still waiting (shown below).</li>
+    <li>It prints a progress line each time, for example <code>12/40 effective, 95s elapsed</code>.</li>
+    <li>A failed poll is reported and retried at the next interval; it does not stop the run.</li>
+    <li>A fileset is effective only when nothing is pending and: for an SLA Domain, it is assigned directly (<code>slaAssignment</code> is <code>Direct</code>) and its effective SLA ID equals the target;
+    for <code>DO_NOT_PROTECT</code>, it is assigned directly and its effective SLA ID is <code>DO_NOT_PROTECT</code>; for <code>NO_ASSIGNMENT</code>, it is not assigned directly.
+    Effective ones become <code>Applied</code>, the rest <code>Timeout</code>. If no call was accepted there is nothing to poll.</li>
+  </ul>
+  <p>Each poll asks for many objects at once using GraphQL aliases (<code>o0</code>, <code>o1</code>, ...), at most 50 per request, so the query text and
+  the variable names grow with the number of objects. It returns each object's assignment type, effective SLA and any pending SLA. The
+  Windows and Linux filesets both support these fields.</p>
+  <pre><code>query PendingSlaBatchQuery($id0: UUID!, $id1: UUID!) {
+  o0: hierarchyObject(fid: $id0) {
+    id
+    slaAssignment
+    effectiveSlaDomain { id name }
+    ... on CdmHierarchyObject { pendingSla { id name } }
+  }
+  o1: hierarchyObject(fid: $id1) {
+    id
+    slaAssignment
+    effectiveSlaDomain { id name }
+    ... on CdmHierarchyObject { pendingSla { id name } }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (two objects; one entry per object still waiting, up to 50)</p>
+  <pre><code>{
+  "id0": "ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a",
+  "id1": "a13960a7-5d0e-576c-8c47-522f3a9eeb01"
+}</code></pre>
+</div>
+
+<div class="step-card">
+    <span class="label logic">Output</span>
+  <h3><span class="step-num">11</span>The Apply CSV, host status, and exit code</h3>
+  <p>Each Apply run writes <strong>one</strong> CSV, <code>&lt;prefix&gt;fileset_sla_apply-&lt;timestamp&gt;.csv</code>. The
+  timestamp includes seconds, so two runs never share a file. The file is written twice:</p>
+  <ul class="pill-list">
+    <li><strong>Before the first SLA call</strong>, after any template has been applied (Step 8), with one row per fileset: its starting assignment and
+    SLA, and status <code>Pending</code>. If the run is interrupted during the SLA calls, this file still holds the starting state, so it is the
+    rollback record. The script never reverts anything itself.</li>
+    <li><strong>At the end</strong>, rewritten with each fileset's outcome and the status of its host. A host with no
+    fileset to show, such as one that is not in the inventory, gets a row with no object.</li>
+  </ul>
+  <p>The file is written to a temporary file and moved into place, so a failure part way cannot leave a half-written
+  CSV. A <code>-dryRun</code>, or answering anything other than <code>YES</code>, writes no file.</p>
+  <p>Columns: <code>workload, host, cluster, hostStatus, object, objectId, beforeAssignment, beforeSla, beforeSlaId,
+  beforePendingSla, targetSla, assignMutation, applyMode, callGroup, callSec, effectiveSec, status, error</code>. The
+  <code>before*</code> columns are the starting state, <code>callGroup</code> and <code>callSec</code> say which call carried
+  the fileset and how long it took, and <code>effectiveSec</code> is how long after the first call RSC showed the SLA. <code>cluster</code> is the
+  fileset's cluster (empty on rows for a host with no object). A fileset the template just created has the template name in <code>object</code>, <code>Unassigned</code> in
+  <code>beforeAssignment</code> and an empty <code>beforeSla</code>. If every listed host is missing from the inventory CSV, the file written has only the columns
+  <code>workload, host, object, objectId, hostStatus, status, error</code>.</p>
+  <p><strong><code>status</code></strong> is per fileset:</p>
+  <table>
+    <tr><th>status</th><th>Meaning</th><th>Exit code</th></tr>
+    <tr><td><code>Pending</code></td><td>Only in the first write. Seen at the end only if the run was interrupted.</td><td>-</td></tr>
+    <tr><td><code>Applied</code></td><td>Accepted and seen effective</td><td>0</td></tr>
+    <tr><td><code>AlreadyOnTarget</code></td><td>Already effective before any call, skipped</td><td>0</td></tr>
+    <tr><td><code>SkippedPending</code></td><td>An SLA was already pending on it, so nothing was sent. Rerun once the pending SLA has finished</td><td>0</td></tr>
+    <tr><td><code>Submitted</code></td><td>Accepted, not checked. With <code>-skipPolling</code> every accepted object ends as <code>Submitted</code> and nothing is polled</td><td>0</td></tr>
+    <tr><td><code>TemplateFailed</code></td><td>The template could not be applied to the host (the template call failed, or, with <code>-recheckFilesetIDs</code>, no fileset appeared on the host); <code>error</code> has the reason. This row has no object, and no SLA was assigned for that host.</td><td>1</td></tr>
+    <tr><td><code>CallFailed</code></td><td>The call for its group failed; <code>error</code> has the message</td><td>1</td></tr>
+    <tr><td><code>Timeout</code></td><td>Accepted but not effective within <code>-timeoutSec</code></td><td>1</td></tr>
+    <tr><td><code>NotAttempted</code></td><td>The run stopped before this fileset's call</td><td>1</td></tr>
+    <tr><td><code>NotInInventory</code></td><td>A host row only: the host was listed but is not in the inventory CSV, so it was skipped</td><td>0 (1 if every listed host was skipped)</td></tr>
+  </table>
+  <p><strong><code>hostStatus</code></strong> repeats on every row of a host, so you can filter by host:</p>
+  <table>
+    <tr><th>hostStatus</th><th>Meaning</th></tr>
+    <tr><td><code>Assigned</code></td><td>No fileset on the host failed or was skipped for a pending SLA: each is <code>Applied</code>, <code>Submitted</code> or <code>AlreadyOnTarget</code></td></tr>
+    <tr><td><code>Partial</code></td><td>Some filesets reached the target SLA and some failed, timed out or were not attempted</td></tr>
+    <tr><td><code>Failed</code></td><td>No fileset on the host reached the target SLA, including a host where the template could not be applied</td></tr>
+    <tr><td><code>Skipped</code></td><td>Nothing failed, but no fileset was assigned or on the target: every one was skipped for a pending SLA</td></tr>
+    <tr><td><code>NotInInventory</code></td><td>The host was not in the inventory CSV</td></tr>
+    <tr><td><code>Pending</code></td><td>Only in the first write</td></tr>
+  </table>
+  <p>The host CSV's <code>executed</code> column also records <code>TemplateApplied+Assigned</code> for a host that did not have the template, got it applied, and then had every fileset reach the target SLA. With <code>-skipPolling</code> the calls are only submitted, so a host whose calls were accepted is recorded the same way (<code>Assigned</code>) and its objects show <code>Submitted</code> in the Apply CSV.</p>
+  <p>Filesets that the template call returned for several hosts are listed under the host <code>(new on &lt;cluster&gt;)</code>, which is not a real host. Their <code>hostStatus</code> in the Apply CSV is empty. Their combined outcome is
+  given to each host in that template call that has no row of its own, with <code>templateApplied</code> true. In that case the result is the same for all of those hosts, and it is not tied to a particular host.</p>
+  <p><strong>Exit code:</strong> 1 if any fileset is <code>CallFailed</code>, <code>Timeout</code>, <code>NotAttempted</code> or <code>TemplateFailed</code>, or the apply stopped with an error; otherwise 0. A run with no parameters prints a usage summary and exits 0. A run that stops before any change because of an error (for example a host or template not found) assigns nothing.</p>
+  <p>The console prints the same results as counts by status and by host status, lists any fileset that needs attention,
+  and warns about hosts that were skipped for not being in the inventory. If the hosts came from the host CSV, its
+  <code>executed</code> column is updated too (see section 4). A <code>Timeout</code> does not mean the assignment failed,
+  only that it was not visible in time, so check those filesets in RSC.</p>
+</div>
+
+<h2>4. Host CSV and Inventory Workflow</h2>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">H</span>The host CSV and the <code>executed</code> column</h3>
+  <p>Hosts can be given on the command line (<code>-filesetHosts</code>) or in a CSV (<code>-filesetCsvPath</code>). The
+  CSV holds <strong>only the host names and the run's state</strong>. The fileset template and the SLA are not in the CSV:
+  they are given with <code>-filesetName</code> or <code>-filesetTemplateId</code> and <code>-slaName</code> or
+  <code>-slaID</code>, and apply to every host in the file. If both <code>-filesetHosts</code> and
+  <code>-filesetCsvPath</code> are given, <strong>the CSV wins</strong> and <code>-filesetHosts</code> is ignored, with a note
+  printed.</p>
+  <pre><code>host,executed
+host01.example.com,
+host02.example.com,
+host03.example.com,</code></pre>
+  <p>The header needs one host column named <code>host</code>, <code>hostname</code> or <code>name</code> (the file must exist and have at least one row). Any other columns you add are kept. A ready-made example is
+  <code>computer/Powershell/Set-SLA-SQL-Fileset-example.csv</code>.</p>
+  <p>After an Apply run the script writes each host's outcome into the <code>executed</code> column of the <strong>same
+  file</strong>, as a status followed by the time. The column is added if it is missing.</p>
+  <table>
+    <tr><th><code>executed</code> value</th><th>Meaning</th></tr>
+    <tr><td><code>Assigned 2026-11-11 14:52</code></td><td>Every fileset on the host is on the target SLA (with <code>-skipPolling</code>: every call for the host was accepted). The template was already applied.</td></tr>
+    <tr><td><code>TemplateApplied+Assigned &lt;time&gt;</code></td><td>The host did not have the template, so it was applied, and then every fileset is on the target SLA</td></tr>
+    <tr><td><code>TemplateApplied+Assigned (unverified, fewer fileset IDs than hosts, use -recheckFilesetIDs) &lt;time&gt;</code></td><td>The template call returned a different number of fileset IDs than hosts sent (normally fewer), so this host cannot be confirmed to have a fileset. Rerun with <code>-recheckFilesetIDs</code> to check each host</td></tr>
+    <tr><td><code>AlreadyOnTarget &lt;time&gt;</code></td><td>Every fileset was already on the target SLA, so nothing was sent</td></tr>
+    <tr><td><code>Partial: 1 of 2 objects, ... &lt;time&gt;</code></td><td>Some filesets reached the target SLA and some did not; the ones that did not are listed</td></tr>
+    <tr><td><code>Failed: ... &lt;time&gt;</code></td><td>No fileset on the host reached the target SLA, including a host where the template could not be applied</td></tr>
+    <tr><td><code>Skipped: pending SLA, ... &lt;time&gt;</code></td><td>Every fileset on the host was skipped because an SLA was already pending on it</td></tr>
+    <tr><td><code>Skipped: not in inventory &lt;time&gt;</code></td><td>With <code>-inventoryCsv</code>, the host is not in the inventory</td></tr>
+    <tr><td><code>Not run: &lt;reason&gt; &lt;time&gt;</code></td><td>The run stopped before any change because of a problem resolving hosts (for example a host or template not found). The host named in the error shows that error. Every other host shows <code>Not run: stopped before any change</code>. A problem with the template itself, such as a name that does not exist, shows on every host.</td></tr>
+  </table>
+  <ul class="pill-list">
+    <li><strong>The file is only changed by a real Apply run.</strong> <code>-dryRun</code>, answering anything other than
+    <code>YES</code>, and the inventory switches never touch it. A run that stops before any change does record
+    <code>Not run</code> so you can see which host to fix.</li>
+    <li>The file is written to a temporary file and then moved into place, and the original is kept once as
+    <code>&lt;file&gt;.bak</code>. If the write fails, the script says so and the results are still in the Apply CSV.</li>
+    <li>The write uses standard CSV quoting, so every field ends up in quotes even if the original had none. Excel and
+    PowerShell read it the same.</li>
+    <li>A rerun does not skip hosts that already have a value in <code>executed</code>. It processes every host again
+    and overwrites the column. Skipping completed hosts is not built.</li>
+  </ul>
+</div>
+
+
+<div class="step-card">
+  <span class="label">Query</span>
+  <h3><span class="step-num">I1</span>Create the inventory: <code>-getFilesetInventory</code></h3>
+  <p><strong>Functions:</strong> <code>Get-AllPhysicalHostFilesets</code>, <code>Get-AllFilesetTemplates</code></p>
+  <p>A read-only switch. It needs no <code>-action</code>, no SLA and no confirmation, and it rejects these if you pass
+  them: <code>-action</code>, <code>-slaName</code>, <code>-slaID</code>, <code>-mode</code>, <code>-setHostLogRetention</code>, <code>-applyMode</code>, <code>-batchSize</code>,
+  <code>-skipPolling</code>, <code>-assignLog</code>, <code>-recheckFilesetIDs</code>, <code>-dryRun</code>, <code>-skipConfirm</code>, <code>-inventoryCsv</code>,
+  <code>-filesetName</code>, <code>-filesetTemplateId</code> and <code>-assignMutation</code>. It lists every host under
+  <code>-hostRoot</code> with its filesets and each fileset's template, plus every fileset template, writes a timestamped
+  CSV, and exits. With no host list it covers every host RSC returns; with <code>-filesetHosts</code> or
+  <code>-filesetCsvPath</code> it is limited to those hosts, and a named host that is not found only prints a warning.
+  The template list is always complete.</p>
+  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getFilesetInventory -clusterName 'vault-r-madison'
+./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -getFilesetInventory -clusterName 'vault-r-madison' -hostRoot LINUX_HOST_ROOT</code></pre>
+  <p><code>-clusterName</code> is required with this switch (without it the script stops with "-getFilesetInventory needs -clusterName. The fileset inventory covers one cluster.").
+  The name is looked up first (the Step 1 query) and turned into a cluster ID. The template and host queries below then carry a <code>CLUSTER_ID</code>
+  filter for that cluster, so the file covers that one cluster only. The run stops, and writes no file, if no cluster or more than one cluster has that name.</p>
+  <p><strong>Hosts and filesets.</strong> It uses the Step 4 query, extended to return each fileset's include, exclude
+  and exception paths and the host's OS type. With no host list the <code>NAME</code> filter is left out and the pages
+  are walked 100 at a time.</p>
+  <pre><code>query FilesetInventoryQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!, $childFilter: [Filter!]) {
+  physicalHosts(hostRoot: $hostRoot, filter: $filter, first: $first, after: $after, sortBy: NAME, sortOrder: ASC) {
+    edges {
+      node {
+        id
+        name
+        osType
+        cluster { id name }
+        physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], filter: $childFilter) {
+          edges {
+            node {
+              id
+              name
+              objectType
+              slaAssignment
+              effectiveSlaDomain { id name }
+              pendingSla { id name }
+              ... on LinuxFileset {
+                pathIncluded
+                pathExcluded
+                pathExceptions
+                filesetTemplate { id name }
+              }
+              ... on WindowsFileset {
+                pathIncluded
+                pathExcluded
+                pathExceptions
+                filesetTemplate { id name }
+              }
+            }
+          }
+        }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables: every host (first page)</p>
+  <pre><code>{
+  "hostRoot": "WINDOWS_HOST_ROOT",
+  "first": 100,
+  "filter": [
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "IS_KUPR_HOST", "texts": ["false"] }
+  ],
+  "childFilter": [
+    { "field": "IS_GHOST", "texts": ["false"] },
+    { "field": "IS_RELIC", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p class="vars-title">Variables: one named host</p>
+  <pre><code>{
+  "hostRoot": "WINDOWS_HOST_ROOT",
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": ["host01.example.com"] },
+    { "field": "IS_RELIC", "texts": ["false"] },
+    { "field": "IS_REPLICATED", "texts": ["false"] },
+    { "field": "IS_KUPR_HOST", "texts": ["false"] }
+  ],
+  "childFilter": [
+    { "field": "IS_GHOST", "texts": ["false"] },
+    { "field": "IS_RELIC", "texts": ["false"] }
+  ]
+}</code></pre>
+  <p><strong>Templates.</strong> A second query lists every template, with its paths and how many filesets use it.</p>
+  <pre><code>query AllFilesetTemplatesQuery($hostRoot: HostRoot!, $first: Int!, $after: String, $filter: [Filter!]!) {
+  filesetTemplates(hostRoot: $hostRoot, first: $first, after: $after, filter: $filter, sortBy: NAME, sortOrder: ASC) {
+    edges {
+      node {
+        id
+        name
+        includes
+        excludes
+        exceptions
+        numWorkloadDescendants
+        cluster { id name }
+      }
+    }
+    pageInfo { endCursor hasNextPage }
+  }
+}</code></pre>
+  <p class="vars-title">Variables (first page; the filter is an empty name, which matches every template)</p>
+  <pre><code>{
+  "hostRoot": "WINDOWS_HOST_ROOT",
+  "first": 100,
+  "filter": [
+    { "field": "NAME", "texts": [""] }
+  ]
+}</code></pre>
+  <p>The empty-name filter follows the template list the RSC UI sent in a captured session. Pages after the first add
+  <code>"after": "&lt;pageInfo.endCursor&gt;"</code>.</p>
+
+  <p><strong>Output:</strong> <code>&lt;prefix&gt;fileset_inventory-&lt;timestamp&gt;.csv</code>. One file holds three kinds
+  of row, told apart by <code>rowType</code>. A <code>Host</code> row for every host means a host with no filesets still
+  carries its cluster ID, which is what lets Apply tell "in the inventory but missing the template" from "not in the
+  inventory at all".</p>
+  <table>
+    <tr><th>rowType</th><th>One row per</th><th>Filled in</th></tr>
+    <tr><td><code>Template</code></td><td>Template (each cluster has its own)</td><td><code>templateId</code>, <code>templateName</code>, <code>clusterName</code>, <code>clusterId</code>, <code>objectType</code> (<code>FilesetTemplate</code>), <code>includes</code>, <code>excludes</code>, <code>exceptions</code></td></tr>
+    <tr><td><code>Host</code></td><td>Host</td><td><code>host</code>, <code>hostId</code>, <code>clusterName</code>, <code>clusterId</code></td></tr>
+    <tr><td><code>Fileset</code></td><td>Fileset on a host</td><td>Host and cluster columns, plus <code>objectName</code>, <code>objectId</code>, <code>objectType</code>, <code>slaAssignment</code>, <code>effectiveSla</code>, <code>effectiveSlaId</code>, <code>pendingSla</code>, <code>pendingSlaId</code>, <code>templateId</code>, <code>templateName</code>, and the paths</td></tr>
+  </table>
+  <p>All three share one header of 21 columns: <code>inventoryVersion, workload, collectedAt, rowType, host, hostId, clusterName, clusterId, objectName, objectId, objectType, slaAssignment, effectiveSla, effectiveSlaId, pendingSla, pendingSlaId, templateId, templateName, includes, excludes, exceptions</code>. <code>collectedAt</code> is the UTC time of the run,
+  <code>pendingSla</code> and <code>pendingSlaId</code> are the SLA that is still being applied to a fileset (empty when nothing is pending), and the
+  path columns join multiple paths with <code> | </code>. The last example row is a fileset with an SLA pending.</p>
+  <pre><code>"inventoryVersion","workload","collectedAt","rowType","host","hostId","clusterName","clusterId","objectName","objectId","objectType","slaAssignment","effectiveSla","effectiveSlaId","pendingSla","pendingSlaId","templateId","templateName","includes","excludes","exceptions"
+"1","Fileset","2026-11-11T22:46:27Z","Template","","","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","","","FilesetTemplate","","","","","","400333b7-4ecb-5140-b002-777a2a101e47","Temp","C:\Data","",""
+"1","Fileset","2026-11-11T22:46:27Z","Host","host01.example.com","8fcf1319-f1bc-5f14-8630-a702bd3d16ee","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","","","","","","","","","","","","",""
+"1","Fileset","2026-11-11T22:46:27Z","Fileset","host01.example.com","8fcf1319-f1bc-5f14-8630-a702bd3d16ee","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","Temp","ffdf1fca-e8bf-51a9-ac5b-02f18741ed2a","WindowsFileset","Unassigned","UNPROTECTED","UNPROTECTED","","","400333b7-4ecb-5140-b002-777a2a101e47","Temp","C:\Data","",""
+"1","Fileset","2026-11-11T22:46:27Z","Fileset","host02.example.com","6a18127f-ba38-5eea-aa6d-80ea12771fc5","vault-r-madison","3bc43be7-00ca-4ed8-ba13-cef249d337fa","Temp","a13960a7-5d0e-576c-8c47-522f3a9eeb01","WindowsFileset","Direct","Silver","b2f3c4d5-1111-4222-8333-444455556666","Gold","71ede730-34a2-53e0-a0f2-829d9a0b4b30","400333b7-4ecb-5140-b002-777a2a101e47","Temp","C:\Data","",""</code></pre>
+</div>
+
+<div class="step-card">
+  <span class="label logic">Local logic</span>
+  <h3><span class="step-num">I2</span>Feed the inventory into Apply: <code>-inventoryCsv</code></h3>
+  <p><strong>Function:</strong> <code>Read-InventoryCsv</code></p>
+  <pre><code>./Set-SLA-SQL-Fileset.ps1 -RscServiceAccountJson ./rsc-sa.json -action Apply `
+  -inventoryCsv ./rubrik_fileset_inventory-2026-11-11_0900.csv -filesetName 'Temp' -slaName 'Gold' `
+  -filesetCsvPath ./hosts.csv -clusterName 'vault-r-madison'</code></pre>
+  <ul class="pill-list">
+    <li>The fileset, host, cluster and template IDs come from the CSV, so <strong>Step 3 (get the template ID) and Step 4 (get the host
+    inventory) are skipped</strong>: no template lookup, no host search. Each fileset's starting SLA state, including any pending SLA, also
+    comes from the CSV, so Step 5 (what is skipped) decides from the saved values without asking RSC. Step 1 (the cluster lookup) and Step 2 (the SLA name) still run.
+    One thing still reads RSC: the completion polling in Step 10 (not with <code>-skipPolling</code>). With <code>-recheckFilesetIDs</code>
+    the per-host lookups in Step 7 read RSC too. If the inventory is stale, a skip or an assignment can be based on an old SLA or a missing pending
+    SLA, so refresh it when SLAs may have changed.</li>
+    <li>The template is matched in the CSV's <code>Template</code> rows by <code>-filesetName</code> (exact) or
+    <code>-filesetTemplateId</code>. If it is not there, the run stops and tells you to check the name or rerun the
+    inventory. Each host uses the template row on <em>its</em> cluster.</li>
+    <li><code>-clusterName</code> is still required and the cluster is still looked up, but the CSV is not filtered by it: hosts, clusters and template IDs come from the CSV.
+    Use an inventory for the same cluster.</li>
+    <li>The file must be a fileset inventory with the expected columns, otherwise the run stops with a message saying
+    which column or workload is wrong.</li>
+    <li>The script prints when the inventory was collected and warns if it is older than
+    <code>-inventoryMaxAgeHours</code> (default 24).</li>
+    <li><strong>A host that is in the inventory but has no fileset from the template gets the template applied first</strong>
+    (Step 7), and then the SLA is assigned to the full list, new filesets included.</li>
+    <li><strong>A listed host that is not in the inventory at all is skipped.</strong> The script prints a warning at the
+    start and again at the end, and writes a <code>NotInInventory</code> row for it in the Apply CSV (and <code>Skipped: not in inventory</code> in the host CSV). The rest of the list still runs. If <em>every</em> listed host is missing, nothing is assigned, the
+    Apply CSV is still written (with only the columns <code>workload, host, object, objectId, hostStatus, status, error</code>), and the script exits 1.</li>
+    <li>With no host list, every host in the inventory is used, so every host without the template gets it applied.</li>
+    <li>Used with Apply only: <code>-action Test</code> needs live data, and <code>-inventoryCsv</code> is rejected
+    there.</li>
+  </ul>
+  <p>Filesets and hosts added after the inventory was taken are not in the CSV, so a new host is skipped (and logged)
+  until the inventory is refreshed. Rerun the inventory after onboarding hosts or applying templates.</p>
+</div>
+
+<div class="callout">
+  <strong>Handling the inventory file:</strong> it lists host names, fileset names, paths and IDs for your
+  environment. Keep it out of any committed folder.
+</div>
+
+<h2>5. What the Script Does and Does Not Change</h2>
+<table>
+  <tr><th>Object</th><th>Behavior</th></tr>
+  <tr><td>Host</td><td>Never added. It must already be in Rubrik. In a live run a host that is not found stops the run. In an inventory run a listed host that is not in the inventory is skipped and logged.</td></tr>
+  <tr><td>Fileset template</td><td>Never created, edited or deleted. It must already exist. A template that is not found stops the run.</td></tr>
+  <tr><td>Template applied to a host</td><td>Applied (Step 7) only to hosts that do not already have it. Hosts that have it are left alone. Once applied, it stays applied. The script does not undo it, even if the SLA step later fails.</td></tr>
+  <tr><td>SLA on a fileset</td><td>Assigned to the filesets on all listed hosts, new and existing. Filesets already on the target SLA are skipped.</td></tr>
+  <tr><td>Existing snapshots</td><td>Retained, including when the target is <code>DO_NOT_PROTECT</code>.</td></tr>
+</table>
+<p>Because applying the template is the only addition to a host, run <code>-dryRun</code> first. It lists exactly which
+hosts would get the template (<code>Apply template</code>) and which already have it.</p>
+
+<h2>6. Command Reference</h2>
+<table>
+  <tr><th>Goal</th><th>Command</th></tr>
+  <tr><td>Create the inventory</td><td><code>-getFilesetInventory -clusterName 'vault-r-madison'</code> (no <code>-action</code>); limit with <code>-filesetHosts</code> or <code>-filesetCsvPath</code>; Windows is the default (<code>-hostRoot WINDOWS_HOST_ROOT</code>)</td></tr>
+  <tr><td>Preview, change nothing</td><td><code>-action Apply -filesetHosts host01,host02 -filesetName 'Temp' -slaName 'Gold' -clusterName 'vault-r-madison' -dryRun</code></td></tr>
+  <tr><td>Hosts from a CSV</td><td><code>-action Apply -filesetCsvPath ./hosts.csv -filesetName 'Temp' -slaName 'Gold' -clusterName 'vault-r-madison'</code> (host column <code>host</code>, <code>hostname</code> or <code>name</code>; the CSV's <code>executed</code> column is filled in; the CSV wins over <code>-filesetHosts</code>)</td></tr>
+  <tr><td>Apply from the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_fileset_inventory-&lt;time&gt;.csv -filesetCsvPath ./hosts.csv -filesetName 'Temp' -slaName 'Gold' -clusterName 'vault-r-madison'</code></td></tr>
+  <tr><td>Apply to every host in the inventory</td><td><code>-action Apply -inventoryCsv ./rubrik_fileset_inventory-&lt;time&gt;.csv -filesetName 'Temp' -slaName 'Gold' -clusterName 'vault-r-madison'</code></td></tr>
+  <tr><td>Change the inventory age warning</td><td><code>-inventoryMaxAgeHours 48</code></td></tr>
+  <tr><td>Template by ID instead of name (the template's ID, not a fileset on a host)</td><td><code>-action Apply -filesetHosts host01,host02 -filesetTemplateId &lt;template id&gt; -slaName 'Gold' -clusterName 'vault-r-madison'</code></td></tr>
+  <tr><td>Linux hosts and templates (Windows is the default)</td><td><code>-hostRoot LINUX_HOST_ROOT</code></td></tr>
+  <tr><td>Cluster (required for fileset runs)</td><td><code>-clusterName 'vault-r-madison'</code> (exact name; every lookup and the template application are on this one cluster)</td></tr>
+  <tr><td>Use an SLA ID</td><td><code>-slaID &lt;SLA ID&gt;</code></td></tr>
+  <tr><td>One call per host</td><td><code>-applyMode Single</code></td></tr>
+  <tr><td>Change the batch size (default 50)</td><td><code>-batchSize 25</code></td></tr>
+  <tr><td>Record every assignment call to a text file</td><td><code>-assignLog</code> (add <code>-assignMutation AssignSlasForSnappableHierarchies</code> to compare it with the default)</td></tr>
+  <tr><td>Submit only, do not poll for completion (each object's state is <code>Submitted</code>)</td><td><code>-skipPolling</code> (alias <code>-noWait</code>)</td></tr>
+  <tr><td>Look the new hosts up again after the template is applied (one lookup per host)</td><td><code>-recheckFilesetIDs</code> (default: use the fileset IDs the template call returns)</td></tr>
+  <tr><td>Do Not Protect / remove assignment</td><td><code>-slaName 'DO_NOT_PROTECT'</code> / <code>-slaName 'NO_ASSIGNMENT'</code></td></tr>
+  <tr><td>Use the mutation the RSC UI uses (the default is <code>AssignSla</code>)</td><td><code>-assignMutation AssignSlasForSnappableHierarchies</code></td></tr>
+  <tr><td>Write CSVs to a folder</td><td><code>-csvOutputPrefix ./reports/rubrik_</code> (the folder must exist; default <code>./rubrik_</code>)</td></tr>
+  <tr><td>Skip the <code>YES</code> prompt</td><td><code>-skipConfirm</code> (the plan is still printed)</td></tr>
+  <tr><td>Change the poll interval (default 5 seconds)</td><td><code>-pollIntervalSec 10</code> (1 or more)</td></tr>
+  <tr><td>Change the time to wait for the SLA to show (default 600 seconds, in total)</td><td><code>-timeoutSec 1200</code></td></tr>
+  <tr><td>Show the usage summary</td><td>Run the script with no parameters</td></tr>
+</table>
+<p>Every command also needs <code>-RscServiceAccountJson &lt;file&gt;</code>, and Apply commands need
+<code>-action Apply</code>. The script has a separate <code>-action Test</code> pathway that times Single versus Bulk
+assignment on test hosts. It is not part of the production flow.</p>
+<p><strong>Parameter rules the script enforces:</strong></p>
+<ul class="pill-list">
+  <li><code>-RscServiceAccountJson</code> is required. <code>-action</code> must be <code>Apply</code> or <code>Test</code> unless <code>-getSqlInventory</code> or <code>-getFilesetInventory</code> is used (not both).</li>
+  <li>Fileset runs: <code>-clusterName</code> is required; give <code>-filesetName</code> or <code>-filesetTemplateId</code> (not both); give hosts with <code>-filesetHosts</code> or <code>-filesetCsvPath</code>
+  (not needed with <code>-inventoryCsv</code>); give <code>-slaName</code> or <code>-slaID</code> (not both). SQL and fileset parameters cannot be mixed in one run, and <code>-clusterName</code> is rejected for SQL.</li>
+  <li>Apply rejects <code>-mode</code> and <code>-setHostLogRetention</code>. <code>-batchSize</code>, <code>-pollIntervalSec</code> and <code>-inventoryMaxAgeHours</code> must be 1 or more.</li>
+  <li><code>-recheckFilesetIDs</code> is Apply only, fileset only. It is rejected for SQL, for <code>-action Test</code> and for the inventory switches.</li>
+  <li><code>-inventoryCsv</code> is for <code>-action Apply</code> only, and the file must exist.</li>
+</ul>
+
+<footer>
+  Reference: <code>computer/Powershell/Set-SLA-SQL-Fileset.ps1</code> &mdash; requires PowerShell 7+ and an RSC
+  Service Account with permission to view hosts, filesets and SLA Domains and to assign SLA Domains.
+</footer>
+
+</div>
+</body>
+</html>
