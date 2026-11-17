@@ -67,7 +67,7 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
     --hosts sql01 sql02 sql03 --sla-name Gold --cluster-name cluster01
 
   # SQL and filesets, hosts from a CSV (hostname, host, name or sqlhost column)
-  # Writes executed_sql and executed_fileset columns into hosts.csv, and keeps hosts.csv.bak
+  # Writes the last status and time into executed_sql and executed_fileset in hosts.csv, and keeps hosts.csv.bak
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign both \\
     --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01
 
@@ -101,8 +101,10 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
 Output (<workload> is sql or fileset), same names and columns as the PowerShell script:
 - <prefix><workload>_sla_apply-<timestamp>.csv
 - <prefix><workload>_sla_assign_log-<timestamp>.txt (only with --assign-log)
-- Host CSV (--host-csv-path): updated in place, the 'executed' column filled in for each host
-  ('executed_sql' and 'executed_fileset' with --assign both). The original is kept once as <file>.bak.
+- Host CSV (--host-csv-path): updated in place. It always gets two columns, executed_sql and executed_fileset,
+  each holding the host's last status and time for that workload, for example: Assigned 2026-11-17 14:05
+  A run changes only the column for its own workload (sqlOnly leaves executed_fileset as it was), so each
+  column keeps the result of its last run. The original is kept once as <file>.bak.
   Dry runs and cancelled runs never change the file.
 
 Inventory CSVs are written by the PowerShell script (-getSqlInventory / -getFilesetInventory).
@@ -345,10 +347,8 @@ class Ctx(object):
         self.assign_log_target = ''
 
     def executed_column(self):
-        """Host CSV column for this pass: 'executed' for one workload, 'executed_sql' / 'executed_fileset' for both."""
-        if len(self.workloads) > 1:
-            return 'executed_%s' % self.workload.lower()
-        return 'executed'
+        """Host CSV column this pass writes: 'executed_sql' or 'executed_fileset'."""
+        return 'executed_%s' % self.workload.lower()
 
 
 class Stop(Exception):
@@ -894,26 +894,30 @@ def read_host_csv(ctx, path, columns):
 
 
 def update_host_csv_executed(ctx, executed_by_host):
-    """Write each host's outcome into this pass's executed column. The file is written to a temporary file and
-    moved into place, and the original is kept once as <file>.bak. The rows are kept in memory so the next
-    pass (--assign both) adds its column to the file the first pass already wrote."""
+    """Write each host's last status and time into this pass's column ('executed_sql' or 'executed_fileset').
+    The file always gets both columns, and a run only changes the one for its own workload, so the other
+    keeps the result of its last run. The file is written to a temporary file and moved into place, and the
+    original is kept once as <file>.bak. The rows are kept in memory so the next pass (--assign both)
+    builds on the file the first pass already wrote."""
     info = ctx.host_csv
     if not info:
         return
     stamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    wanted_col = ctx.executed_column()
-    executed_col = next((c for c in info['fieldnames'] if c.casefold() == wanted_col), wanted_col)
     columns = list(info['fieldnames'])
-    if executed_col not in columns:
-        columns.append(executed_col)
+    col_names = {}
+    for wanted in ('executed_sql', 'executed_fileset'):
+        col_names[wanted] = next((c for c in columns if c.casefold() == wanted), wanted)
+        if col_names[wanted] not in columns:
+            columns.append(col_names[wanted])
+    executed_col = col_names[ctx.executed_column()]
     out = []
     for row in info['rows']:
         copy = dict(row)
+        for name in col_names.values():
+            copy.setdefault(name, '')
         host_value = str(row.get(info['column'], '')).strip()
         if host_value and host_value.lower() in executed_by_host:
             copy[executed_col] = ('%s %s' % (executed_by_host[host_value.lower()], stamp)).strip()
-        elif executed_col not in copy:
-            copy[executed_col] = ''
         out.append(copy)
     backup = info['path'] + '.bak'
     tmp = info['path'] + '.tmp'
@@ -1433,8 +1437,8 @@ def print_usage_summary():
     say('FILES', 'cyan')
     say('  Creates:    sql_sla_apply-<time>.csv, fileset_sla_apply-<time>.csv   starting SLA of every object, then its outcome and host status')
     say('              sql_sla_assign_log-<time>.txt, fileset_sla_assign_log-<time>.txt   from --assign-log: every SLA assignment call')
-    say("  Updates:    your --host-csv-path file, in place: 'executed' gets each host's result and time ('executed_sql' and")
-    say("              'executed_fileset' with --assign both). The original is kept once as <file>.bak.")
+    say("  Updates:    your --host-csv-path file, in place: 'executed_sql' and 'executed_fileset' get each host's last status")
+    say("              and time for that workload. A run changes only its own column. The original is kept once as <file>.bak.")
     say('  New files go in the current folder, or where --csv-output-prefix points.')
     say('')
     say('ALL RUNS', 'cyan')
@@ -1456,7 +1460,7 @@ def build_parser():
     parser.add_argument('--cluster-name', help='Exact name of the one cluster to work on. Required. Every lookup and every assignment call is on this cluster.')
     parser.add_argument('--assign', required=True, type=ci_choice(ASSIGN_CHOICES), help='What to assign: sqlOnly (SQL instances), filesetOnly (filesets of --fileset-name) or both (SQL pass, then fileset pass, on the same host list). Required.')
     parser.add_argument('--hosts', nargs='+', metavar='HOST', help='Host names (exact match, case-insensitive). Space or comma separated. Used for SQL and for filesets. The CSV wins if both are given.')
-    parser.add_argument('--host-csv-path', help='Host CSV with a hostname, host, name or sqlhost column. Updated in place with an "executed" column ("executed_sql" and "executed_fileset" with --assign both). The original is kept once as <file>.bak.')
+    parser.add_argument('--host-csv-path', help='Host CSV with a hostname, host, name or sqlhost column. Updated in place with two columns, executed_sql and executed_fileset, holding the last status and time for each host in that workload. The original is kept once as <file>.bak.')
     parser.add_argument('--fileset-name', help='Name of the existing fileset template (exact match). Hosts without it get it applied. Never created or changed.')
     parser.add_argument('--fileset-template-id', help='ID of the existing fileset template, instead of --fileset-name.')
     parser.add_argument('--host-root', type=ci_choice(['WINDOWS_HOST_ROOT', 'LINUX_HOST_ROOT']), default='WINDOWS_HOST_ROOT', help='Host type for fileset hosts and templates. Default: WINDOWS_HOST_ROOT')
@@ -1771,7 +1775,7 @@ def run_pass(ctx, workload, target_spec):
         })
     write_apply_csv(ctx, final_rows, APPLY_COLUMNS)
 
-    # Record each host's outcome in the 'executed' column of the host CSV
+    # Record each host's last status and time in this workload's column of the host CSV
     if ctx.host_csv:
         update_host_csv_executed(ctx, {h['host'].lower(): executed_text(h) for h in host_log_rows})
 
