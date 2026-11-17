@@ -9,31 +9,45 @@ Read-only. BigQuery only: no Compute Engine, Cloud SQL, or Spanner data is colle
 
 .DESCRIPTION
 'Get-GCPBigQuerySizingInfo.ps1' collects one row per BigQuery table / materialized view / external
-table / snapshot / view in the specified projects and exports a CSV and a log file, compressed
-into a zip file. Send the resulting zip file to Rubrik for analysis.
+table / snapshot / view in the specified projects and exports a CSV and a log file
+to the current directory. Send the resulting CSV and log file to Rubrik for analysis.
 
 Three collection methods are available, selected with -Method:
 
-  InformationSchema (default, fastest)
+  InformationSchema (default, most efficient)
       Runs one SQL query per project per dataset location against
-      `region-<location>`.INFORMATION_SCHEMA.TABLE_STORAGE (via 'bq query'). Returns logical and
-      physical bytes for every table in a handful of calls instead of one call per table.
-      Requires: 'bq' on PATH and bigquery.jobs.create (see permissions below).
-      Not included: views and external tables are not returned by TABLE_STORAGE, and
-      NumberOfColumns / ExternalSource* columns are left empty.
+      `region-<location>`.INFORMATION_SCHEMA.TABLE_STORAGE (via 'bq query'), plus one optional
+      query against TABLE_OPTIONS for table-level labels. A single query returns logical and
+      physical bytes for every table in that location, so a project with thousands of tables
+      needs a handful of calls instead of one call per table. Also the only method that reports
+      time travel and fail-safe physical bytes for all tables in one pass.
+      Requires: 'bq' on PATH, bigquery.jobs.create, and PROJECT-level bigquery.tables.get/list
+      (dataset-level access is not enough; see permissions below).
+      Limitations: TABLE_STORAGE documents tables and materialized views only, so views and
+      external tables are not expected in the results. NumberOfColumns and ExternalSource*
+      columns are left empty. Values can lag real time by minutes (up to a day after
+      expiration or time travel changes).
+
+  Bq
+      Uses the 'bq' CLI ('bq ls' / 'bq show'): one call per dataset and one 'bq show' per table,
+      run sequentially. Same approach as Get-GCPSizingInfo.ps1. Slow on large projects, but only
+      needs metadata read access, which can be granted at the dataset level. Reports views and
+      external tables, and column counts.
 
   Rest
       Calls the BigQuery REST API (datasets.list, tables.list, tables.get) directly using an
       access token from 'gcloud auth print-access-token'. One tables.get call per table, run in
-      parallel (see -ThrottleLimit). Does NOT require 'bq' and does NOT require bigquery.jobs.create.
+      parallel (see -ThrottleLimit), so it is faster than Bq. Does NOT require 'bq' and does NOT
+      require bigquery.jobs.create. Needs only dataset-level metadata read access.
 
-  Bq
-      Uses the 'bq' CLI ('bq ls' / 'bq show'), one call per table, sequentially. This is the same
-      approach used by Get-GCPSizingInfo.ps1. Slowest, but needs only metadata read permissions.
-
-By default, if the chosen method fails for a project (for example a permissions error), the
-script automatically tries the next method in the order InformationSchema -> Bq -> Rest. Use
--NoFallback to try only the method selected with -Method.
+FALLBACK: by default, if a method fails for a project (for example a permissions error), the
+script automatically retries that project with the next method in the order
+InformationSchema -> Bq -> Rest. The most efficient method is tried first; the later ones need
+fewer permissions. Methods that need 'bq' are skipped if it is not installed. If every method
+fails, the project is reported as FAILED. Rest includes BigQuery's hidden query-result datasets
+(names starting with '_'), which usually produce harmless access-denied warnings. The
+CollectionMethod column in the CSV shows which method produced each row. Use -NoFallback to try
+only the method selected with -Method.
 
 Before collecting anything the script shows the account, the number of projects, and the method
 order, and asks for confirmation. Use -Yes to skip the prompt (required when input is redirected).
@@ -42,22 +56,122 @@ At the end it prints a per-project result table and lists every project that fai
 Pass a comma separated list of projects or a CSV/text file containing the project names. If no
 project IDs are specified, all projects the logged in user can see are used.
 
-PERMISSIONS (read-only; required on all projects):
+QUERIES AND COMMANDS RUN (all read-only):
 
-  - resourcemanager.projects.get
+  InformationSchema method. For each project, the script lists datasets to find their locations,
+  then for each distinct location {REGION} (the dataset location in lower case, for example
+  us-central1 or us) it runs this command once, and the same command a second time with the
+  labels query below (skipped with -SkipTableLabels):
+
+    bq query --quiet --use_legacy_sql=false --format=json --max_rows=100000000 `
+      --location=<LOCATION> --project_id=<PROJECT> "<SQL>"
+
+  Table sizes query:
+
+    SELECT
+      table_schema AS dataset_id,
+      table_name,
+      table_type,
+      total_rows,
+      total_logical_bytes,
+      active_logical_bytes,
+      long_term_logical_bytes,
+      total_physical_bytes,
+      active_physical_bytes,
+      long_term_physical_bytes,
+      time_travel_physical_bytes,
+      fail_safe_physical_bytes,
+      UNIX_MILLIS(creation_time) AS creation_ms,
+      UNIX_MILLIS(storage_last_modified_time) AS modified_ms
+    FROM `region-{REGION}`.INFORMATION_SCHEMA.TABLE_STORAGE
+    WHERE deleted = FALSE
+
+  Table labels query:
+
+    SELECT table_schema AS dataset_id, table_name, option_value
+    FROM `region-{REGION}`.INFORMATION_SCHEMA.TABLE_OPTIONS
+    WHERE option_name = 'labels'
+
+  Both queries only read metadata views; they do not scan any table data.
+
+  Bq method (per project, per dataset, per table):
+
+    bq ls --format=json --max_results=2147483647 --project_id=<PROJECT>
+    bq show --format=prettyjson <PROJECT>:<DATASET>
+    bq ls --format=prettyjson --max_results=2147483647 <PROJECT>:<DATASET>
+    bq show --format=prettyjson <PROJECT>:<DATASET>.<TABLE>
+
+  Rest method (HTTPS GET only, bearer token from 'gcloud auth print-access-token'):
+
+    GET https://bigquery.googleapis.com/bigquery/v2/projects/<PROJECT>/datasets?all=true
+    GET .../projects/<PROJECT>/datasets/<DATASET>/tables
+    GET .../projects/<PROJECT>/datasets/<DATASET>/tables/<TABLE>
+
+  Common to all methods (gcloud):
+
+    gcloud auth print-access-token
+    gcloud config get-value account
+    gcloud projects list --format=json              (only when no project list is given)
+    gcloud projects describe <PROJECT> --format=json
+    gcloud services list --enabled --project=<PROJECT> `
+      --filter="config.name:bigquery.googleapis.com" --format="value(config.name)"
+
+PERMISSIONS (read-only):
+
+  All methods:
+  - resourcemanager.projects.get      (describe each project)
+  - resourcemanager.projects.list     (only when no project list is given, to discover projects)
+  - serviceusage.services.list        (check that the BigQuery API is enabled; if this check
+                                       fails the script warns and tries the project anyway)
+
+  Bq and Rest methods (can be granted per dataset):
   - bigquery.datasets.get
+  - bigquery.tables.list
+  - bigquery.tables.get
+
+  InformationSchema method (must be granted on the PROJECT, not just on datasets):
   - bigquery.tables.get
   - bigquery.tables.list
-  - serviceusage.services.list        (to check that the BigQuery API is enabled)
-  - bigquery.jobs.create              (InformationSchema method only)
-  - bigquery.routines.get             (InformationSchema table-label query only)
-  - bigquery.routines.list            (InformationSchema table-label query only)
+  - bigquery.datasets.get             (dataset location and labels)
+  - bigquery.jobs.create              (to run the queries)
+  - bigquery.routines.get             (table-label query only; if denied, table labels are
+  - bigquery.routines.list             missing but the sizes are still collected)
 
 Suggested roles: roles/bigquery.metadataViewer (+ roles/bigquery.jobUser for InformationSchema).
+If the InformationSchema method reports "Access Denied ... at the project level", the account
+only has dataset-level access; with fallback enabled the script moves on to Bq, then Rest.
 
-This script can be run from the Google Cloud Shell or from a laptop/server with PowerShell 7 and
-the gcloud SDK installed and authenticated ('gcloud auth login'). 'bq' is included with the
-standard gcloud SDK installer and is preinstalled in Cloud Shell.
+DEPENDENCIES AND SETUP:
+
+This script can be run from the Google Cloud Shell (everything below is preinstalled and already
+authenticated; just run the script) or from a laptop/server with the following:
+
+  1. PowerShell 7 or later (this script requires it; Windows PowerShell 5.1 will not work).
+     Install: https://learn.microsoft.com/powershell/scripting/install/installing-powershell
+     Verify:  pwsh --version
+
+  2. Google Cloud SDK ('gcloud'), required for all methods.
+     Install: https://cloud.google.com/sdk/docs/install
+       - Windows: run the installer, then close and reopen PowerShell so PATH is refreshed.
+       - macOS:   brew install --cask gcloud-cli   (or use the installer from the link above)
+       - Linux:   use the package manager or the tarball from the link above.
+     Verify:  gcloud --version
+
+  3. The 'bq' command line tool, required for the InformationSchema and Bq methods. It is
+     included with the standard SDK installer. If it is missing (for example a package-manager
+     install of the SDK), run: gcloud components install bq
+     Verify:  bq version
+     The Rest method does not need 'bq'. If 'bq' is not installed, methods that need it are
+     skipped automatically.
+
+  4. Initialize and log in to gcloud (first time only):
+       gcloud init                 # interactive: log in, pick a default project
+       gcloud auth login           # log in (or re-login if credentials expired)
+     On a machine without a browser, use: gcloud auth login --no-launch-browser
+     Check the active account with: gcloud auth list
+     Switch accounts with:          gcloud config set account ACCOUNT
+     The account used must have the permissions listed above. If the script reports that gcloud
+     credentials have expired (invalid_grant), run 'gcloud auth login' again.
 
 All commands that touch GCP are read-only (gcloud projects list/describe, gcloud services list,
 bq ls/show/query against INFORMATION_SCHEMA, and HTTPS GET requests to bigquery.googleapis.com).
@@ -75,7 +189,7 @@ A comma separated list of GCP project IDs to gather data from.
 Path to a file containing a list of GCP project IDs separated by line breaks. No header is required.
 
 .PARAMETER Method
-Collection method: InformationSchema (default), Rest, or Bq. See DESCRIPTION.
+Collection method to try first: InformationSchema (default), Bq, or Rest. See DESCRIPTION.
 
 .PARAMETER Fallback
 Deprecated, accepted for compatibility. Fallback is now the default behavior; see -NoFallback.
@@ -115,8 +229,34 @@ Specify "Tags" to exclude all label fields (properties starting with "Label/Tag:
 Based on Get-GCPSizingInfo.ps1 by Steven Tong (GitHub: stevenctong).
 
 .EXAMPLE
-Fastest method, all accessible projects:
+Run across ALL projects the logged in account can see. The script lists how many projects it found
+and asks for confirmation before collecting anything:
 PS> ./Get-GCPBigQuerySizingInfo.ps1
+
+.EXAMPLE
+Run across all projects without the confirmation prompt (for example from a scheduler):
+PS> ./Get-GCPBigQuerySizingInfo.ps1 -Yes
+
+.EXAMPLE
+Provide a list of projects on the command line (comma separated, no spaces needed):
+PS> ./Get-GCPBigQuerySizingInfo.ps1 -Projects 'my-prod-project,my-dev-project,my-analytics-project'
+
+.EXAMPLE
+Provide a list of projects in a text file, one project ID per line, no header. For example a file
+'projectFile.txt' containing:
+    my-prod-project
+    my-dev-project
+    my-analytics-project
+PS> ./Get-GCPBigQuerySizingInfo.ps1 -ProjectFile ./projectFile.txt
+
+.EXAMPLE
+Log in first if needed, then run for one project:
+PS> gcloud auth login
+PS> ./Get-GCPBigQuerySizingInfo.ps1 -Projects 'my-prod-project'
+
+.EXAMPLE
+Anonymize project, dataset and table names in the output CSV:
+PS> ./Get-GCPBigQuerySizingInfo.ps1 -Projects 'my-prod-project' -Anonymize
 
 .EXAMPLE
 REST API method for specific projects (no 'bq' needed):
@@ -199,7 +339,7 @@ param (
 )
 
 # Script version: update this with every change to this script.
-$scriptVersion = "1.1.1"
+$scriptVersion = "1.2.3"
 
 # Save the current culture so it can be restored later
 $CurrentCulture = [System.Globalization.CultureInfo]::CurrentCulture
@@ -1035,20 +1175,6 @@ function Get-BigQueryInventoryViaInformationSchema {
     return [PSCustomObject]@{ Success = $allOk; Rows = $rows; Datasets = $datasets.Count; Error = $(if ($allOk) { $null } else { "TABLE_STORAGE query failed: $firstError" }) }
 }
 
-function Compress-SizingArchive {
-    param(
-        [string[]]$OutputFiles,
-        [string]$ArchiveFile
-    )
-    $existingFiles = $OutputFiles | Where-Object { Test-Path $_ }
-    if ($existingFiles) {
-        Compress-Archive -Path $existingFiles -DestinationPath $ArchiveFile
-    }
-    foreach ($file in $OutputFiles) {
-        Remove-Item -Path $file -ErrorAction SilentlyContinue
-    }
-}
-
 # --- Main script body ---
 
 # Auth preflight, before any output files are created. Exits with a clear message if gcloud has no
@@ -1066,7 +1192,7 @@ if (-not $authCheck.Success) {
     exit 1
 }
 
-# Set when the run ends early. The zip and "send to Rubrik" steps are skipped and the log is kept.
+# Set when the run ends early. The "send to Rubrik" message is skipped and the log is kept.
 $script:fatal = $false
 $script:declined = $false
 
@@ -1096,7 +1222,6 @@ Write-Host "Authenticated account: $($authCheck.Account)" -ForegroundColor Cyan
 
 # Filename of the CSV output (kept identical to Get-GCPSizingInfo.ps1 so downstream analysis is unchanged)
 $outputBigQuery = "gce_bigquery_info-$date_string.csv"
-$archiveFile = "gcp_bigquery_sizing_results_$date_string.zip"
 $outputFiles = @($outputBigQuery, $output_log)
 
 # Resolve the list of projects to process
@@ -1303,7 +1428,7 @@ if ($script:bqCollectionWarnings -gt 0) {
   Write-Host "WARNING: $($script:bqCollectionWarnings) BigQuery call(s) failed; the BigQuery totals above may be incomplete. See the warnings above." -foregroundcolor yellow
 }
 
-# Nothing collected: do not produce a CSV/zip that looks like a successful run
+# Nothing collected: do not produce a CSV that looks like a successful run
 if ($bigQueryList.Count -eq 0) {
   Write-Host
   Write-Host "ERROR: No BigQuery tables were collected from any project, so no results file was created." -ForegroundColor Red
@@ -1317,10 +1442,6 @@ Write-Host
 Add-TagsToAllObjectsInList($bigQueryList)
 Write-Host "CSV file output to: $outputBigQuery" -foregroundcolor green
 $bigQueryList | Export-CSV -path $outputBigQuery
-
-Write-Host
-Write-Host
-Write-Host "Results will be compressed into $archiveFile and original files will be removed." -ForegroundColor Green
 
 if ($Anonymize) {
   # Exporting as rows as new value - old value
@@ -1337,7 +1458,7 @@ if ($Anonymize) {
   Write-Host
   Write-Host "Provided anonymized keys to actual values in the CSV: $anonKeyValuesFileName" -ForeGroundColor Cyan
   Write-Host "Provided log file here: $log_for_anon_customers" -ForegroundColor Cyan
-  Write-Host "These files are not part of the zip file generated" -ForegroundColor Cyan
+  Write-Host "Do not send the key file or the non-anonymized log to Rubrik" -ForegroundColor Cyan
   Write-Host
 }
 
@@ -1362,20 +1483,21 @@ if ($script:fatal) {
     if ($log_for_anon_customers) { Remove-Item -Path "./$log_for_anon_customers" -ErrorAction SilentlyContinue }
     exit 2
   }
-  # Keep the log on disk for troubleshooting; do not create a zip or ask the user to send anything
+  # Keep the log on disk for troubleshooting; do not ask the user to send anything
   Write-Host
-  Write-Host "The run did not complete. No zip file was created. Log file kept for troubleshooting:" -ForegroundColor Red
+  Write-Host "The run did not complete. Log file kept for troubleshooting:" -ForegroundColor Red
   if ($Anonymize) { Write-Host "  $log_for_anon_customers" -ForegroundColor Red } else { Write-Host "  $output_log" -ForegroundColor Red }
   exit 1
 }
 
-Compress-SizingArchive -OutputFiles $outputFiles -ArchiveFile $archiveFile
-
 Write-Host
+Write-Host "Output files (not compressed):" -ForegroundColor Green
+Write-Host "  CSV: $outputBigQuery" -ForegroundColor Cyan
+if ($Anonymize) {
+  Write-Host "  Log: $output_log (placeholder only; the full log is $log_for_anon_customers)" -ForegroundColor Cyan
+} else {
+  Write-Host "  Log: $output_log" -ForegroundColor Cyan
+}
 Write-Host
-Write-Host "Results have been compressed into $archiveFile and original files have been removed." -ForegroundColor Green
-
-Write-Host
-Write-Host
-Write-Host "Please send $archiveFile to your Rubrik representative." -ForegroundColor Cyan
+Write-Host "Please send the CSV and log file to your Rubrik representative." -ForegroundColor Cyan
 Write-Host
