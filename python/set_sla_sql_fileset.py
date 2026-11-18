@@ -10,8 +10,8 @@ writers (-getSqlInventory / -getFilesetInventory) are not part of this script.
 With --assign both, ONE host list (--hosts or --host-csv-path) is used for SQL and for filesets, and
 the run is two independent passes, SQL first and then filesets. Each pass resolves its objects, shows
 its own plan, asks for its own confirmation, assigns, and writes its own Apply CSV. A failure in one pass does
-not stop the other, and the exit code is 1 if either pass had a problem. Every host in the list must be
-found as a SQL host (SQL pass); a host that is not found stops the SQL pass, and the fileset pass still runs.
+not stop the other, and the exit code is 1 if either pass had a problem. The same host list is used for both, so
+a host that is only a SQL host, or only a fileset host, is skipped (with the reason) in the other pass.
 
 Author: Steven Tong
 GitHub: stevenctong
@@ -24,9 +24,9 @@ How it works
   For filesets, each host must have the fileset template (--fileset-name or --fileset-template-id)
   applied. The template must already exist and is never created or changed. Hosts that do not have
   it get it applied with bulkCreateFilesets (one call per cluster, after confirmation).
-- Skips three things and says which and why: a host that is not in the inventory CSV (in a live run
-  a host that is not found stops the run instead), an object with any pending SLA, and an object
-  whose effective SLA is already the target. A rerun is therefore safe.
+- Skips what it cannot or should not change, says which and why, and carries on with the rest: a host that
+  cannot be used (see Skipped hosts below), an object with any pending SLA, and an object whose effective SLA is
+  already the target. A rerun is therefore safe.
 - Shows the plan and asks you to confirm with y or yes in any case (--dry-run shows the plan only, --skip-confirm skips the prompt).
 - Writes the Apply CSV with the starting SLA of every object before changing anything, sends the
   assignments, then rewrites the same file with the outcomes.
@@ -56,6 +56,19 @@ Polling
 - --skip-polling (alias --no-wait) submits and exits. Accepted objects are recorded as Submitted, and a
   rerun skips any that are still pending (SkippedPending).
 
+Skipped hosts (the default, nothing to turn on)
+- A host that cannot be used is skipped, not fatal. The rest are applied. A host is skipped when it is not found by
+  exact name on --cluster-name, when more than one host has the name, when a SQL host has no SQL instances (for
+  example a cluster node, whose instances sit under the cluster), when a fileset host's cluster does not have
+  exactly one fileset template of that name, or when a host is not in the --inventory-csv.
+- Every skipped host is listed in the plan (grouped by reason) and again at the end. In the Apply CSV it gets a row
+  with no object, its skip status in status and hostStatus, and the reason in the error column. In the host CSV its
+  executed_sql / executed_fileset cell reads: Skipped: <reason> <time>
+- The exit code is 1 if any host was skipped. If every listed host is skipped, nothing is assigned. A dry run
+  shows the skips, writes nothing and exits 0.
+- A problem that affects every host (the fileset template does not exist) still stops the pass, and every host's
+  cell reads: Not run: <reason>
+
 Debug (--debug, SQL pass, read-only)
 - Before resolving hosts, lists every SQL host RSC returns once with no cluster filter and once with the
   --cluster-name filter (same relic and replicated filters as the real lookup, no name filter). Nothing is
@@ -75,7 +88,11 @@ Statuses in the Apply CSV
   Timeout          call accepted but RSC did not show the SLA in time
   NotAttempted     the run stopped before this object was sent
   TemplateFailed   the fileset template could not be applied to the host
-  NotInInventory   host is not in the --inventory-csv, skipped
+  SkippedNotFound     host not found by exact name on the cluster, skipped (no object row, reason in error)
+  SkippedNoInstances  SQL host with no SQL instances, skipped
+  SkippedAmbiguous    more than one host has the name, skipped
+  SkippedNoTemplate   fileset template missing or not unique on the host's cluster, skipped
+  NotInInventory      host is not in the --inventory-csv, skipped
 
 Examples (add --dry-run to any of them to see the plan and change nothing)
 
@@ -169,7 +186,14 @@ APPLY_COLUMNS = [
     'beforeSla', 'beforeSlaId', 'beforePendingSla', 'targetSla', 'assignMutation', 'applyMode',
     'callGroup', 'callSec', 'effectiveSec', 'status', 'error'
 ]
-NOT_IN_INVENTORY_COLUMNS = ['workload', 'host', 'object', 'objectId', 'hostStatus', 'status', 'error']
+# Hosts that are skipped (and recorded) instead of stopping the run: status -> label used on the console
+SKIP_HOST_LABELS = {
+    'SkippedNotFound': 'Not found',
+    'SkippedNoInstances': 'No SQL instances',
+    'SkippedAmbiguous': 'More than one host with that name',
+    'SkippedNoTemplate': 'Fileset template not usable on the host cluster',
+    'NotInInventory': 'Not in the inventory CSV',
+}
 
 INVENTORY_REQUIRED_COLUMNS = [
     'inventoryVersion', 'workload', 'rowType', 'host', 'hostId', 'clusterId', 'objectId',
@@ -1001,16 +1025,12 @@ def update_host_csv_executed(ctx, executed_by_host):
                 pass
 
 
-def set_host_csv_not_run(ctx, errors=None, reason='stopped before any change'):
-    """Record that host resolution failed before any change: each host named in an error gets
-    'Not run: <error>', every other host gets 'Not run: <reason>'."""
+def set_host_csv_not_run(ctx, reason='stopped before any change'):
+    """The pass stopped before any change for a reason that affects every host (for example the fileset template
+    does not exist). Record 'Not run: <reason>' for every host in the host CSV."""
     if not ctx.host_csv:
         return
-    by_host = {}
-    for host_name in ctx.host_names:
-        hit = next((e for e in (errors or []) if re.search(re.escape(host_name), e, re.IGNORECASE)), None)
-        by_host[host_name.lower()] = 'Not run: %s' % (hit if hit else reason)
-    update_host_csv_executed(ctx, by_host)
+    update_host_csv_executed(ctx, {h.lower(): 'Not run: %s' % reason for h in ctx.host_names})
 
 
 def write_apply_csv(ctx, rows, columns):
@@ -1207,8 +1227,9 @@ def debug_sql_inventory(ctx):
 
 def resolve_from_inventory(ctx):
     """Build host_objs and pending_hosts from the inventory CSV, without querying RSC for hosts or objects.
-    A listed host that is not in the inventory is skipped and logged. A host in the inventory that has no
-    fileset from the template is returned in pending_hosts so the template is applied before the SLA."""
+    A listed host that cannot be used (not in the inventory, appears twice, no SQL instances, no usable template)
+    is skipped and returned in the skipped list as {'host', 'status', 'reason'}. A host in the inventory that has
+    no fileset from the template is returned in pending_hosts so the template is applied before the SLA."""
     args = ctx.args
     rows_all = read_inventory_csv(ctx, ctx.inventory_path, ctx.workload)
     host_rows = [r for r in rows_all if r['rowType'].casefold() in ('host', 'instance', 'fileset')]
@@ -1227,29 +1248,28 @@ def resolve_from_inventory(ctx):
         for host_name in ctx.host_names:
             match = [g for g in inv_hosts if ieq(g[0]['host'], host_name)]
             if not match:
-                skipped.append(host_name)
                 if any(ieq(g[0]['host'], host_name) for g in other_cluster):
-                    say("  %s is in the inventory on a different cluster than '%s', so it is skipped"
-                        % (host_name, args.cluster_name), 'yellow')
+                    reason = "in the inventory on another cluster, not '%s'" % args.cluster_name
+                else:
+                    reason = 'not in the inventory CSV'
+                skipped.append({'host': host_name, 'status': 'NotInInventory', 'reason': reason})
             elif len(match) > 1:
-                raise Stop("Host '%s' appears more than once in the inventory with different host IDs. Rerun the inventory." % host_name)
+                skipped.append({'host': host_name, 'status': 'SkippedAmbiguous',
+                                'reason': 'appears more than once in the inventory with different host IDs, rerun the inventory'})
             else:
                 wanted.append(match[0])
     else:
         wanted = inv_hosts
 
     host_objs = []
-    host_errors = []
 
     if ctx.workload == 'SQL':
         for group in wanted:
             first = group[0]
             inst_rows = [r for r in group if ieq(r['rowType'], 'Instance')]
             if not inst_rows:
-                if ctx.host_names:
-                    host_errors.append('SQL host has no SQL instances in the inventory: %s' % first['host'])
-                else:
-                    say('Skipping SQL host with no SQL instances in the inventory: %s' % first['host'], 'yellow')
+                skipped.append({'host': first['host'], 'status': 'SkippedNoInstances',
+                                'reason': 'SQL host has no SQL instances in the inventory'})
                 continue
             instances = [object_from_inventory_row(first, r) for r in inst_rows]
             host_objs.append({'name': first['host'], 'id': first['hostId'], 'instances': instances})
@@ -1258,20 +1278,21 @@ def resolve_from_inventory(ctx):
         if args.fileset_template_id:
             match = [r for r in template_rows if ieq(r['templateId'], args.fileset_template_id)]
             if not match:
-                set_host_csv_not_run(ctx, reason="fileset template ID '%s' is not in the inventory" % args.fileset_template_id)
+                set_host_csv_not_run(ctx, "fileset template ID '%s' is not in the inventory" % args.fileset_template_id)
                 raise Stop("Fileset template ID '%s' is not in the inventory. Rerun -getFilesetInventory in the PowerShell script." % args.fileset_template_id)
             ctx.fileset_name = match[0]['templateName']
         else:
             match = [r for r in template_rows if ieq(r['templateName'], ctx.fileset_name)]
             if not match:
-                set_host_csv_not_run(ctx, reason="fileset template '%s' is not in the inventory" % ctx.fileset_name)
+                set_host_csv_not_run(ctx, "fileset template '%s' is not in the inventory" % ctx.fileset_name)
                 raise Stop("Fileset template '%s' is not in the inventory. Check the name or rerun -getFilesetInventory in the PowerShell script." % ctx.fileset_name)
         for group in wanted:
             first = group[0]
             host_template = [r for r in match if ieq(r['clusterId'], first['clusterId'])]
             if len(host_template) != 1:
-                host_errors.append("Expected 1 fileset template '%s' on cluster '%s' for host %s, found %d" % (
-                    ctx.fileset_name, first.get('clusterName'), first['host'], len(host_template)))
+                skipped.append({'host': first['host'], 'status': 'SkippedNoTemplate',
+                                'reason': "expected 1 fileset template '%s' on cluster '%s', found %d" % (
+                                    ctx.fileset_name, first.get('clusterName'), len(host_template))})
                 continue
             tid = host_template[0]['templateId']
             fs_rows = [r for r in group if ieq(r['rowType'], 'Fileset') and ieq(r['templateId'], tid)]
@@ -1281,14 +1302,8 @@ def resolve_from_inventory(ctx):
                 'clusterName': first.get('clusterName'), 'templateId': tid, 'instances': instances,
             })
 
-    if host_errors:
-        for err in host_errors:
-            say(err, 'red')
-        set_host_csv_not_run(ctx, errors=host_errors)
-        raise Stop('Could not use all hosts from the inventory. Fix the list above (or rerun the inventory) and try again.')
     if skipped:
-        say("Skipping %d host(s) that are not in the inventory for cluster '%s': %s" % (
-            len(skipped), args.cluster_name, ', '.join(skipped)), 'yellow')
+        say('Skipping %d host(s) that cannot be used from the inventory (reasons below and in the CSVs)' % len(skipped), 'yellow')
     pending_hosts = []
     if ctx.workload == 'Fileset':
         pending_hosts = [h for h in host_objs if not h['instances']]
@@ -1298,30 +1313,29 @@ def resolve_from_inventory(ctx):
 def resolve_live_sql(ctx):
     say('Resolving %d SQL host(s)' % len(ctx.host_names))
     host_objs = []
-    host_errors = []
+    skipped = []
     for host_name in ctx.host_names:
         found = [n for n in get_sql_host_instances(ctx, host_name) if ieq(n.get('name'), host_name)]
         if not found:
-            host_errors.append('No SQL host found with exact name: %s' % host_name)
+            skipped.append({'host': host_name, 'status': 'SkippedNotFound',
+                            'reason': "no SQL host with this exact name on cluster '%s'" % ctx.args.cluster_name})
             continue
         if len(found) >= 2:
-            host_errors.append('Multiple SQL hosts found with exact name: %s' % host_name)
+            skipped.append({'host': host_name, 'status': 'SkippedAmbiguous',
+                            'reason': 'more than one SQL host has this exact name'})
             continue
         node = found[0]
         instance_nodes = [e.get('node') for e in (dig(node, 'instanceDescendantConnection', 'edges') or [])]
         if not instance_nodes:
-            host_errors.append('SQL host has no SQL instances: %s' % host_name)
+            skipped.append({'host': host_name, 'status': 'SkippedNoInstances', 'reason': 'SQL host has no SQL instances'})
             continue
         cluster = node.get('cluster') or {}
         instances = [object_from_node(node['name'], node['id'], cluster.get('id'), cluster.get('name'), n)
                      for n in instance_nodes]
         host_objs.append({'name': node['name'], 'id': node['id'], 'instances': instances})
-    if host_errors:
-        for err in host_errors:
-            say(err, 'red')
-        set_host_csv_not_run(ctx, errors=host_errors)
-        raise Stop('Could not resolve all SQL hosts. Fix the list above and rerun.')
-    return host_objs, []
+    say('Resolved %d of %d SQL host(s), skipping %d' % (len(host_objs), len(ctx.host_names), len(skipped)),
+        'yellow' if skipped else None)
+    return host_objs, [], skipped
 
 
 def resolve_live_fileset(ctx):
@@ -1331,10 +1345,10 @@ def resolve_live_fileset(ctx):
         try:
             tmpl = get_template_by_id(ctx, args.fileset_template_id)
         except Exception as exc:
-            set_host_csv_not_run(ctx, reason='could not look up fileset template ID %s' % args.fileset_template_id)
+            set_host_csv_not_run(ctx, 'could not look up fileset template ID %s' % args.fileset_template_id)
             raise Stop('Could not look up fileset template ID %s: %s' % (args.fileset_template_id, exc))
         if not tmpl:
-            set_host_csv_not_run(ctx, reason='no fileset template found with ID %s' % args.fileset_template_id)
+            set_host_csv_not_run(ctx, 'no fileset template found with ID %s' % args.fileset_template_id)
             raise Stop('No fileset template found with ID: %s' % args.fileset_template_id)
         templates = [tmpl]
         ctx.fileset_name = tmpl['name']
@@ -1355,26 +1369,28 @@ def resolve_live_fileset(ctx):
                         other_root, where, other_root)
             except Exception:
                 pass
-            set_host_csv_not_run(ctx, reason="no fileset template named '%s' under %s" % (ctx.fileset_name, searched))
+            set_host_csv_not_run(ctx, "no fileset template named '%s' under %s" % (ctx.fileset_name, searched))
             raise Stop("No fileset template found with exact name '%s' under %s.%s" % (ctx.fileset_name, searched, hint))
 
     say('Resolving %d host(s)' % len(ctx.host_names))
     host_objs = []
-    host_errors = []
+    skipped = []
     for host_name in ctx.host_names:
         found = [h for h in get_filesets_for_host(ctx, host_name) if ieq(h.get('name'), host_name)]
         if not found:
-            host_errors.append('No host found with exact name: %s (host root %s)' % (host_name, args.host_root))
+            skipped.append({'host': host_name, 'status': 'SkippedNotFound',
+                            'reason': "no host with this exact name under %s on cluster '%s'" % (args.host_root, args.cluster_name)})
             continue
         if len(found) >= 2:
-            host_errors.append('Multiple hosts found with exact name: %s' % host_name)
+            skipped.append({'host': host_name, 'status': 'SkippedAmbiguous', 'reason': 'more than one host has this exact name'})
             continue
         host = found[0]
         cluster = host.get('cluster') or {}
         host_template = [t for t in templates if ieq(dig(t, 'cluster', 'id'), cluster.get('id'))]
         if len(host_template) != 1:
-            host_errors.append("Expected 1 fileset template named '%s' on cluster '%s' for host %s, found %d" % (
-                ctx.fileset_name, cluster.get('name'), host_name, len(host_template)))
+            skipped.append({'host': host_name, 'status': 'SkippedNoTemplate',
+                            'reason': "expected 1 fileset template '%s' on cluster '%s', found %d" % (
+                                ctx.fileset_name, cluster.get('name'), len(host_template))})
             continue
         children = [e.get('node') for e in (dig(host, 'physicalChildConnection', 'edges') or [])]
         matching = [c for c in children if ieq(dig(c, 'filesetTemplate', 'id'), host_template[0]['id'])]
@@ -1384,13 +1400,10 @@ def resolve_live_fileset(ctx):
             'name': host['name'], 'id': host['id'], 'clusterId': cluster.get('id'),
             'clusterName': cluster.get('name'), 'templateId': host_template[0]['id'], 'instances': instances,
         })
-    if host_errors:
-        for err in host_errors:
-            say(err, 'red')
-        set_host_csv_not_run(ctx, errors=host_errors)
-        raise Stop('Could not resolve all hosts or filesets. Fix the list above and rerun.')
+    say('Resolved %d of %d host(s), skipping %d' % (len(host_objs), len(ctx.host_names), len(skipped)),
+        'yellow' if skipped else None)
     pending_hosts = [h for h in host_objs if not h['instances']]
-    return host_objs, pending_hosts
+    return host_objs, pending_hosts, skipped
 
 
 ### TEMPLATE APPLICATION ###
@@ -1486,8 +1499,23 @@ def classify(rows, bad_statuses):
     return status, ok, bad, skip
 
 
-def build_host_log_rows(ctx, apply_rows, need_template_hosts, inventory_skipped, unverified):
-    rows_in_run = [r for r in apply_rows if r['status'] != 'NotInInventory']
+def skip_row(ctx, spec, skip):
+    """Apply CSV row for a skipped host: no object, the skip status, and the reason in the error column."""
+    return {
+        'workload': ctx.workload, 'host': skip['host'], 'hostStatus': skip['status'], 'object': '', 'objectId': '',
+        'targetSla': spec['label'], 'assignMutation': ctx.args.assign_mutation, 'applyMode': ctx.args.apply_mode,
+        'status': skip['status'], 'error': skip['reason'],
+    }
+
+
+def print_skipped_hosts(skipped_hosts, indent='    '):
+    """Print the skipped hosts grouped by why they were skipped. The reason for each host is in the CSVs."""
+    for status, group in group_by(skipped_hosts, lambda x: x['status']):
+        say('%s%s (%d): %s' % (indent, SKIP_HOST_LABELS.get(status, status), len(group), ', '.join(x['host'] for x in group)), 'yellow')
+
+
+def build_host_log_rows(ctx, apply_rows, need_template_hosts, skipped_hosts, unverified):
+    rows_in_run = list(apply_rows)
     host_groups = group_by(rows_in_run, lambda r: ('' if r['host'] is None else str(r['host'])).casefold())
     new_on_groups = [g for g in host_groups if g[1][0]['host'].casefold().startswith('(new on ')]
     host_groups = [g for g in host_groups if not g[1][0]['host'].casefold().startswith('(new on ')]
@@ -1528,11 +1556,11 @@ def build_host_log_rows(ctx, apply_rows, need_template_hosts, inventory_skipped,
                 'skippedPending': len(shared_skip), 'notAssigned': len(shared_bad), 'detail': detail,
             })
 
-    for skipped in inventory_skipped:
+    for skip in skipped_hosts:
         host_log_rows.append({
-            'workload': ctx.workload, 'host': skipped, 'status': 'NotInInventory', 'templateApplied': False,
+            'workload': ctx.workload, 'host': skip['host'], 'status': skip['status'], 'templateApplied': False,
             'objects': 0, 'slaAssigned': 0, 'alreadyOnTarget': 0, 'skippedPending': 0, 'notAssigned': 0,
-            'detail': 'Host is not in the inventory CSV, so it was skipped',
+            'detail': skip['reason'],
         })
     return host_log_rows
 
@@ -1553,8 +1581,8 @@ def executed_text(row):
         return 'Failed: %s' % row['detail']
     if status == 'Skipped':
         return 'Skipped: pending SLA, %s' % row['detail']
-    if status == 'NotInInventory':
-        return 'Skipped: not in inventory'
+    if status in SKIP_HOST_LABELS:
+        return 'Skipped: %s' % row['detail']
     return str(status)
 
 
@@ -1603,6 +1631,8 @@ def print_usage_summary():
     say('  Add --dry-run to preview: it writes nothing. Apply changes real SLAs and never reverts them.')
     say('  You are asked to confirm (y or yes, any case) before anything changes. Add --skip-confirm to skip that.')
     say('  --hosts (a list on the command line) can replace the CSV. Then no host CSV is updated.')
+    say('  A host that cannot be used is skipped, not fatal: the rest are applied. Each skip and its reason is in the plan, the')
+    say('  Apply CSV (error column) and the host CSV, and the exit code is 1 if any host was skipped.')
     say('  Hosts not found? Add --debug: it writes the SQL hosts RSC returns, with and without the cluster filter, to files.')
     say('  TLS certificate verification is off by default (self-signed certificates work). Add --verify-ssl to verify.')
     say("  Run 'python3 set_sla_sql_fileset.py --help' for every option.")
@@ -1814,13 +1844,12 @@ def run_pass(ctx, workload, target_spec):
         except Exception as exc:
             say('DEBUG inventory failed: %s' % exc, 'yellow')
 
-    inventory_skipped = []
     if ctx.inventory_path:
-        host_objs, pending_hosts, inventory_skipped = resolve_from_inventory(ctx)
+        host_objs, pending_hosts, skipped_hosts = resolve_from_inventory(ctx)
     elif ctx.workload == 'SQL':
-        host_objs, pending_hosts = resolve_live_sql(ctx)
+        host_objs, pending_hosts, skipped_hosts = resolve_live_sql(ctx)
     else:
-        host_objs, pending_hosts = resolve_live_fileset(ctx)
+        host_objs, pending_hosts, skipped_hosts = resolve_live_fileset(ctx)
 
     # Fileset hosts that do not have the template yet get it applied after confirmation
     need_template_hosts = []
@@ -1832,15 +1861,17 @@ def run_pass(ctx, workload, target_spec):
     apply_objects = [o for h in host_objs for o in h['instances']]
 
     if not apply_objects and not need_template_hosts:
-        if inventory_skipped:
-            # Every listed host was missing from the inventory: still write the Apply CSV so the skips are recorded
-            rows = [{'workload': ctx.workload, 'host': h, 'object': '', 'objectId': '', 'hostStatus': 'NotInInventory',
-                     'status': 'NotInInventory', 'error': 'Host is not in the inventory CSV, so it was skipped'}
-                    for h in inventory_skipped]
-            write_apply_csv(ctx, rows, NOT_IN_INVENTORY_COLUMNS)
-            say('WARNING: none of the %d listed host(s) are in the inventory CSV, so nothing was assigned: %s'
-                % (len(inventory_skipped), ', '.join(inventory_skipped)), 'yellow')
-            say('Rerun the inventory to include them, or check the host names. Details: %s' % ctx.csv_apply_output, 'yellow')
+        if skipped_hosts:
+            # Every listed host was skipped: nothing to assign. Record the skips in the Apply CSV and the host CSV
+            say('WARNING: all %d listed host(s) were skipped, so nothing will be assigned:' % len(skipped_hosts), 'yellow')
+            print_skipped_hosts(skipped_hosts, '  ')
+            if args.dry_run:
+                say('Dry run, no changes made.')
+                return 0
+            write_apply_csv(ctx, [skip_row(ctx, target_spec, x) for x in skipped_hosts], APPLY_COLUMNS)
+            if ctx.host_csv:
+                update_host_csv_executed(ctx, {x['host'].lower(): 'Skipped: %s' % x['reason'] for x in skipped_hosts})
+            say('The reason for each host is in the Apply CSV (error column): %s' % ctx.csv_apply_output, 'yellow')
             return 1
         raise Stop('No objects were found to assign the SLA to.')
 
@@ -1872,8 +1903,8 @@ def run_pass(ctx, workload, target_spec):
     else:
         say('  Apply mode:               Single (one call per host)')
     say('  Poll for completion:      %s' % (not args.skip_polling))
-    if inventory_skipped:
-        say('  Not in inventory:         %d host(s) will be skipped: %s' % (len(inventory_skipped), ', '.join(inventory_skipped)), 'yellow')
+    if skipped_hosts:
+        say('  Skipped hosts:            %d host(s) will get no SLA, listed below' % len(skipped_hosts), 'yellow')
     if ctx.workload == 'Fileset':
         say('  Fileset template:         %s' % ctx.fileset_name)
         say('  Hosts:                    %d already have it, %d need it applied' % (len(host_objs), len(need_template_hosts)))
@@ -1886,10 +1917,10 @@ def run_pass(ctx, workload, target_spec):
         say('  Template applications:    %d host(s) in %d bulkCreateFilesets call(s), then the SLA goes on those new filesets too'
             % (len(need_template_hosts), cluster_count))
     skipped_pending_objs = [o for o in apply_objects if decision_by_id[ikey(o['instanceId'])] == 'SkippedPending']
-    if inventory_skipped or skipped_pending_objs:
+    if skipped_hosts or skipped_pending_objs:
         say('  Skipped, no SLA will be assigned:', 'yellow')
-        if inventory_skipped:
-            say('    Hosts not in the inventory (%d): %s' % (len(inventory_skipped), ', '.join(inventory_skipped)), 'yellow')
+        if skipped_hosts:
+            print_skipped_hosts(skipped_hosts)
         if skipped_pending_objs:
             listing = ', '.join('%s/%s (pending %s)' % (o['hostName'], o['instanceName'], dig(o, 'state', 'pendingSla', 'name'))
                                 for o in skipped_pending_objs)
@@ -1943,7 +1974,7 @@ def run_pass(ctx, workload, target_spec):
         'assignMutation': args.assign_mutation, 'applyMode': args.apply_mode,
         'callGroup': None, 'callSec': None, 'effectiveSec': None, 'status': 'Pending', 'error': '',
     } for o in apply_objects]
-    write_apply_csv(ctx, start_rows, APPLY_COLUMNS)
+    write_apply_csv(ctx, start_rows + [skip_row(ctx, target_spec, x) for x in skipped_hosts], APPLY_COLUMNS)
     say('Apply CSV created (starting SLA of every object, rewritten with the results at the end): %s' % ctx.csv_apply_output, 'green')
 
     # Send the assignments and wait for completion
@@ -1957,7 +1988,7 @@ def run_pass(ctx, workload, target_spec):
     apply_rows = list(results.values()) + template_rows
     apply_rows = sorted(apply_rows, key=lambda r: (str(r['host']).casefold(), str(r['object']).casefold()))
 
-    host_log_rows = build_host_log_rows(ctx, apply_rows, need_template_hosts, inventory_skipped, unverified)
+    host_log_rows = build_host_log_rows(ctx, apply_rows, need_template_hosts, skipped_hosts, unverified)
     host_status_by_host = {h['host'].lower(): h['status'] for h in host_log_rows}
 
     # Rewrite the single Apply CSV: each object keeps its starting SLA from the first write and gains its
@@ -1978,12 +2009,7 @@ def run_pass(ctx, workload, target_spec):
             'callGroup': r['callGroup'], 'callSec': r['callSec'], 'effectiveSec': r['effectiveSec'],
             'status': r['status'], 'error': r['error'],
         })
-    for skipped in inventory_skipped:
-        final_rows.append({
-            'workload': ctx.workload, 'host': skipped, 'hostStatus': 'NotInInventory', 'object': '', 'objectId': '',
-            'targetSla': target_spec['label'], 'assignMutation': args.assign_mutation, 'applyMode': args.apply_mode,
-            'status': 'NotInInventory', 'error': 'Host is not in the inventory CSV, so it was skipped',
-        })
+    final_rows.extend(skip_row(ctx, target_spec, x) for x in skipped_hosts)
     write_apply_csv(ctx, final_rows, APPLY_COLUMNS)
 
     # Record each host's last status and time in this workload's column of the host CSV
@@ -2012,13 +2038,12 @@ def run_pass(ctx, workload, target_spec):
         say('NOTE: %d object(s) were skipped because an SLA was already pending on them, so no SLA was assigned. '
             'Rerun once the pending SLA has finished:' % len(skipped_at_end), 'yellow')
         print_table(skipped_at_end, ['host', 'object', 'status'])
-    if inventory_skipped:
-        say('WARNING: %d host(s) were not in the inventory CSV and were skipped, so no SLA was assigned on them:'
-            % len(inventory_skipped), 'yellow')
-        for skipped in inventory_skipped:
-            say('  %s' % skipped, 'yellow')
-        say('Rerun the inventory to include them, or check the host names. Details: %s' % ctx.csv_apply_output, 'yellow')
-    if problem_rows or apply_error:
+    if skipped_hosts:
+        say('WARNING: %d host(s) were skipped, so no SLA was assigned on them:' % len(skipped_hosts), 'yellow')
+        print_skipped_hosts(skipped_hosts, '  ')
+        say('The reason for each host is in the Apply CSV (error column)%s: %s' % (
+            ' and the host CSV' if ctx.host_csv else '', ctx.csv_apply_output), 'yellow')
+    if problem_rows or apply_error or skipped_hosts:
         return 1
     return 0
 
