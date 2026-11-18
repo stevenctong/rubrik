@@ -9,7 +9,7 @@ writers (-getSqlInventory / -getFilesetInventory) are not part of this script.
 --assign (required) chooses the workload: sqlOnly, filesetOnly or both.
 With --assign both, ONE host list (--hosts or --host-csv-path) is used for SQL and for filesets, and
 the run is two independent passes, SQL first and then filesets. Each pass resolves its objects, shows
-its own plan, asks for its own YES, assigns, and writes its own Apply CSV. A failure in one pass does
+its own plan, asks for its own confirmation, assigns, and writes its own Apply CSV. A failure in one pass does
 not stop the other, and the exit code is 1 if either pass had a problem. Every host in the list must be
 found as a SQL host (SQL pass); a host that is not found stops the SQL pass, and the fileset pass still runs.
 
@@ -27,7 +27,7 @@ How it works
 - Skips three things and says which and why: a host that is not in the inventory CSV (in a live run
   a host that is not found stops the run instead), an object with any pending SLA, and an object
   whose effective SLA is already the target. A rerun is therefore safe.
-- Shows the plan and asks you to type YES (--dry-run shows the plan only, --skip-confirm skips the prompt).
+- Shows the plan and asks you to confirm with y or yes in any case (--dry-run shows the plan only, --skip-confirm skips the prompt).
 - Writes the Apply CSV with the starting SLA of every object before changing anything, sends the
   assignments, then rewrites the same file with the outcomes.
   --apply-mode Bulk (default) sends up to --batch-size objects per call, all on --cluster-name.
@@ -48,6 +48,16 @@ Polling
   the run exits 1. The time to effective is only accurate to within one poll interval.
 - --skip-polling (alias --no-wait) submits and exits. Accepted objects are recorded as Submitted, and a
   rerun skips any that are still pending (SkippedPending).
+
+Debug (--debug, SQL pass, read-only)
+- Before resolving hosts, lists every SQL host RSC returns once with no cluster filter and once with the
+  --cluster-name filter (same relic and replicated filters as the real lookup, no name filter). Nothing is
+  listed on screen. Only the counts and the file locations are printed.
+- Writes <prefix>sql_debug_hosts_all_clusters-<timestamp>.csv, <prefix>sql_debug_hosts_cluster-<timestamp>.csv,
+  <prefix>sql_debug_listed_hosts-<timestamp>.csv (for each listed host: returned exactly, a similar name such as a
+  short name versus an FQDN, or not returned) and <prefix>sql_debug_raw-<timestamp>.json (the exact filters sent
+  and the raw response). The run then continues
+  as normal, so add --dry-run to look without changing anything.
 
 Statuses in the Apply CSV
   Applied          SLA assigned and RSC shows it
@@ -84,6 +94,10 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name Gold --cluster-name cluster01 --skip-polling
 
+  # Hosts not found? Show what RSC returns for SQL hosts with and without the cluster filter
+  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
+    --hosts sql01 --sla-name Gold --cluster-name cluster01 --debug --dry-run
+
   # TLS certificate verification is off by default, so a self-signed certificate works. Turn it on with:
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name Gold --cluster-name cluster01 --verify-ssl
@@ -97,7 +111,7 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
     --inventory-csv ./rubrik_sql_inventory-<time>.csv ./rubrik_fileset_inventory-<time>.csv \\
     --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01
 
-  # Large run: 100 objects per call, poll every 60 seconds, log every call, skip the YES prompt
+  # Large run: 100 objects per call, poll every 60 seconds, log every call, skip the confirmation prompt
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --host-csv-path ./hosts.csv --sla-name Gold --cluster-name cluster01 --batch-size 100 \\
     --poll-interval-sec 60 --assign-log --skip-confirm
@@ -1051,6 +1065,105 @@ def object_from_inventory_row(first, row):
     }
 
 
+def debug_sql_inventory(ctx):
+    """--debug: list every SQL host RSC returns, once with no cluster filter and once with the --cluster-name
+    filter, to show what the host lookup can see. Uses the same relic and replicated filters as the real
+    lookup but no name filter. Writes everything to files (one CSV per variant, a comparison CSV for the listed
+    hosts, and one raw JSON file) and prints only the counts and the file paths. Never stops the run."""
+    args = ctx.args
+    base_filter = [
+        {'field': 'IS_RELIC', 'texts': ['false']},
+        {'field': 'IS_REPLICATED', 'texts': ['false']},
+    ]
+    variants = [
+        ('all_clusters', 'No cluster filter', base_filter),
+        ('cluster', "Cluster filter '%s' (%s)" % (args.cluster_name, ctx.cluster_id),
+         base_filter + [{'field': 'CLUSTER_ID', 'texts': [ctx.cluster_id]}]),
+    ]
+    columns = ['host', 'hostId', 'cluster', 'clusterId', 'objectType', 'instanceCount', 'instances']
+    say('')
+    say('=' * 100)
+    say('DEBUG: SQL host inventory from RSC (written to files, not printed)', 'cyan')
+    say('=' * 100)
+    raw = {}
+    rows_by_variant = {}
+    for key, label, host_filter in variants:
+        variables = {
+            'first': PAGE_SIZE,
+            'filter': host_filter,
+            'instanceFilter': [{'field': 'IS_ARCHIVED', 'texts': ['false']}],
+        }
+        say('')
+        say(label, 'cyan')
+        say('  filter sent: %s' % json.dumps(host_filter))
+        try:
+            nodes = paginate(ctx, Q_SQL_HOST_INSTANCES, variables, 'mssqlTopLevelDescendants')
+        except Exception as exc:
+            say('  query failed: %s' % exc, 'red')
+            raw[key] = {'label': label, 'variables': variables, 'error': str(exc)}
+            continue
+        raw[key] = {'label': label, 'variables': variables, 'nodes': nodes}
+        rows = []
+        for node in nodes:
+            cluster = node.get('cluster') or {}
+            instances = [e.get('node') or {} for e in (dig(node, 'instanceDescendantConnection', 'edges') or [])]
+            rows.append({
+                'host': node.get('name'), 'hostId': node.get('id'), 'cluster': cluster.get('name'),
+                'clusterId': cluster.get('id'), 'objectType': node.get('objectType'),
+                'instanceCount': len(instances),
+                'instances': ' | '.join('%s (%s)' % (i.get('name'), dig(i, 'effectiveSlaDomain', 'name')) for i in instances),
+            })
+        rows.sort(key=lambda r: str(r['host']).casefold())
+        rows_by_variant[key] = rows
+        say('  %d SQL host(s) returned' % len(rows))
+        csv_path = '%ssql_debug_hosts_%s-%s.csv' % (args.csv_output_prefix, key, ctx.date_string)
+        try:
+            write_csv(csv_path, rows, columns)
+            say('  CSV: %s' % csv_path)
+        except Exception as exc:
+            say('  Could not write %s: %s' % (csv_path, exc), 'yellow')
+
+    if ctx.host_names:
+        say('')
+        say('Listed hosts versus what RSC returned (details in the CSV)', 'cyan')
+        check_rows = []
+        for name in ctx.host_names:
+            row = {'listedHost': name}
+            short = name.casefold().split('.')[0]
+            for key, _, _ in variants:
+                rows = rows_by_variant.get(key)
+                if rows is None:
+                    row[key] = 'query failed'
+                    continue
+                exact = [r for r in rows if ieq(r['host'], name)]
+                if exact:
+                    row[key] = 'exact match on ' + ', '.join(unique_ordered(str(r['cluster']) for r in exact))
+                    continue
+                near = [str(r['host']) for r in rows if short and short in str(r['host']).casefold()]
+                row[key] = ('similar: ' + ', '.join(near[:3])) if near else 'not returned'
+            check_rows.append(row)
+        compare_path = '%ssql_debug_listed_hosts-%s.csv' % (args.csv_output_prefix, ctx.date_string)
+        try:
+            write_csv(compare_path, check_rows, ['listedHost', 'all_clusters', 'cluster'])
+            say('  CSV: %s' % compare_path)
+        except Exception as exc:
+            say('  Could not write %s: %s' % (compare_path, exc), 'yellow')
+        for key, label, _ in variants:
+            found = sum(1 for r in check_rows if str(r[key]).startswith('exact match'))
+            say('  %d of %d listed host(s) returned with: %s' % (found, len(check_rows), label))
+
+    raw_path = '%ssql_debug_raw-%s.json' % (args.csv_output_prefix, ctx.date_string)
+    try:
+        with open(raw_path, 'w', encoding='utf-8') as handle:
+            json.dump(raw, handle, indent=2)
+        say('Raw responses (exact filters sent and the full reply): %s' % raw_path)
+    except Exception as exc:
+        say('Could not write %s: %s' % (raw_path, exc), 'yellow')
+    say('Debug files are in: %s' % os.path.abspath(os.path.dirname(args.csv_output_prefix) or '.'), 'green')
+    say('=' * 100)
+    say('')
+
+
 ### HOST RESOLUTION ###
 
 
@@ -1430,7 +1543,7 @@ def print_usage_summary():
     say('  filesetOnly:  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign filesetOnly --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01')
     say('  both:         python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign both --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01')
     say('  both = two independent passes on the same host list, SQL first and then filesets. Each has its own plan,')
-    say('  its own YES, and its own Apply CSV. A failure in one pass does not stop the other.')
+    say('  its own confirmation, and its own Apply CSV. A failure in one pass does not stop the other.')
     say('')
     say('FILESETS', 'cyan')
     say('  --fileset-name (or --fileset-template-id) must already exist. Hosts without it get it applied first.')
@@ -1449,8 +1562,9 @@ def print_usage_summary():
     say('ALL RUNS', 'cyan')
     say('  --cluster-name is required: every lookup and every assignment call is on that one cluster.')
     say('  Add --dry-run to preview: it writes nothing. Apply changes real SLAs and never reverts them.')
-    say('  You are asked to type YES before anything changes. Add --skip-confirm to skip that.')
+    say('  You are asked to confirm (y or yes, any case) before anything changes. Add --skip-confirm to skip that.')
     say('  --hosts (a list on the command line) can replace the CSV. Then no host CSV is updated.')
+    say('  Hosts not found? Add --debug: it writes the SQL hosts RSC returns, with and without the cluster filter, to files.')
     say('  TLS certificate verification is off by default (self-signed certificates work). Add --verify-ssl to verify.')
     say("  Run 'python3 set_sla_sql_fileset.py --help' for every option.")
     say('')
@@ -1484,8 +1598,9 @@ def build_parser():
     parser.add_argument('--timeout-sec', type=int, default=600, help='Maximum seconds to wait for all objects to show the SLA. Default: 600')
     parser.add_argument('--csv-output-prefix', default='./rubrik_', help='Location and prefix for output files. The report name and timestamp are appended. The directory must exist. Default: ./rubrik_')
     parser.add_argument('--verify-ssl', action='store_true', help='Verify the TLS certificate. Off by default, so self-signed certificates work. With verification off the token and every API call could be intercepted, so add this on a network you do not trust.')
+    parser.add_argument('--debug', action='store_true', help='SQL pass only: before resolving hosts, get every SQL host RSC returns with no cluster filter and with the --cluster-name filter, compare with the listed hosts, and write the results to sql_debug_*.csv and sql_debug_raw-*.json (nothing is listed on screen). Read-only.')
     parser.add_argument('--dry-run', action='store_true', help='Show the plan and exit without changing anything.')
-    parser.add_argument('--skip-confirm', action='store_true', help='Skip the "type YES" confirmation prompt.')
+    parser.add_argument('--skip-confirm', action='store_true', help='Skip the confirmation prompt (y or yes).')
     return parser
 
 
@@ -1617,6 +1732,12 @@ def run_pass(ctx, workload, target_spec):
     ctx.csv_apply_output = '%s%s_sla_apply-%s.csv' % (args.csv_output_prefix, workload_prefix, ctx.date_string)
     ctx.assign_log_output = '%s%s_sla_assign_log-%s.txt' % (args.csv_output_prefix, workload_prefix, ctx.date_string)
 
+    if args.debug and workload == 'SQL':
+        try:
+            debug_sql_inventory(ctx)
+        except Exception as exc:
+            say('DEBUG inventory failed: %s' % exc, 'yellow')
+
     inventory_skipped = []
     if ctx.inventory_path:
         host_objs, pending_hosts, inventory_skipped = resolve_from_inventory(ctx)
@@ -1724,10 +1845,10 @@ def run_pass(ctx, workload, target_spec):
 
     if (todo_objects or need_template_hosts) and not args.skip_confirm:
         try:
-            answer = input('Type YES to continue: ')
+            answer = input('Continue? Type y or yes (any case) to proceed: ')
         except EOFError:
             answer = ''
-        if answer != 'YES':
+        if answer.strip().lower() not in ('y', 'yes'):
             say('Cancelled, no changes made.')
             return 0
 
