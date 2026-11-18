@@ -36,6 +36,13 @@ How it works
 - Exits 1 if any call failed, timed out, was not attempted, or a template could not be applied.
   Nothing is reverted. The target SLA can also be DO_NOT_PROTECT or NO_ASSIGNMENT (--sla-name).
 
+SLA per workload
+- --sla-name (or --sla-id) is the SLA for every workload in the run. With --assign both, SQL and filesets
+  usually need different SLAs, so give --sql-sla-name and --fileset-sla-name (or the -id versions). Each applies
+  to its own pass only and overrides --sla-name / --sla-id for that workload. You can also give --sla-name for one
+  workload and a specific option for the other. A workload with no SLA at all is an error.
+- All SLAs are looked up before the first pass starts, so a wrong SLA name stops the run before anything changes.
+
 IMPORTANT: This changes real SLA assignments. Run with --dry-run first to review what will be touched.
 
 Polling
@@ -75,6 +82,11 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
   # SQL instances on three hosts, hosts on the command line
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 sql02 sql03 --sla-name Gold --cluster-name cluster01
+
+  # SQL and filesets in one run, each with its own SLA
+  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign both \\
+    --host-csv-path ./hosts.csv --fileset-name Temp --sql-sla-name MSSQL_Gold --fileset-sla-name WIN_Gold \\
+    --cluster-name cluster01
 
   # SQL and filesets, hosts from a CSV (hostname, host, name or sqlhost column)
   # Writes the last status and time into executed_sql and executed_fileset in hosts.csv, and keeps hosts.csv.bak
@@ -353,6 +365,7 @@ class Ctx(object):
         self.args = args
         # Shared by every pass
         self.workloads = []
+        self.sla_by_workload = {}
         self.host_names = []
         self.host_csv = None
         self.inventory_by_workload = {}
@@ -1566,7 +1579,8 @@ def print_usage_summary():
     say('--assign is required: sqlOnly, filesetOnly or both', 'cyan')
     say('  sqlOnly:      python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly --host-csv-path ./hosts.csv --sla-name Gold --cluster-name cluster01')
     say('  filesetOnly:  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign filesetOnly --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01')
-    say('  both:         python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign both --host-csv-path ./hosts.csv --fileset-name Temp --sla-name Gold --cluster-name cluster01')
+    say('  both:         python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign both --host-csv-path ./hosts.csv --fileset-name Temp --sql-sla-name MSSQL_Gold --fileset-sla-name WIN_Gold --cluster-name cluster01')
+    say('  SLA:          --sla-name is for every workload. With both, use --sql-sla-name and --fileset-sla-name (or the -id versions).')
     say('  both = two independent passes on the same host list, SQL first and then filesets. Each has its own plan,')
     say('  its own confirmation, and its own Apply CSV. A failure in one pass does not stop the other.')
     say('')
@@ -1609,8 +1623,12 @@ def build_parser():
     parser.add_argument('--fileset-name', help='Name of the existing fileset template (exact match). Hosts without it get it applied. Never created or changed.')
     parser.add_argument('--fileset-template-id', help='ID of the existing fileset template, instead of --fileset-name.')
     parser.add_argument('--host-root', type=ci_choice(['WINDOWS_HOST_ROOT', 'LINUX_HOST_ROOT']), default='WINDOWS_HOST_ROOT', help='Host type for fileset hosts and templates. Default: WINDOWS_HOST_ROOT')
-    parser.add_argument('--sla-name', help='SLA Domain name to assign (exact match). Can also be DO_NOT_PROTECT or NO_ASSIGNMENT. Use this or --sla-id.')
+    parser.add_argument('--sla-name', help='SLA Domain name to assign (exact match). Can also be DO_NOT_PROTECT or NO_ASSIGNMENT. Use this or --sla-id. With --assign both it is used for both passes unless --sql-sla-* or --fileset-sla-* is given. SQL and filesets usually need different SLAs, so with both use the workload-specific options.')
     parser.add_argument('--sla-id', help='SLA Domain ID to assign. Use this or --sla-name.')
+    parser.add_argument('--sql-sla-name', help='SLA Domain name for the SQL pass only. Overrides --sla-name / --sla-id for SQL. Same values as --sla-name.')
+    parser.add_argument('--sql-sla-id', help='SLA Domain ID for the SQL pass only. Overrides --sla-name / --sla-id for SQL.')
+    parser.add_argument('--fileset-sla-name', help='SLA Domain name for the fileset pass only. Overrides --sla-name / --sla-id for filesets. Same values as --sla-name.')
+    parser.add_argument('--fileset-sla-id', help='SLA Domain ID for the fileset pass only. Overrides --sla-name / --sla-id for filesets.')
     parser.add_argument('--assign-mutation', type=ci_choice(['AssignSla', 'AssignSlasForSnappableHierarchies']), default='AssignSla', help='GraphQL mutation used to assign the SLA. Default: AssignSla')
     parser.add_argument('--apply-mode', type=ci_choice(['Bulk', 'Single']), default='Bulk', help='Bulk sends up to --batch-size objects per call, Single sends one call per host. Default: Bulk')
     parser.add_argument('--batch-size', type=int, default=50, help='Maximum objects per call with --apply-mode Bulk. Default: 50')
@@ -1641,15 +1659,36 @@ def validate_and_collect_hosts(ctx):
         die('--batch-size must be 1 or greater.')
     if not args.cluster_name:
         die('Runs need --cluster-name. Every lookup, and every assignment call, is on that one cluster.')
-    if not args.sla_name and not args.sla_id:
-        die('Provide the target SLA with --sla-name or --sla-id.')
-    if args.sla_name and args.sla_id:
-        die('Specify either --sla-name or --sla-id, not both.')
     if args.poll_interval_sec < 1:
         die('--poll-interval-sec must be 1 or greater.')
 
     # --assign chooses the workloads, in the order the passes run
     ctx.workloads = {'sqlonly': ['SQL'], 'filesetonly': ['Fileset'], 'both': ['SQL', 'Fileset']}[args.assign.lower()]
+
+    # The SLA for each workload: its own option, otherwise the shared --sla-name / --sla-id
+    def pick_sla(prefix, label, shared_only_ok):
+        own_name = getattr(args, '%s_sla_name' % prefix)
+        own_id = getattr(args, '%s_sla_id' % prefix)
+        if own_name and own_id:
+            die('Specify either --%s-sla-name or --%s-sla-id, not both.' % (prefix, prefix))
+        if own_name or own_id:
+            return own_name, own_id
+        if args.sla_name and args.sla_id:
+            die('Specify either --sla-name or --sla-id, not both.')
+        if args.sla_name or args.sla_id:
+            return args.sla_name, args.sla_id
+        die('Provide the %s SLA with --%s-sla-name or --%s-sla-id%s.' % (
+            label, prefix, prefix, ' (or --sla-name / --sla-id for every workload)' if shared_only_ok else ''))
+
+    ctx.sla_by_workload = {}
+    for workload in ctx.workloads:
+        prefix = 'sql' if workload == 'SQL' else 'fileset'
+        ctx.sla_by_workload[workload] = pick_sla(prefix, 'SQL' if workload == 'SQL' else 'fileset', True)
+    # A workload-specific SLA for a workload this run does not cover would be silently ignored, so refuse it
+    for prefix, label, workload in (('sql', 'SQL', 'SQL'), ('fileset', 'fileset', 'Fileset')):
+        if workload not in ctx.workloads and (getattr(args, '%s_sla_name' % prefix) or getattr(args, '%s_sla_id' % prefix)):
+            die('--%s-sla-name / --%s-sla-id only apply when --assign includes %s (--assign %s).' % (
+                prefix, prefix, label, args.assign))
 
     # Fileset-only options are rejected for sqlOnly so they are never silently ignored
     if 'Fileset' not in ctx.workloads:
@@ -1719,7 +1758,19 @@ def run(ctx):
     ctx.cluster_id = get_cluster_id_by_name(ctx, args.cluster_name)
     say("Limiting lookups to cluster '%s' (%s)" % (args.cluster_name, ctx.cluster_id))
 
-    target_spec = resolve_sla_spec(ctx, args.sla_name, args.sla_id)
+    # Resolve every SLA before any pass runs, so a wrong SLA name stops the run before anything changes.
+    # Workloads that share the same SLA are looked up once.
+    specs = {}
+    cache = {}
+    for workload in ctx.workloads:
+        name, sla_id = ctx.sla_by_workload[workload]
+        key = (name, sla_id)
+        if key not in cache:
+            try:
+                cache[key] = resolve_sla_spec(ctx, name, sla_id)
+            except Stop as exc:
+                raise Stop('%s SLA: %s' % (workload, exc))
+        specs[workload] = cache[key]
 
     exit_code = 0
     for workload in ctx.workloads:
@@ -1729,7 +1780,7 @@ def run(ctx):
             say('Pass %d of %d: %s' % (ctx.workloads.index(workload) + 1, len(ctx.workloads), workload), 'cyan')
             say('=' * 100)
         try:
-            code = run_pass(ctx, workload, target_spec)
+            code = run_pass(ctx, workload, specs[workload])
         except Stop as exc:
             say('ERROR (%s pass): %s' % (workload, exc), 'red')
             code = 1
