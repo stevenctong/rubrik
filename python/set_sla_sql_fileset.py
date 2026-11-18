@@ -164,6 +164,11 @@ INVENTORY_REQUIRED_COLUMNS = [
     'templateId', 'templateName', 'collectedAt'
 ]
 
+# SQL host object types, tried in this order until one returns hosts:
+#   (typeFilter value, GraphQL type of the host node, product)
+# RSC-P (the primary) returns SQL hosts as PhysicalHost, and RSC returns them as MssqlHost (MSSQL_HOST)
+SQL_HOST_TYPES = [('PhysicalHost', 'PhysicalHost', 'RSC-P'), ('MSSQL_HOST', 'MssqlHost', 'RSC')]
+
 HOST_COLUMNS = ['hostname', 'host', 'name', 'sqlhost']
 ASSIGN_CHOICES = ['sqlOnly', 'filesetOnly', 'both']
 
@@ -189,15 +194,17 @@ Q_SLA_BY_NAME = '''query SLADomainsForNameFilterQuery($filter: [GlobalSlaFilterI
     }
   }'''
 
-Q_SQL_HOST_INSTANCES = '''query MssqlHostInstancesQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!]) {
-    mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: [MSSQL_HOST]) {
+# SQL hosts. __HOST_TYPE__ is replaced with the object type of the host: PhysicalHost (what the RSC UI sends, and
+# the only type some RSC deployments return) or MssqlHost (typeFilter MSSQL_HOST), see SQL_HOST_TYPES
+Q_SQL_HOST_INSTANCES = '''query MssqlHostInstancesQuery($first: Int!, $after: String, $filter: [Filter!], $instanceFilter: [Filter!], $typeFilter: [HierarchyObjectTypeEnum!]) {
+    mssqlTopLevelDescendants(after: $after, first: $first, filter: $filter, sortBy: NAME, sortOrder: ASC, typeFilter: $typeFilter) {
       edges {
         cursor
         node {
           id
           name
           objectType
-          ... on MssqlHost {
+          ... on __HOST_TYPE__ {
             cluster {
               id
               name
@@ -354,6 +361,7 @@ class Ctx(object):
         self.endpoint = None
         self.headers = None
         self.cluster_id = None
+        self.sql_host_type = None
         self.date_string = ''
         # Set at the start of each pass (SQL, then Fileset)
         self.workload = 'SQL'
@@ -578,6 +586,32 @@ def resolve_sla_spec(ctx, name=None, sla_id=None):
     return {'type': 'protectWithSlaId', 'slaId': exact[0]['id'], 'label': exact[0]['name']}
 
 
+def fetch_sql_hosts(ctx, host_filter):
+    """Get SQL hosts with their instances. Tries each host type in SQL_HOST_TYPES and returns the first
+    that returns hosts. Returns (nodes, type_used, attempts, variables), where attempts lists
+    (typeFilter, host count) for every type tried and type_used is None when none returned hosts."""
+    attempts = []
+    variables = None
+    # Once a host type has returned hosts, use only that one for the rest of the run
+    types = [t for t in SQL_HOST_TYPES if t[0] == ctx.sql_host_type] or SQL_HOST_TYPES
+    for type_filter, fragment_type, product in types:
+        query = Q_SQL_HOST_INSTANCES.replace('__HOST_TYPE__', fragment_type)
+        variables = {
+            'first': PAGE_SIZE,
+            'filter': host_filter,
+            'instanceFilter': [{'field': 'IS_ARCHIVED', 'texts': ['false']}],
+            'typeFilter': [type_filter],
+        }
+        nodes = paginate(ctx, query, variables, 'mssqlTopLevelDescendants')
+        attempts.append((type_filter, len(nodes)))
+        if nodes:
+            if ctx.sql_host_type != type_filter:
+                ctx.sql_host_type = type_filter
+                say('SQL hosts are returned as %s (%s)' % (type_filter, product))
+            return nodes, type_filter, attempts, variables
+    return [], None, attempts, variables
+
+
 def get_sql_host_instances(ctx, host_name):
     host_filter = [
         {'field': 'NAME', 'texts': [host_name]},
@@ -585,12 +619,7 @@ def get_sql_host_instances(ctx, host_name):
         {'field': 'IS_REPLICATED', 'texts': ['false']},
         {'field': 'CLUSTER_ID', 'texts': [ctx.cluster_id]},
     ]
-    variables = {
-        'first': PAGE_SIZE,
-        'filter': host_filter,
-        'instanceFilter': [{'field': 'IS_ARCHIVED', 'texts': ['false']}],
-    }
-    return paginate(ctx, Q_SQL_HOST_INSTANCES, variables, 'mssqlTopLevelDescendants')
+    return fetch_sql_hosts(ctx, host_filter)[0]
 
 
 def get_filesets_for_host(ctx, host_name):
@@ -1088,21 +1117,17 @@ def debug_sql_inventory(ctx):
     raw = {}
     rows_by_variant = {}
     for key, label, host_filter in variants:
-        variables = {
-            'first': PAGE_SIZE,
-            'filter': host_filter,
-            'instanceFilter': [{'field': 'IS_ARCHIVED', 'texts': ['false']}],
-        }
         say('')
         say(label, 'cyan')
         say('  filter sent: %s' % json.dumps(host_filter))
         try:
-            nodes = paginate(ctx, Q_SQL_HOST_INSTANCES, variables, 'mssqlTopLevelDescendants')
+            nodes, type_used, attempts, variables = fetch_sql_hosts(ctx, host_filter)
         except Exception as exc:
             say('  query failed: %s' % exc, 'red')
-            raw[key] = {'label': label, 'variables': variables, 'error': str(exc)}
+            raw[key] = {'label': label, 'filter': host_filter, 'error': str(exc)}
             continue
-        raw[key] = {'label': label, 'variables': variables, 'nodes': nodes}
+        say('  host types tried: %s' % ', '.join('%s=%d' % a for a in attempts))
+        raw[key] = {'label': label, 'typeUsed': type_used, 'attempts': attempts, 'variables': variables, 'nodes': nodes}
         rows = []
         for node in nodes:
             cluster = node.get('cluster') or {}
@@ -1115,7 +1140,7 @@ def debug_sql_inventory(ctx):
             })
         rows.sort(key=lambda r: str(r['host']).casefold())
         rows_by_variant[key] = rows
-        say('  %d SQL host(s) returned' % len(rows))
+        say('  %d SQL host(s) returned%s' % (len(rows), (' (typeFilter %s)' % type_used) if type_used else ''))
         csv_path = '%ssql_debug_hosts_%s-%s.csv' % (args.csv_output_prefix, key, ctx.date_string)
         try:
             write_csv(csv_path, rows, columns)
