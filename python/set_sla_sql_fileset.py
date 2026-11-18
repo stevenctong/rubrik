@@ -84,6 +84,10 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name Gold --cluster-name cluster01 --skip-polling
 
+  # TLS certificate verification is off by default, so a self-signed certificate works. Turn it on with:
+  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
+    --hosts sql01 --sla-name Gold --cluster-name cluster01 --verify-ssl
+
   # Set instances to Do Not Protect (existing snapshots are retained)
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name DO_NOT_PROTECT --cluster-name cluster01
@@ -332,6 +336,7 @@ class Ctx(object):
         self.host_csv = None
         self.inventory_by_workload = {}
         self.session = requests.Session()
+        self.verify = False
         self.endpoint = None
         self.headers = None
         self.cluster_id = None
@@ -482,7 +487,7 @@ def authenticate(ctx):
         'client_secret': sa['client_secret'],
     }
     try:
-        resp = ctx.session.post(sa['access_token_uri'], json=payload, timeout=(15, 60))
+        resp = ctx.session.post(sa['access_token_uri'], json=payload, timeout=(15, 60), verify=ctx.verify)
         resp.raise_for_status()
         token = resp.json().get('access_token')
     except Exception as exc:
@@ -504,7 +509,7 @@ def invoke_rsc(ctx, query, variables=None):
     """Send a GraphQL request, raise on HTTP or GraphQL errors, return the data and the call seconds."""
     payload = {'query': query, 'variables': variables or {}}
     start = time.monotonic()
-    resp = ctx.session.post(ctx.endpoint, json=payload, headers=ctx.headers, timeout=(15, 300))
+    resp = ctx.session.post(ctx.endpoint, json=payload, headers=ctx.headers, timeout=(15, 300), verify=ctx.verify)
     seconds = time.monotonic() - start
     if resp.status_code >= 400:
         raise RuntimeError('RSC returned HTTP %d: %s' % (resp.status_code, resp.text[:500]))
@@ -1446,6 +1451,7 @@ def print_usage_summary():
     say('  Add --dry-run to preview: it writes nothing. Apply changes real SLAs and never reverts them.')
     say('  You are asked to type YES before anything changes. Add --skip-confirm to skip that.')
     say('  --hosts (a list on the command line) can replace the CSV. Then no host CSV is updated.')
+    say('  TLS certificate verification is off by default (self-signed certificates work). Add --verify-ssl to verify.')
     say("  Run 'python3 set_sla_sql_fileset.py --help' for every option.")
     say('')
 
@@ -1477,6 +1483,7 @@ def build_parser():
     parser.add_argument('--poll-interval-sec', type=int, default=30, help='Seconds between polls. Default: 30')
     parser.add_argument('--timeout-sec', type=int, default=600, help='Maximum seconds to wait for all objects to show the SLA. Default: 600')
     parser.add_argument('--csv-output-prefix', default='./rubrik_', help='Location and prefix for output files. The report name and timestamp are appended. The directory must exist. Default: ./rubrik_')
+    parser.add_argument('--verify-ssl', action='store_true', help='Verify the TLS certificate. Off by default, so self-signed certificates work. With verification off the token and every API call could be intercepted, so add this on a network you do not trust.')
     parser.add_argument('--dry-run', action='store_true', help='Show the plan and exit without changing anything.')
     parser.add_argument('--skip-confirm', action='store_true', help='Skip the "type YES" confirmation prompt.')
     return parser
@@ -1558,6 +1565,13 @@ def run(ctx):
     args = ctx.args
     validate_and_collect_hosts(ctx)
     ctx.date_string = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+
+    if args.verify_ssl:
+        ctx.verify = True
+    else:
+        ctx.verify = False
+        requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
+        say('Note: TLS certificate verification is off (add --verify-ssl to turn it on).', 'yellow')
 
     authenticate(ctx)
 
