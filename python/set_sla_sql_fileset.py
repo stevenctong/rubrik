@@ -4,9 +4,11 @@ Title: set_sla_sql_fileset.py
 Description: Assigns an SLA Domain to the SQL instances or filesets on a list of hosts in
 Rubrik Security Cloud (RSC). Python port of the "-action Apply" path of
 computer/Powershell/Set-SLA-SQL-Fileset.ps1. The timing test (-action Test) and the inventory
-writers (-getSqlInventory / -getFilesetInventory) are not part of this script.
+writers (-getSqlInventory / -getFilesetInventory) are not part of this script, they stay in the
+PowerShell script, and this script can read the inventory CSVs they write (--inventory-csv).
+Works against RSC-P and RSC (see SQL hosts on RSC-P and RSC below).
 
---assign (required) chooses the workload: sqlOnly, filesetOnly or both.
+--assign (required, except with --check-apply-csv-status) chooses the workload: sqlOnly, filesetOnly or both.
 With --assign both, ONE host list (--hosts or --host-csv-path) is used for SQL and for filesets, and
 the run is two independent passes, SQL first and then filesets. Each pass resolves its objects, shows
 its own plan, asks for its own confirmation, assigns, and writes its own Apply CSV. A failure in one pass does
@@ -16,6 +18,7 @@ a host that is only a SQL host, or only a fileset host, is skipped (with the rea
 Author: Steven Tong
 GitHub: stevenctong
 Date: 11/17/26
+Updated: 11/19/26
 
 Requires Python 3.9+ and the 'requests' package.
 
@@ -29,7 +32,10 @@ How it works
   already the target. A rerun is therefore safe.
 - Shows the plan and asks you to confirm with y or yes in any case (--dry-run shows the plan only, --skip-confirm skips the prompt).
 - Writes the Apply CSV with the starting SLA of every object before changing anything, sends the
-  assignments, then rewrites the same file with the outcomes.
+  assignments, then rewrites the same file with the outcomes. It is written twice per pass and not in between,
+  so if the run is interrupted (Ctrl+C) while polling, the file still shows the starting state (every object
+  Pending) even for assignments RSC already accepted. Nothing is reverted by an interrupt. Use
+  --check-apply-csv-status afterwards to see where each object is now.
   --apply-mode Bulk (default) sends up to --batch-size objects per call, all on --cluster-name.
   --apply-mode Single sends one call per host. A failed call does not stop the remaining calls.
 - Unless --skip-polling is used, polls every object until RSC shows the SLA, for up to --timeout-sec.
@@ -45,16 +51,49 @@ SLA per workload
 
 IMPORTANT: This changes real SLA assignments. Run with --dry-run first to review what will be touched.
 
+SQL hosts on RSC-P and RSC
+- RSC-P returns SQL hosts as PhysicalHost objects and RSC returns them as MssqlHost objects (typeFilter MSSQL_HOST),
+  and a query for the wrong one returns no hosts. The SQL host lookup tries PhysicalHost (RSC-P) first, then
+  MSSQL_HOST (RSC), uses the first that returns hosts for the rest of the run, and prints which one it used. The
+  fileset lookup is the same on both. --debug reports how many hosts each type returned.
+
+RBS state (the rbsState column)
+- Every host's RBS connection state is read from RSC in the same lookup that finds the host (no extra query): the
+  connectionStatus on a PhysicalHost, or physicalHostMetadata.connectionStatus on an MssqlHost. It is shown as RSC
+  reports it, for example CONNECTED, DISCONNECTED, BADLY_CONFIGURED or UNAUTHORIZED, and as unknown when RSC
+  returned none (or when an --inventory-csv written before this column existed is used).
+- It is a column in the plan table, in every Apply CSV row (including skipped hosts, when RSC returned the host)
+  and in the host CSV (--host-csv-path). A warning lists hosts known not to be CONNECTED. The SLA is still assigned
+  to them, but they will not back up until they reconnect. Nothing is skipped because of the state.
+- With --inventory-csv the state comes from the inventory's rbsState column, as of when it was taken.
+- The host CSV has one rbsState column. A later pass overwrites it only for hosts it actually read, so --assign
+  both never replaces a state with unknown. A dry run or a cancelled run refreshes this column and nothing else.
+
 Polling
 - After the assignment calls are accepted, one query per 50 objects reads each object's SLA state by ID
   (no host, template or inventory lookups). An object is done when nothing is pending and its effective
   SLA is the target. Only objects whose call was accepted are polled.
-- Default is every 30 seconds (--poll-interval-sec), for up to 600 seconds (--timeout-sec). Each round
+- Default is every 30 seconds (--poll-interval-sec), for up to 3600 seconds, 60 minutes (--timeout-sec). Each round
   prints progress and when the next poll is, for example: 3/5 effective, 40s elapsed, next poll in 30s
+- The timeout is counted per pass, so --assign both can wait up to twice as long. When polling starts the script
+  prints the timeout and how to change it (--timeout-sec <seconds>).
 - Done objects get status Applied (with effectiveSec). Objects not done by the timeout get Timeout and
-  the run exits 1. The time to effective is only accurate to within one poll interval.
+  the run exits 1. Timeout does not mean the assignment failed: RSC accepted the call and may still apply the SLA
+  after the script stopped waiting. A host whose objects all timed out is Unconfirmed (not Failed) in the host
+  summary and in its host CSV cell, and the Apply CSV error column says so. Use --check-apply-csv-status to see
+  where they are now. The time to effective is only accurate to within one poll interval.
 - --skip-polling (alias --no-wait) submits and exits. Accepted objects are recorded as Submitted, and a
   rerun skips any that are still pending (SkippedPending).
+
+Checking an Apply CSV later (--check-apply-csv-status, read-only)
+- Reads the objects in an Apply CSV, looks up each one's current SLA in RSC by ID, and writes the same file name
+  with _checked added (rubrik_sql_sla_apply-<time>_checked.csv), in the same folder. The original is not changed,
+  and an existing _checked file is overwritten, so you can check again as often as you like.
+- Adds three columns: currentPendingSLA, currentEffectiveSLA (SLA names) and checkResult, which is one of
+  Effective on target, Pending, Different SLA (compared with the row's targetSla), Not found (RSC no longer
+  returns the object) or Lookup failed. Rows with no object (skipped hosts) are left blank.
+- It needs only --rsc-service-account-json. Use it after a cancelled run, when the file still says Pending or
+  Submitted, or to see where a run got to. The exit code is 1 only if a lookup failed.
 
 Skipped hosts (the default, nothing to turn on)
 - A host that cannot be used is skipped, not fatal. The rest are applied. A host is skipped when it is not found by
@@ -65,7 +104,7 @@ Skipped hosts (the default, nothing to turn on)
   with no object, its skip status in status and hostStatus, and the reason in the error column. In the host CSV its
   executed_sql / executed_fileset cell reads: Skipped: <reason> <time>
 - The exit code is 1 if any host was skipped. If every listed host is skipped, nothing is assigned. A dry run
-  shows the skips, writes nothing and exits 0.
+  shows the skips, writes no Apply CSV, changes no SLA and exits 0 (it does refresh the host CSV's rbsState).
 - A problem that affects every host (the fileset template does not exist) still stops the pass, and every host's
   cell reads: Not run: <reason>
 
@@ -76,8 +115,8 @@ Debug (--debug, SQL pass, read-only)
 - Writes <prefix>sql_debug_hosts_all_clusters-<timestamp>.csv, <prefix>sql_debug_hosts_cluster-<timestamp>.csv,
   <prefix>sql_debug_listed_hosts-<timestamp>.csv (for each listed host: returned exactly, a similar name such as a
   short name versus an FQDN, or not returned) and <prefix>sql_debug_raw-<timestamp>.json (the exact filters sent
-  and the raw response). The run then continues
-  as normal, so add --dry-run to look without changing anything.
+  and the raw response). The host files include each host's rbsState. The run then continues
+  as normal, so add --dry-run to look without changing any SLA.
 
 Statuses in the Apply CSV
   Applied          SLA assigned and RSC shows it
@@ -85,7 +124,7 @@ Statuses in the Apply CSV
   AlreadyOnTarget  effective SLA was already the target, skipped
   SkippedPending   an SLA was already pending, skipped, rerun later
   CallFailed       the assignment call failed (error column has the reason)
-  Timeout          call accepted but RSC did not show the SLA in time
+  Timeout          call accepted but RSC did not show the SLA within --timeout-sec (it may still apply it)
   NotAttempted     the run stopped before this object was sent
   TemplateFailed   the fileset template could not be applied to the host
   SkippedNotFound     host not found by exact name on the cluster, skipped (no object row, reason in error)
@@ -94,7 +133,7 @@ Statuses in the Apply CSV
   SkippedNoTemplate   fileset template missing or not unique on the host's cluster, skipped
   NotInInventory      host is not in the --inventory-csv, skipped
 
-Examples (add --dry-run to any of them to see the plan and change nothing)
+Examples (add --dry-run to any of them to see the plan without changing any SLA)
 
   # SQL instances on three hosts, hosts on the command line
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
@@ -131,6 +170,9 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name Gold --cluster-name cluster01 --verify-ssl
 
+  # Check an Apply CSV later: current SLA of every object, written to rubrik_sql_sla_apply-<time>_checked.csv
+  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --check-apply-csv-status ./rubrik_sql_sla_apply-<time>.csv
+
   # Set instances to Do Not Protect (existing snapshots are retained)
   python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --assign sqlOnly \\
     --hosts sql01 --sla-name DO_NOT_PROTECT --cluster-name cluster01
@@ -146,13 +188,16 @@ Examples (add --dry-run to any of them to see the plan and change nothing)
     --poll-interval-sec 60 --assign-log --skip-confirm
 
 Output (<workload> is sql or fileset), same names and columns as the PowerShell script:
-- <prefix><workload>_sla_apply-<timestamp>.csv
+- <prefix><workload>_sla_apply-<timestamp>.csv, one per pass per run (a run with --assign both writes two). It has
+  the PowerShell script's columns plus rbsState after hostStatus.
+- <prefix><workload>_sla_apply-<timestamp>_checked.csv (only with --check-apply-csv-status, overwritten each check)
 - <prefix><workload>_sla_assign_log-<timestamp>.txt (only with --assign-log)
-- Host CSV (--host-csv-path): updated in place. It always gets two columns, executed_sql and executed_fileset,
-  each holding the host's last status and time for that workload, for example: Assigned 2026-11-17 14:05
-  A run changes only the column for its own workload (sqlOnly leaves executed_fileset as it was), so each
-  column keeps the result of its last run. The original is kept once as <file>.bak.
-  Dry runs and cancelled runs never change the file.
+- Host CSV (--host-csv-path): updated in place. It always gets three columns: executed_sql and executed_fileset,
+  each holding the host's last status and time for that workload, for example: Assigned 2026-11-17 14:05, and
+  rbsState, the host's RBS connection state (state only, no time). A run changes only the executed column for its
+  own workload (sqlOnly leaves executed_fileset as it was), so each column keeps the result of its last run.
+  The original is kept once as <file>.bak. A dry run or a cancelled run changes no SLA and never writes an executed
+  cell, but it does refresh the rbsState column, since it read each host's state.
 
 Inventory CSVs are written by the PowerShell script (-getSqlInventory / -getFilesetInventory).
 With --assign both, give two files after --inventory-csv, one SQL and one fileset, in either order.
@@ -182,7 +227,7 @@ BAD_STATUSES = ('CallFailed', 'Timeout', 'NotAttempted', 'TemplateFailed')
 COLORS = {'red': '31', 'green': '32', 'yellow': '33', 'cyan': '36'}
 
 APPLY_COLUMNS = [
-    'workload', 'host', 'cluster', 'hostStatus', 'object', 'objectId', 'beforeAssignment',
+    'workload', 'host', 'cluster', 'hostStatus', 'rbsState', 'object', 'objectId', 'beforeAssignment',
     'beforeSla', 'beforeSlaId', 'beforePendingSla', 'targetSla', 'assignMutation', 'applyMode',
     'callGroup', 'callSec', 'effectiveSec', 'status', 'error'
 ]
@@ -204,6 +249,12 @@ INVENTORY_REQUIRED_COLUMNS = [
 #   (typeFilter value, GraphQL type of the host node, product)
 # RSC-P (the primary) returns SQL hosts as PhysicalHost, and RSC returns them as MssqlHost (MSSQL_HOST)
 SQL_HOST_TYPES = [('PhysicalHost', 'PhysicalHost', 'RSC-P'), ('MSSQL_HOST', 'MssqlHost', 'RSC')]
+
+# Where each SQL host type keeps its RBS connection status (replaces __HOST_STATUS__ in the SQL host query)
+SQL_HOST_STATUS_FIELDS = {
+    'PhysicalHost': 'connectionStatus {\n              connectivity\n            }',
+    'MssqlHost': 'physicalHostMetadata {\n              connectionStatus {\n                connectivity\n              }\n            }',
+}
 
 HOST_COLUMNS = ['hostname', 'host', 'name', 'sqlhost']
 ASSIGN_CHOICES = ['sqlOnly', 'filesetOnly', 'both']
@@ -245,6 +296,7 @@ Q_SQL_HOST_INSTANCES = '''query MssqlHostInstancesQuery($first: Int!, $after: St
               id
               name
             }
+            __HOST_STATUS__
             instanceDescendantConnection: descendantConnection(filter: $instanceFilter, typeFilter: [MssqlInstance]) {
               edges {
                 node {
@@ -311,6 +363,9 @@ Q_HOST_FILESETS = '''query PhysicalHostFilesetsQuery($hostRoot: HostRoot!, $firs
           cluster {
             id
             name
+          }
+          connectionStatus {
+            connectivity
           }
           physicalChildConnection(typeFilter: [LinuxFileset, WindowsFileset], filter: $childFilter) {
             edges {
@@ -632,7 +687,7 @@ def fetch_sql_hosts(ctx, host_filter):
     # Once a host type has returned hosts, use only that one for the rest of the run
     types = [t for t in SQL_HOST_TYPES if t[0] == ctx.sql_host_type] or SQL_HOST_TYPES
     for type_filter, fragment_type, product in types:
-        query = Q_SQL_HOST_INSTANCES.replace('__HOST_TYPE__', fragment_type)
+        query = Q_SQL_HOST_INSTANCES.replace('__HOST_TYPE__', fragment_type).replace('__HOST_STATUS__', SQL_HOST_STATUS_FIELDS[fragment_type])
         variables = {
             'first': PAGE_SIZE,
             'filter': host_filter,
@@ -860,6 +915,17 @@ def get_call_groups(objects, mode, size):
     return groups
 
 
+def format_duration(seconds):
+    """3600 -> '60 minutes', 90 -> '1 minute 30 seconds'."""
+    minutes, secs = divmod(int(seconds), 60)
+    parts = []
+    if minutes:
+        parts.append('%d minute%s' % (minutes, '' if minutes == 1 else 's'))
+    if secs or not parts:
+        parts.append('%d second%s' % (secs, '' if secs == 1 else 's'))
+    return ' '.join(parts)
+
+
 def wait_sla_effective(ctx, object_ids, spec, t_start):
     """Poll until every object shows the SLA or the timeout is hit. Prints progress at every poll."""
     effective = {}
@@ -951,6 +1017,10 @@ def invoke_apply_sla(ctx, objects, spec, results):
 
     if not args.skip_polling and submitted_ids:
         say("Waiting for %d object(s) to show '%s'" % (len(submitted_ids), spec['label']))
+        say('  Polling every %ds for up to %ds (%s). Objects not confirmed by then are recorded as Timeout, which does not mean the'
+            % (args.poll_interval_sec, args.timeout_sec, format_duration(args.timeout_sec)))
+        say('  assignment failed, RSC may still apply it. To change the wait, rerun with --timeout-sec <seconds>, for example'
+            ' --timeout-sec 7200. To change how often it polls, use --poll-interval-sec <seconds>.')
         wait = wait_sla_effective(ctx, submitted_ids, spec, t_start)
         for object_id in submitted_ids:
             row = results[ikey(object_id)]
@@ -959,6 +1029,8 @@ def invoke_apply_sla(ctx, objects, spec, results):
                 row['effectiveSec'] = round(wait['effective'][ikey(object_id)], 2)
             else:
                 row['status'] = 'Timeout'
+                row['error'] = ('accepted by RSC, not seen effective within %ds. RSC may still apply it, check later '
+                                'with --check-apply-csv-status' % args.timeout_sec)
 
 
 ### HOST CSV ###
@@ -978,10 +1050,12 @@ def read_host_csv(ctx, path, columns):
     return [r.get(column, '') for r in rows]
 
 
-def update_host_csv_executed(ctx, executed_by_host):
-    """Write each host's last status and time into this pass's column ('executed_sql' or 'executed_fileset').
-    The file always gets both columns, and a run only changes the one for its own workload, so the other
-    keeps the result of its last run. The file is written to a temporary file and moved into place, and the
+def update_host_csv_executed(ctx, executed_by_host, rbs_by_host=None):
+    """Write each host's last status and time into this pass's column ('executed_sql' or 'executed_fileset'),
+    and its RBS state into the 'rbsState' column. executed_by_host=None writes only rbsState (a dry run).
+    The file always gets all three columns. A run only changes the executed column of its own workload, so the
+    other keeps the result of its last run. rbsState is overwritten only for hosts whose state this pass read,
+    so a pass that cannot find a host keeps the state an earlier pass read. A host never read shows 'unknown'. The file is written to a temporary file and moved into place, and the
     original is kept once as <file>.bak. The rows are kept in memory so the next pass (--assign both)
     builds on the file the first pass already wrote."""
     info = ctx.host_csv
@@ -995,14 +1069,23 @@ def update_host_csv_executed(ctx, executed_by_host):
         if col_names[wanted] not in columns:
             columns.append(col_names[wanted])
     executed_col = col_names[ctx.executed_column()]
+    rbs_col = next((c for c in columns if c.casefold() == 'rbsstate'), 'rbsState')
+    if rbs_col not in columns:
+        columns.append(rbs_col)
+    rbs_by_host = rbs_by_host or {}
     out = []
     for row in info['rows']:
         copy = dict(row)
         for name in col_names.values():
             copy.setdefault(name, '')
+        copy.setdefault(rbs_col, '')
         host_value = str(row.get(info['column'], '')).strip()
-        if host_value and host_value.lower() in executed_by_host:
+        if executed_by_host is not None and host_value and host_value.lower() in executed_by_host:
             copy[executed_col] = ('%s %s' % (executed_by_host[host_value.lower()], stamp)).strip()
+        if host_value and host_value.lower() in rbs_by_host:
+            copy[rbs_col] = rbs_by_host[host_value.lower()]
+        elif not copy[rbs_col]:
+            copy[rbs_col] = 'unknown'
         out.append(copy)
     backup = info['path'] + '.bak'
     tmp = info['path'] + '.tmp'
@@ -1014,10 +1097,12 @@ def update_host_csv_executed(ctx, executed_by_host):
         os.replace(tmp, info['path'])
         info['rows'] = out
         info['fieldnames'] = columns
-        say("Updated the '%s' column in: %s" % (executed_col, info['path']), 'green')
+        say("Updated the '%s' and '%s' columns in: %s" % (rbs_col, executed_col, info['path']) if executed_by_host is not None
+            else "Updated the '%s' column in: %s" % (rbs_col, info['path']), 'green')
     except Exception as exc:
         say('Could not update the host CSV (%s): %s' % (info['path'], exc), 'yellow')
-        say('The results are still in the Apply CSV: %s' % ctx.csv_apply_output, 'yellow')
+        if executed_by_host is not None:
+            say('The results are still in the Apply CSV: %s' % ctx.csv_apply_output, 'yellow')
         if os.path.exists(tmp):
             try:
                 os.remove(tmp)
@@ -1098,9 +1183,30 @@ def read_inventory_csv(ctx, path, expected_workload):
 ### OBJECT BUILDERS ###
 
 
-def object_from_node(host_name, host_id, cluster_id, cluster_name, node):
+def rbs_state_of(node):
+    """RBS connection status of a host node, for example CONNECTED or DISCONNECTED. RSC-P and the fileset host
+    query keep it on connectionStatus, RSC keeps it under physicalHostMetadata. 'unknown' when RSC returned none."""
+    return (dig(node, 'connectionStatus', 'connectivity')
+            or dig(node, 'physicalHostMetadata', 'connectionStatus', 'connectivity') or 'unknown')
+
+
+def collect_rbs(host_objs, need_template_hosts, skipped_hosts):
+    """Host name (lower case) -> RBS state for every host whose state was actually read. Hosts whose state is
+    unknown are left out so they never overwrite a state an earlier pass read."""
+    out = {}
+    for h in list(host_objs) + list(need_template_hosts):
+        if h.get('rbsState') and h['rbsState'] != 'unknown':
+            out[str(h['name']).lower()] = h['rbsState']
+    for x in skipped_hosts:
+        if x.get('rbsState') and x['rbsState'] != 'unknown':
+            out[str(x['host']).lower()] = x['rbsState']
+    return out
+
+
+def object_from_node(host_name, host_id, cluster_id, cluster_name, node, rbs_state='unknown'):
     return {
         'hostName': host_name, 'hostId': host_id, 'clusterId': cluster_id, 'clusterName': cluster_name,
+        'rbsState': rbs_state,
         'instanceName': node.get('name'), 'instanceId': node.get('id'),
         'assignment': node.get('slaAssignment'), 'currentSla': dig(node, 'effectiveSlaDomain', 'name'),
         'state': {
@@ -1116,7 +1222,7 @@ def object_from_inventory_row(first, row):
         pending = {'id': row['pendingSlaId'], 'name': row.get('pendingSla')}
     return {
         'hostName': first['host'], 'hostId': first['hostId'], 'clusterId': first['clusterId'],
-        'clusterName': first.get('clusterName'),
+        'clusterName': first.get('clusterName'), 'rbsState': first.get('rbsState') or 'unknown',
         'instanceName': row.get('objectName'), 'instanceId': row['objectId'],
         'assignment': row.get('slaAssignment'), 'currentSla': row.get('effectiveSla'),
         'state': {
@@ -1142,7 +1248,7 @@ def debug_sql_inventory(ctx):
         ('cluster', "Cluster filter '%s' (%s)" % (args.cluster_name, ctx.cluster_id),
          base_filter + [{'field': 'CLUSTER_ID', 'texts': [ctx.cluster_id]}]),
     ]
-    columns = ['host', 'hostId', 'cluster', 'clusterId', 'objectType', 'instanceCount', 'instances']
+    columns = ['host', 'hostId', 'cluster', 'clusterId', 'objectType', 'rbsState', 'instanceCount', 'instances']
     say('')
     say('=' * 100)
     say('DEBUG: SQL host inventory from RSC (written to files, not printed)', 'cyan')
@@ -1167,7 +1273,7 @@ def debug_sql_inventory(ctx):
             instances = [e.get('node') or {} for e in (dig(node, 'instanceDescendantConnection', 'edges') or [])]
             rows.append({
                 'host': node.get('name'), 'hostId': node.get('id'), 'cluster': cluster.get('name'),
-                'clusterId': cluster.get('id'), 'objectType': node.get('objectType'),
+                'clusterId': cluster.get('id'), 'objectType': node.get('objectType'), 'rbsState': rbs_state_of(node),
                 'instanceCount': len(instances),
                 'instances': ' | '.join('%s (%s)' % (i.get('name'), dig(i, 'effectiveSlaDomain', 'name')) for i in instances),
             })
@@ -1268,11 +1374,11 @@ def resolve_from_inventory(ctx):
             first = group[0]
             inst_rows = [r for r in group if ieq(r['rowType'], 'Instance')]
             if not inst_rows:
-                skipped.append({'host': first['host'], 'status': 'SkippedNoInstances',
+                skipped.append({'host': first['host'], 'status': 'SkippedNoInstances', 'rbsState': first.get('rbsState') or 'unknown',
                                 'reason': 'SQL host has no SQL instances in the inventory'})
                 continue
             instances = [object_from_inventory_row(first, r) for r in inst_rows]
-            host_objs.append({'name': first['host'], 'id': first['hostId'], 'instances': instances})
+            host_objs.append({'name': first['host'], 'id': first['hostId'], 'rbsState': first.get('rbsState') or 'unknown', 'instances': instances})
     else:
         template_rows = [r for r in rows_all if ieq(r['rowType'], 'Template')]
         if args.fileset_template_id:
@@ -1290,7 +1396,7 @@ def resolve_from_inventory(ctx):
             first = group[0]
             host_template = [r for r in match if ieq(r['clusterId'], first['clusterId'])]
             if len(host_template) != 1:
-                skipped.append({'host': first['host'], 'status': 'SkippedNoTemplate',
+                skipped.append({'host': first['host'], 'status': 'SkippedNoTemplate', 'rbsState': first.get('rbsState') or 'unknown',
                                 'reason': "expected 1 fileset template '%s' on cluster '%s', found %d" % (
                                     ctx.fileset_name, first.get('clusterName'), len(host_template))})
                 continue
@@ -1298,7 +1404,7 @@ def resolve_from_inventory(ctx):
             fs_rows = [r for r in group if ieq(r['rowType'], 'Fileset') and ieq(r['templateId'], tid)]
             instances = [object_from_inventory_row(first, r) for r in fs_rows]
             host_objs.append({
-                'name': first['host'], 'id': first['hostId'], 'clusterId': first['clusterId'],
+                'name': first['host'], 'id': first['hostId'], 'clusterId': first['clusterId'], 'rbsState': first.get('rbsState') or 'unknown',
                 'clusterName': first.get('clusterName'), 'templateId': tid, 'instances': instances,
             })
 
@@ -1327,12 +1433,14 @@ def resolve_live_sql(ctx):
         node = found[0]
         instance_nodes = [e.get('node') for e in (dig(node, 'instanceDescendantConnection', 'edges') or [])]
         if not instance_nodes:
-            skipped.append({'host': host_name, 'status': 'SkippedNoInstances', 'reason': 'SQL host has no SQL instances'})
+            skipped.append({'host': host_name, 'status': 'SkippedNoInstances', 'rbsState': rbs_state_of(node),
+                            'reason': 'SQL host has no SQL instances'})
             continue
         cluster = node.get('cluster') or {}
-        instances = [object_from_node(node['name'], node['id'], cluster.get('id'), cluster.get('name'), n)
+        rbs = rbs_state_of(node)
+        instances = [object_from_node(node['name'], node['id'], cluster.get('id'), cluster.get('name'), n, rbs)
                      for n in instance_nodes]
-        host_objs.append({'name': node['name'], 'id': node['id'], 'instances': instances})
+        host_objs.append({'name': node['name'], 'id': node['id'], 'rbsState': rbs, 'instances': instances})
     say('Resolved %d of %d SQL host(s), skipping %d' % (len(host_objs), len(ctx.host_names), len(skipped)),
         'yellow' if skipped else None)
     return host_objs, [], skipped
@@ -1388,16 +1496,17 @@ def resolve_live_fileset(ctx):
         cluster = host.get('cluster') or {}
         host_template = [t for t in templates if ieq(dig(t, 'cluster', 'id'), cluster.get('id'))]
         if len(host_template) != 1:
-            skipped.append({'host': host_name, 'status': 'SkippedNoTemplate',
+            skipped.append({'host': host_name, 'status': 'SkippedNoTemplate', 'rbsState': rbs_state_of(host),
                             'reason': "expected 1 fileset template '%s' on cluster '%s', found %d" % (
                                 ctx.fileset_name, cluster.get('name'), len(host_template))})
             continue
         children = [e.get('node') for e in (dig(host, 'physicalChildConnection', 'edges') or [])]
         matching = [c for c in children if ieq(dig(c, 'filesetTemplate', 'id'), host_template[0]['id'])]
-        instances = [object_from_node(host['name'], host['id'], cluster.get('id'), cluster.get('name'), n)
+        rbs = rbs_state_of(host)
+        instances = [object_from_node(host['name'], host['id'], cluster.get('id'), cluster.get('name'), n, rbs)
                      for n in matching]
         host_objs.append({
-            'name': host['name'], 'id': host['id'], 'clusterId': cluster.get('id'),
+            'name': host['name'], 'id': host['id'], 'clusterId': cluster.get('id'), 'rbsState': rbs,
             'clusterName': cluster.get('name'), 'templateId': host_template[0]['id'], 'instances': instances,
         })
     say('Resolved %d of %d host(s), skipping %d' % (len(host_objs), len(ctx.host_names), len(skipped)),
@@ -1453,7 +1562,7 @@ def apply_templates(ctx, need_template_hosts, apply_objects, spec):
                 children = []
                 if len(found) == 1:
                     children = [e.get('node') for e in (dig(found[0], 'physicalChildConnection', 'edges') or [])]
-                new_objs = [object_from_node(h['name'], h['id'], h['clusterId'], h['clusterName'], c)
+                new_objs = [object_from_node(h['name'], h['id'], h['clusterId'], h['clusterName'], c, rbs_state_of(found[0]) if len(found) == 1 else h.get('rbsState') or 'unknown')
                             for c in children if ieq(dig(c, 'filesetTemplate', 'id'), h['templateId'])]
                 if not new_objs:
                     template_rows.append(failed_row(h['name'], 'The fileset was not found on the host after applying the template'))
@@ -1471,6 +1580,7 @@ def apply_templates(ctx, need_template_hosts, apply_objects, spec):
                 host_label = single_host['name'] if single_host else '(new on %s)' % hosts[0]['clusterName']
                 apply_objects.append({
                     'hostName': host_label,
+                    'rbsState': single_host.get('rbsState') or 'unknown' if single_host else 'unknown',
                     'hostId': single_host['id'] if single_host else 'new-%s' % cluster_id,
                     'clusterId': cluster_id, 'clusterName': hosts[0]['clusterName'],
                     'instanceName': ctx.fileset_name, 'instanceId': oid,
@@ -1485,24 +1595,31 @@ def apply_templates(ctx, need_template_hosts, apply_objects, spec):
 
 
 def classify(rows, bad_statuses):
+    """Host status from its object rows. Failed objects (bad_statuses) are failures. A Timeout is not: RSC accepted
+    the call and the script only stopped waiting, so a host with only Timeout objects is Unconfirmed, not Failed.
+    Returns (status, ok, bad, skip) where bad holds the failed and the unconfirmed rows, so the detail lists both."""
     ok = [r for r in rows if r['status'] in OK_STATUSES]
-    bad = [r for r in rows if r['status'] in bad_statuses]
+    failed = [r for r in rows if r['status'] in bad_statuses and r['status'] != 'Timeout']
+    unconfirmed = [r for r in rows if r['status'] == 'Timeout']
     skip = [r for r in rows if r['status'] == 'SkippedPending']
-    if not bad and not skip:
+    if not failed and not unconfirmed and not skip:
         status = 'Assigned'
     elif ok:
         status = 'Partial'
-    elif bad:
-        status = 'Failed'
+    elif failed:
+        status = 'Failed' if not unconfirmed else 'Partial'
+    elif unconfirmed:
+        status = 'Unconfirmed'
     else:
         status = 'Skipped'
-    return status, ok, bad, skip
+    return status, ok, failed + unconfirmed, skip
 
 
 def skip_row(ctx, spec, skip):
     """Apply CSV row for a skipped host: no object, the skip status, and the reason in the error column."""
     return {
-        'workload': ctx.workload, 'host': skip['host'], 'hostStatus': skip['status'], 'object': '', 'objectId': '',
+        'workload': ctx.workload, 'host': skip['host'], 'hostStatus': skip['status'], 'rbsState': skip.get('rbsState', 'unknown'),
+        'object': '', 'objectId': '',
         'targetSla': spec['label'], 'assignMutation': ctx.args.assign_mutation, 'applyMode': ctx.args.apply_mode,
         'status': skip['status'], 'error': skip['reason'],
     }
@@ -1579,11 +1696,122 @@ def executed_text(row):
         return 'Partial: %d of %d objects, %s' % (row['slaAssigned'] + row['alreadyOnTarget'], row['objects'], row['detail'])
     if status == 'Failed':
         return 'Failed: %s' % row['detail']
+    if status == 'Unconfirmed':
+        return 'Unconfirmed: accepted by RSC, not seen effective before the timeout, check later (%s)' % row['detail']
     if status == 'Skipped':
         return 'Skipped: pending SLA, %s' % row['detail']
     if status in SKIP_HOST_LABELS:
         return 'Skipped: %s' % row['detail']
     return str(status)
+
+
+### CHECK AN APPLY CSV ###
+
+CHECK_COLUMNS = ['currentPendingSLA', 'currentEffectiveSLA', 'checkResult']
+
+
+def check_result(row, state):
+    """Compare an object's current SLA with the target SLA recorded in its Apply CSV row."""
+    if state is None:
+        return 'Not found'
+    if dig(state, 'pendingSla', 'name') or dig(state, 'pendingSla', 'id'):
+        return 'Pending'
+    target = str(row.get('targetSla') or '').strip()
+    if not target:
+        return 'Checked'
+    eff_id = dig(state, 'effectiveSlaDomain', 'id')
+    eff_name = dig(state, 'effectiveSlaDomain', 'name')
+    if ieq(target, 'NO_ASSIGNMENT'):
+        on_target = not ieq(state.get('slaAssignment'), 'Direct')
+    elif ieq(target, 'DO_NOT_PROTECT'):
+        on_target = ieq(eff_id, 'DO_NOT_PROTECT')
+    else:
+        on_target = ieq(eff_name, target) or ieq(eff_id, target)
+    return 'Effective on target' if on_target else 'Different SLA'
+
+
+def run_check_apply_csv_status(ctx):
+    """--check-apply-csv-status: read the objects in an Apply CSV, look up their current SLA in RSC, and write
+    <name>_checked.csv with currentPendingSLA, currentEffectiveSLA and checkResult added. Read-only in RSC."""
+    args = ctx.args
+    path = args.check_apply_csv_status
+    for attr, flag in (('assign', '--assign'), ('hosts', '--hosts'), ('host_csv_path', '--host-csv-path'),
+                       ('inventory_csv', '--inventory-csv'), ('sla_name', '--sla-name'), ('sla_id', '--sla-id'),
+                       ('sql_sla_name', '--sql-sla-name'), ('sql_sla_id', '--sql-sla-id'),
+                       ('fileset_sla_name', '--fileset-sla-name'), ('fileset_sla_id', '--fileset-sla-id'),
+                       ('fileset_name', '--fileset-name'), ('fileset_template_id', '--fileset-template-id')):
+        if getattr(args, attr):
+            die('--check-apply-csv-status only reads an Apply CSV and checks it, so it cannot be combined with %s.' % flag)
+    if not args.rsc_service_account_json:
+        die('--rsc-service-account-json is required.')
+    if not os.path.isfile(path):
+        die('Apply CSV not found: %s' % path)
+    base, ext = os.path.splitext(path)
+    if base.endswith('_checked'):
+        die('That file is already a checked file. Give the original Apply CSV: %s' % path)
+    out_path = '%s_checked%s' % (base, ext or '.csv')
+
+    fieldnames, rows = read_csv_rows(path)
+    if not rows or 'objectId' not in fieldnames:
+        die("Not an Apply CSV (it needs an 'objectId' column and at least one row): %s" % path)
+
+    object_ids = unique_ordered(r['objectId'].strip() for r in rows if r.get('objectId', '').strip())
+    say('Apply CSV: %s (%d row(s), %d object(s) to look up)' % (path, len(rows), len(object_ids)))
+
+    configure_tls(ctx)
+    authenticate(ctx)
+
+    states = {}
+    failed = {}
+    for start in range(0, len(object_ids), POLL_CHUNK):
+        chunk = object_ids[start:start + POLL_CHUNK]
+        try:
+            for state in get_sla_states(ctx, chunk):
+                states[ikey(state.get('id'))] = state
+        except Exception as exc:
+            for object_id in chunk:
+                failed[ikey(object_id)] = str(exc)
+            say('  Lookup failed for %d object(s): %s' % (len(chunk), exc), 'yellow')
+
+    columns = list(fieldnames) + [c for c in CHECK_COLUMNS if c not in fieldnames]
+    out_rows = []
+    for row in rows:
+        new = dict(row)
+        object_id = row.get('objectId', '').strip()
+        if not object_id:
+            new.update({'currentPendingSLA': '', 'currentEffectiveSLA': '', 'checkResult': ''})
+        elif ikey(object_id) in failed:
+            new.update({'currentPendingSLA': '', 'currentEffectiveSLA': '', 'checkResult': 'Lookup failed'})
+        else:
+            state = states.get(ikey(object_id))
+            new['currentPendingSLA'] = dig(state, 'pendingSla', 'name') or '' if state else ''
+            new['currentEffectiveSLA'] = dig(state, 'effectiveSlaDomain', 'name') or '' if state else ''
+            new['checkResult'] = check_result(row, state)
+        out_rows.append(new)
+
+    tmp = out_path + '.tmp'
+    try:
+        write_csv(tmp, out_rows, columns)
+        os.replace(tmp, out_path)
+    except Exception as exc:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        die('Could not write %s: %s' % (out_path, exc))
+
+    say('')
+    say('Checked at %s' % datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'cyan')
+    counts = [{'checkResult': name, 'Count': len(group)}
+              for name, group in sorted(group_by([r for r in out_rows if r['checkResult']], lambda r: r['checkResult']),
+                                        key=lambda g: g[0].casefold())]
+    print_table(counts, ['checkResult', 'Count'])
+    no_object = sum(1 for r in out_rows if not r.get('objectId', '').strip())
+    if no_object:
+        say('%d row(s) have no object (skipped hosts) and are left blank.' % no_object)
+    say('Checked CSV (the same file is overwritten on each check): %s' % out_path, 'green')
+    return 1 if failed else 0
 
 
 ### ARGUMENTS ###
@@ -1623,12 +1851,18 @@ def print_usage_summary():
     say('  Creates:    sql_sla_apply-<time>.csv, fileset_sla_apply-<time>.csv   starting SLA of every object, then its outcome and host status')
     say('              sql_sla_assign_log-<time>.txt, fileset_sla_assign_log-<time>.txt   from --assign-log: every SLA assignment call')
     say("  Updates:    your --host-csv-path file, in place: 'executed_sql' and 'executed_fileset' get each host's last status")
-    say("              and time for that workload. A run changes only its own column. The original is kept once as <file>.bak.")
+    say("              and time for that workload (a run changes only its own column), and 'rbsState' gets its RBS connection")
+    say("              state. The original is kept once as <file>.bak.")
     say('  New files go in the current folder, or where --csv-output-prefix points.')
+    say('')
+    say('CHECK A RUN LATER', 'cyan')
+    say('  python3 set_sla_sql_fileset.py --rsc-service-account-json ./rsc-sa.json --check-apply-csv-status ./rubrik_sql_sla_apply-<time>.csv')
+    say('  Writes rubrik_sql_sla_apply-<time>_checked.csv with currentPendingSLA, currentEffectiveSLA and checkResult. Read-only.')
     say('')
     say('ALL RUNS', 'cyan')
     say('  --cluster-name is required: every lookup and every assignment call is on that one cluster.')
-    say('  Add --dry-run to preview: it writes nothing. Apply changes real SLAs and never reverts them.')
+    say('  Add --dry-run to preview: it changes no SLA and writes no Apply CSV (it refreshes the host CSV rbsState column).')
+    say('  Apply changes real SLAs and never reverts them.')
     say('  You are asked to confirm (y or yes, any case) before anything changes. Add --skip-confirm to skip that.')
     say('  --hosts (a list on the command line) can replace the CSV. Then no host CSV is updated.')
     say('  A host that cannot be used is skipped, not fatal: the rest are applied. Each skip and its reason is in the plan, the')
@@ -1647,9 +1881,10 @@ def build_parser():
         allow_abbrev=False)
     parser.add_argument('--rsc-service-account-json', help='Path to the RSC Service Account JSON (client_id, client_secret, access_token_uri). Required.')
     parser.add_argument('--cluster-name', help='Exact name of the one cluster to work on. Required. Every lookup and every assignment call is on this cluster.')
-    parser.add_argument('--assign', required=True, type=ci_choice(ASSIGN_CHOICES), help='What to assign: sqlOnly (SQL instances), filesetOnly (filesets of --fileset-name) or both (SQL pass, then fileset pass, on the same host list). Required.')
+    parser.add_argument('--assign', type=ci_choice(ASSIGN_CHOICES), help='What to assign: sqlOnly (SQL instances), filesetOnly (filesets of --fileset-name) or both (SQL pass, then fileset pass, on the same host list). Required, except with --check-apply-csv-status.')
+    parser.add_argument('--check-apply-csv-status', metavar='APPLY_CSV', help='Read-only. Look up the current SLA of every object in an Apply CSV and write <name>_checked.csv next to it with currentPendingSLA, currentEffectiveSLA and checkResult columns added (an existing _checked file is overwritten). Needs only --rsc-service-account-json. Use it after a cancelled run, or to see where a run got to.')
     parser.add_argument('--hosts', nargs='+', metavar='HOST', help='Host names (exact match, case-insensitive). Space or comma separated. Used for SQL and for filesets. The CSV wins if both are given.')
-    parser.add_argument('--host-csv-path', help='Host CSV with a hostname, host, name or sqlhost column. Updated in place with two columns, executed_sql and executed_fileset, holding the last status and time for each host in that workload. The original is kept once as <file>.bak.')
+    parser.add_argument('--host-csv-path', help='Host CSV with a hostname, host, name or sqlhost column. Updated in place with executed_sql and executed_fileset (the last status and time for each host in that workload) and rbsState (the host RBS connection state). The original is kept once as <file>.bak.')
     parser.add_argument('--fileset-name', help='Name of the existing fileset template (exact match). Hosts without it get it applied. Never created or changed.')
     parser.add_argument('--fileset-template-id', help='ID of the existing fileset template, instead of --fileset-name.')
     parser.add_argument('--host-root', type=ci_choice(['WINDOWS_HOST_ROOT', 'LINUX_HOST_ROOT']), default='WINDOWS_HOST_ROOT', help='Host type for fileset hosts and templates. Default: WINDOWS_HOST_ROOT')
@@ -1668,11 +1903,11 @@ def build_parser():
     parser.add_argument('--inventory-csv', nargs='+', metavar='CSV', help='Inventory CSV from the PowerShell script (-getSqlInventory / -getFilesetInventory). Host, cluster, template and object IDs and SLA state come from it instead of RSC. With --assign both give two files, one SQL and one fileset (matched by the workload in each file).')
     parser.add_argument('--inventory-max-age-hours', type=int, default=24, help='With --inventory-csv, warn if the file is older than this. Default: 24')
     parser.add_argument('--poll-interval-sec', type=int, default=30, help='Seconds between polls. Default: 30')
-    parser.add_argument('--timeout-sec', type=int, default=600, help='Maximum seconds to wait for all objects to show the SLA. Default: 600')
+    parser.add_argument('--timeout-sec', type=int, default=3600, help='Maximum seconds to wait for all objects to show the SLA, counted per pass. Default: 3600 (60 minutes). An object not confirmed by then is recorded as Timeout, which does not mean the assignment failed.')
     parser.add_argument('--csv-output-prefix', default='./rubrik_', help='Location and prefix for output files. The report name and timestamp are appended. The directory must exist. Default: ./rubrik_')
     parser.add_argument('--verify-ssl', action='store_true', help='Verify the TLS certificate. Off by default, so self-signed certificates work. With verification off the token and every API call could be intercepted, so add this on a network you do not trust.')
     parser.add_argument('--debug', action='store_true', help='SQL pass only: before resolving hosts, get every SQL host RSC returns with no cluster filter and with the --cluster-name filter, compare with the listed hosts, and write the results to sql_debug_*.csv and sql_debug_raw-*.json (nothing is listed on screen). Read-only.')
-    parser.add_argument('--dry-run', action='store_true', help='Show the plan and exit without changing anything.')
+    parser.add_argument('--dry-run', action='store_true', help='Show the plan and exit without changing any SLA. No Apply CSV is written. The host CSV (--host-csv-path) rbsState column is refreshed, since the run reads each host state.')
     parser.add_argument('--skip-confirm', action='store_true', help='Skip the confirmation prompt (y or yes).')
     return parser
 
@@ -1768,6 +2003,16 @@ def validate_and_collect_hosts(ctx):
 ### MAIN ###
 
 
+def configure_tls(ctx):
+    """TLS certificate verification is off unless --verify-ssl is given."""
+    if ctx.args.verify_ssl:
+        ctx.verify = True
+    else:
+        ctx.verify = False
+        requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
+        say('Note: TLS certificate verification is off (add --verify-ssl to turn it on).', 'yellow')
+
+
 def run(ctx):
     """Shared setup, then one pass per workload (SQL first, then Fileset for --assign both).
     Each pass is independent: a failure in one does not stop the next. Returns 1 if any pass had a problem."""
@@ -1775,12 +2020,7 @@ def run(ctx):
     validate_and_collect_hosts(ctx)
     ctx.date_string = datetime.now().strftime('%Y-%m-%d_%H%M%S')
 
-    if args.verify_ssl:
-        ctx.verify = True
-    else:
-        ctx.verify = False
-        requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
-        say('Note: TLS certificate verification is off (add --verify-ssl to turn it on).', 'yellow')
+    configure_tls(ctx)
 
     authenticate(ctx)
 
@@ -1827,6 +2067,13 @@ def run(ctx):
     return exit_code
 
 
+def dry_run_refresh_rbs(ctx, rbs_by_host):
+    """A dry run or a cancelled run changes no SLA, but it did read each host's RBS state, so the host CSV's
+    rbsState column is refreshed. The executed columns are not touched."""
+    if ctx.host_csv:
+        update_host_csv_executed(ctx, None, rbs_by_host)
+
+
 def run_pass(ctx, workload, target_spec):
     """Resolve, plan, confirm, assign and report for one workload."""
     args = ctx.args
@@ -1866,11 +2113,12 @@ def run_pass(ctx, workload, target_spec):
             say('WARNING: all %d listed host(s) were skipped, so nothing will be assigned:' % len(skipped_hosts), 'yellow')
             print_skipped_hosts(skipped_hosts, '  ')
             if args.dry_run:
-                say('Dry run, no changes made.')
+                dry_run_refresh_rbs(ctx, collect_rbs(host_objs, need_template_hosts, skipped_hosts))
+                say('Dry run, no SLA changes made.')
                 return 0
             write_apply_csv(ctx, [skip_row(ctx, target_spec, x) for x in skipped_hosts], APPLY_COLUMNS)
             if ctx.host_csv:
-                update_host_csv_executed(ctx, {x['host'].lower(): 'Skipped: %s' % x['reason'] for x in skipped_hosts})
+                update_host_csv_executed(ctx, {x['host'].lower(): 'Skipped: %s' % x['reason'] for x in skipped_hosts}, collect_rbs(host_objs, need_template_hosts, skipped_hosts))
             say('The reason for each host is in the Apply CSV (error column): %s' % ctx.csv_apply_output, 'yellow')
             return 1
         raise Stop('No objects were found to assign the SLA to.')
@@ -1929,15 +2177,21 @@ def run_pass(ctx, workload, target_spec):
     say('')
     action_text = {'AlreadyOnTarget': 'Skip: on target', 'SkippedPending': 'Skip: pending'}
     plan_rows = [{
-        'hostName': o['hostName'], 'cluster': o['clusterName'], 'object': o['instanceName'],
+        'hostName': o['hostName'], 'cluster': o['clusterName'], 'rbsState': o.get('rbsState') or 'unknown', 'object': o['instanceName'],
         'assignment': o['assignment'], 'currentSla': o['currentSla'],
         'pendingSla': dig(o, 'state', 'pendingSla', 'name') or '',
         'action': action_text.get(decision_by_id[ikey(o['instanceId'])], 'Assign'),
     } for o in apply_objects]
     for nh in need_template_hosts:
-        plan_rows.append({'hostName': nh['name'], 'cluster': nh['clusterName'], 'object': ctx.fileset_name,
+        plan_rows.append({'hostName': nh['name'], 'cluster': nh['clusterName'], 'rbsState': nh.get('rbsState') or 'unknown', 'object': ctx.fileset_name,
                           'assignment': '', 'currentSla': '', 'pendingSla': '', 'action': 'Apply template'})
-    print_table(plan_rows, ['hostName', 'cluster', 'object', 'action', 'currentSla', 'pendingSla', 'assignment'])
+    print_table(plan_rows, ['hostName', 'cluster', 'rbsState', 'object', 'action', 'currentSla', 'pendingSla', 'assignment'])
+    not_connected = unique_ordered((str(r['hostName']), r['rbsState']) for r in plan_rows if r['rbsState'] not in ('CONNECTED', 'unknown') and not str(r['hostName']).startswith('(new on'))
+    if not_connected:
+        say('WARNING: %d host(s) are not CONNECTED (see the rbsState column). An SLA can still be assigned to them, but they will not back up until they reconnect:' % len(not_connected), 'yellow')
+        for state, group in group_by(not_connected, lambda x: x[1]):
+            say('  %s (%d): %s' % (state, len(group), ', '.join(x[0] for x in group)), 'yellow')
+        say('')
     if todo_objects or need_template_hosts:
         say("'%s' will be assigned to %d object(s). Existing snapshots are retained. Nothing is reverted afterwards."
             % (target_spec['label'], len(todo_objects) + len(need_template_hosts)), 'yellow')
@@ -1947,7 +2201,8 @@ def run_pass(ctx, workload, target_spec):
     say('')
 
     if args.dry_run:
-        say('Dry run, no changes made.')
+        dry_run_refresh_rbs(ctx, collect_rbs(host_objs, need_template_hosts, skipped_hosts))
+        say('Dry run, no SLA changes made.')
         return 0
 
     if (todo_objects or need_template_hosts) and not args.skip_confirm:
@@ -1956,7 +2211,8 @@ def run_pass(ctx, workload, target_spec):
         except EOFError:
             answer = ''
         if answer.strip().lower() not in ('y', 'yes'):
-            say('Cancelled, no changes made.')
+            dry_run_refresh_rbs(ctx, collect_rbs(host_objs, need_template_hosts, skipped_hosts))
+            say('Cancelled, no SLA changes made.')
             return 0
 
     template_rows = []
@@ -1968,7 +2224,7 @@ def run_pass(ctx, workload, target_spec):
     # If the run is interrupted this file still holds the starting state. It is rewritten with the results at the end.
     start_rows = [{
         'workload': ctx.workload, 'host': o['hostName'], 'cluster': o['clusterName'], 'hostStatus': 'Pending',
-        'object': o['instanceName'], 'objectId': o['instanceId'], 'beforeAssignment': o['assignment'],
+        'rbsState': o.get('rbsState') or 'unknown', 'object': o['instanceName'], 'objectId': o['instanceId'], 'beforeAssignment': o['assignment'],
         'beforeSla': o['currentSla'], 'beforeSlaId': dig(o, 'state', 'effectiveSlaDomain', 'id'),
         'beforePendingSla': dig(o, 'state', 'pendingSla', 'name'), 'targetSla': target_spec['label'],
         'assignMutation': args.assign_mutation, 'applyMode': args.apply_mode,
@@ -1989,6 +2245,7 @@ def run_pass(ctx, workload, target_spec):
     apply_rows = sorted(apply_rows, key=lambda r: (str(r['host']).casefold(), str(r['object']).casefold()))
 
     host_log_rows = build_host_log_rows(ctx, apply_rows, need_template_hosts, skipped_hosts, unverified)
+    rbs_by_host_name = collect_rbs(host_objs, need_template_hosts, skipped_hosts)
     host_status_by_host = {h['host'].lower(): h['status'] for h in host_log_rows}
 
     # Rewrite the single Apply CSV: each object keeps its starting SLA from the first write and gains its
@@ -2000,6 +2257,7 @@ def run_pass(ctx, workload, target_spec):
         final_rows.append({
             'workload': ctx.workload, 'host': r['host'], 'cluster': start['cluster'] if start else '',
             'hostStatus': host_status_by_host.get(str(r['host']).lower(), ''),
+            'rbsState': start['rbsState'] if start else rbs_by_host_name.get(str(r['host']).lower(), 'unknown'),
             'object': r['object'], 'objectId': r['objectId'],
             'beforeAssignment': start['beforeAssignment'] if start else r['beforeAssignment'],
             'beforeSla': start['beforeSla'] if start else r['beforeSla'],
@@ -2014,7 +2272,7 @@ def run_pass(ctx, workload, target_spec):
 
     # Record each host's last status and time in this workload's column of the host CSV
     if ctx.host_csv:
-        update_host_csv_executed(ctx, {h['host'].lower(): executed_text(h) for h in host_log_rows})
+        update_host_csv_executed(ctx, {h['host'].lower(): executed_text(h) for h in host_log_rows}, rbs_by_host_name)
 
     say('')
     say('Apply CSV (starting SLA, outcome and host status for every object):', 'green')
@@ -2029,6 +2287,12 @@ def run_pass(ctx, workload, target_spec):
     if problem_rows:
         say('Objects that need attention:', 'red')
         print_table(problem_rows, ['host', 'object', 'status', 'error'])
+        timed_out = [r for r in problem_rows if r['status'] == 'Timeout']
+        if timed_out:
+            say('NOTE: %d object(s) timed out. RSC accepted the assignment, the script just stopped waiting. It may still be applied.'
+                % len(timed_out), 'yellow')
+            say('Check later with: --check-apply-csv-status %s' % ctx.csv_apply_output, 'yellow')
+            say('To wait longer next time, use --timeout-sec <seconds>.', 'yellow')
     say('Hosts', 'cyan')
     host_status_rows = [{'status': name, 'Count': len(rows)}
                         for name, rows in sorted(group_by(host_log_rows, lambda r: r['status']), key=lambda g: g[0].casefold())]
@@ -2052,8 +2316,14 @@ def main():
     if len(sys.argv) == 1:
         print_usage_summary()
         return 0
-    ctx = Ctx(build_parser().parse_args())
+    parser = build_parser()
+    args = parser.parse_args()
+    if not args.assign and not args.check_apply_csv_status:
+        parser.error('the following arguments are required: --assign')
+    ctx = Ctx(args)
     try:
+        if args.check_apply_csv_status:
+            return run_check_apply_csv_status(ctx)
         return run(ctx)
     except Stop as exc:
         say('ERROR: %s' % exc, 'red')
