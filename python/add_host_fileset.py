@@ -58,6 +58,24 @@ Not done (rerun later), and the run exits 0 (nothing went wrong, it is only unfi
 the script later and the hosts that registered are then on the cluster and get their certificate update and fileset. A host
 that never appears usually has no Rubrik Backup Service running, or cannot be reached from the cluster. The reply shape of
 bulkRegisterHostAsync was not in any capture, so try it on one or two hosts first.
+CDM REST API (--cdm-api): instead of RSC, the whole run talks to one CDM cluster node. Any node of the cluster answers, and the
+script finds one itself: it logs in to RSC, resolves --cluster-name, reads the cluster's node IP addresses and uses the first node
+whose status is OK (the next one if the login fails). RSC is used for that and nothing else. --cdm-cluster-address names a node
+yourself and then RSC is not contacted at all and --cluster-name is not needed.
+It logs in to the node with the same service account JSON (POST /api/v1/service_account/session), reads the Windows hosts and the live
+filesets of that cluster, and then:
+     register   POST /v1/host/bulk_background, one bulk call per batch. It is asynchronous: the cluster accepts the hosts, which
+                show Refreshing and then Connected.
+     refresh    PUT /v1/host/certificate/<host id>, one call per host (there is no bulk call), --cdm-pause-sec (1 second)
+                apart. Goes to the newly registered hosts and to listed hosts on the cluster that are not Connected. A host that is
+                already Refreshing is left alone. --force-rbs-update refreshes every listed host.
+     fileset    POST /v1/fileset {templateId, hostId}, one call per host, --cdm-pause-sec apart, for the new hosts and the hosts
+                that have no live fileset from the template. Relic (deleted) filesets do not count.
+It works with the full run and with each --do-only flag, and --batch-size, --batch-delay-sec, the timeouts, --dry-run and the status
+CSV all apply. The CDM host list covers only the cluster of the node, so a
+host that is registered to a different cluster is NOT detected: it looks unregistered and registration is attempted. The final
+check reads the host and fileset lists again from the cluster. The template is looked up on the cluster by name
+(GET /v1/fileset_template, the CDM id looks like FilesetTemplate:::<uuid>, not the RSC id), or --fileset-template-id with that id.
 One step only: --do-only-register-host, --do-only-update-rbs or --do-only-create-fileset run just that step, and they
 cannot be combined.
   --do-only-register-host   register the Not registered hosts and stop. No fileset template is needed.
@@ -215,6 +233,21 @@ Examples (add --dry-run to any of them to see the plan without sending anything)
   python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
     --host-csv-path ./hosts.csv --fileset-name Windows_Share --register-host-async
 
+  # CDM REST API: the node address is read from RSC for the cluster name. Register in bulk, refresh each host that is not
+  # Connected, create the fileset
+  python3 add_host_fileset.py --rsc-service-account-json ./rscp_tong.json --host-csv-path ./winhosts.csv \\
+    --cluster-name gp1-alpha --cdm-api --fileset-name 'Windows File Share' --dry-run
+
+  # The same, naming the CDM node yourself (RSC is then not contacted)
+  python3 add_host_fileset.py --rsc-service-account-json ./rscp_tong.json --host-csv-path ./winhosts.csv \\
+    --cdm-api --cdm-cluster-address 172.24.37.14 --fileset-name 'Windows File Share' --dry-run
+
+  # CDM REST API, only refresh the hosts that are not Connected, or every listed host
+  python3 add_host_fileset.py --rsc-service-account-json ./rscp_tong.json --host-csv-path ./winhosts.csv \\
+    --cluster-name gp1-alpha --cdm-api --do-only-update-rbs
+  python3 add_host_fileset.py --rsc-service-account-json ./rscp_tong.json --host-csv-path ./winhosts.csv \\
+    --cluster-name gp1-alpha --cdm-api --do-only-update-rbs --force-rbs-update
+
   # No pause between batches (the default is 60 seconds), or a longer one for a struggling cluster
   python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
     --host-csv-path ./hosts.csv --fileset-name Windows_Share --batch-delay-sec 0
@@ -247,6 +280,7 @@ import json
 import os
 import sys
 import time
+import urllib.parse
 from datetime import datetime
 
 import requests
@@ -260,7 +294,9 @@ OUT_COLUMNS = ['host', 'cluster', 'hostStatus', 'rbsState', 'hostAddStatus', 'ce
                'filesetTemplate', 'filesetId', 'otherClusters', 'finalHostState', 'finalRbsState', 'finalFileset', 'osType',
                'hostId', 'clusterId', 'detail']
 PLAN_LIST_LIMIT = 50
+IN_PROGRESS_STATES = ('CONNECTED', 'unknown', 'REFRESHING')   # a certificate update is not needed for these without --force-rbs-update
 DEFAULT_REGISTER_TIMEOUT = 1800   # seconds to wait for each bulkRegisterHost call
+DEFAULT_CDM_PAUSE = 1             # seconds between the per-host CDM calls (refresh, fileset creation)
 DEFAULT_BATCH_DELAY = 60           # seconds to pause between the batches of one step
 DEFAULT_CALL_TIMEOUT = 900        # seconds to wait for each bulkUpdateHost and bulkCreateFilesets call
 
@@ -350,6 +386,19 @@ Q_TEMPLATE_BY_ID = '''query FilesetTemplateByIdQuery($fid: UUID!) {
     }
   }'''
 
+Q_CLUSTER_NODES = '''query ClusterNodesListQuery($uuid: UUID!) {
+    cluster(clusterUuid: $uuid) {
+      id
+      clusterNodeConnection {
+        nodes {
+          id
+          status
+          ipAddress
+        }
+      }
+    }
+  }'''
+
 M_REGISTER_HOSTS = '''mutation AddPhysicalHostMutation($clusterUuid: String!, $hosts: [HostRegisterInput!]!) {
     bulkRegisterHost(input: {clusterUuid: $clusterUuid, hosts: $hosts}) {
       data {
@@ -416,6 +465,9 @@ class Ctx(object):
         self.headers = None
         self.out_path = None
         self.timeouts = {}
+        self.cdm_base = None        # https://<cluster node>/api  when --cdm-api is used
+        self.cdm_session = None     # CDM session id, deleted when the run ends
+        self.cdm_address = None     # the CDM node the run is talking to
 
 
 def say(text='', color=None):
@@ -671,6 +723,310 @@ def get_template(ctx, cluster_id, cluster_name):
     return found[0]['id'], found[0]['name']
 
 
+### CDM REST API (--cdm-api) ###
+
+# The CDM path talks to one CDM cluster node directly instead of RSC. It reads the Windows hosts and the filesets of that
+# cluster, registers hosts in bulk (asynchronous), refreshes the certificate of hosts that are not connected, and creates
+# the fileset. The refresh and the fileset creation are one call per host, there is no bulk version of either.
+# Everything it reads is turned into the same shape the RSC path uses, so the host classification and the plan,
+# the status CSV and the final check are shared.
+
+CDM_PAGE_SIZE = 100
+CDM_CLUSTER_ID = 'local'   # every host read from the CDM node is on that one cluster (primary_cluster_id=local), so all share this id
+
+
+def cdm_url(ctx, path):
+    return '%s%s' % (ctx.cdm_base, path)
+
+
+def cdm_find_node_addresses(ctx):
+    """The IP addresses of the nodes of --cluster-name, read from RSC (any node of a CDM cluster can answer the REST API), the
+    nodes whose status is OK first. Logs in to RSC only for this."""
+    authenticate(ctx)
+    cluster_id, cluster_name = get_cluster(ctx, ctx.args.cluster_name)
+    say("Cluster '%s' (%s): reading its nodes from RSC" % (cluster_name, cluster_id))
+    data = invoke_rsc(ctx, Q_CLUSTER_NODES, {'uuid': cluster_id})
+    nodes = dig(data, 'cluster', 'clusterNodeConnection', 'nodes') or []
+    usable = [n for n in nodes if n.get('ipAddress')]
+    if not usable:
+        raise Stop("RSC returned no node IP addresses for cluster '%s'. Give a node with --cdm-cluster-address." % cluster_name)
+    usable.sort(key=lambda n: 0 if ieq(n.get('status'), 'OK') else 1)
+    addresses = [n['ipAddress'] for n in usable]
+    say('  Nodes: %s' % ', '.join('%s (%s)' % (n['ipAddress'], n.get('status')) for n in usable))
+    return addresses
+
+
+def cdm_authenticate(ctx):
+    """Log in to the CDM cluster node with the same service account JSON, as CDM-Authentication.ps1 does:
+    POST /api/v1/service_account/session with the client_id and client_secret. Sets the bearer token and the session id."""
+    args = ctx.args
+    path = args.rsc_service_account_json
+    say('Reading Service Account file: %s' % path)
+    try:
+        with open(path, encoding='utf-8-sig') as handle:
+            sa = json.load(handle)
+        if not isinstance(sa, dict):
+            raise ValueError('the JSON is not an object')
+    except Exception as exc:
+        raise Stop("Failed to read Service Account JSON at '%s': %s" % (path, exc))
+    missing = [k for k in ('client_id', 'client_secret') if sa.get(k) is None]
+    if missing:
+        raise Stop('Service Account JSON is missing required fields: %s' % ', '.join(missing))
+    if args.cdm_cluster_address:
+        addresses = [args.cdm_cluster_address.strip()]
+        say('Using the CDM node given with --cdm-cluster-address: %s' % addresses[0])
+    else:
+        addresses = cdm_find_node_addresses(ctx)
+    errors = []
+    body = None
+    address = None
+    for candidate in addresses:
+        ctx.cdm_base = 'https://%s/api' % candidate
+        try:
+            resp = ctx.session.post(cdm_url(ctx, '/v1/service_account/session'),
+                                    json={'serviceAccountId': sa['client_id'], 'secret': sa['client_secret']},
+                                    timeout=(15, 60), verify=ctx.verify)
+            resp.raise_for_status()
+            body = resp.json()
+            if not body.get('token'):
+                raise RuntimeError('the cluster answered but returned no bearer token')
+            address = candidate
+            break
+        except Exception as exc:
+            errors.append('%s: %s' % (candidate, exc))
+            say('  CDM login failed on %s: %s' % (candidate, exc), 'yellow')
+            body = None
+    if body is None:
+        raise Stop('CDM authentication failed on every node tried (%s).' % '; '.join(errors))
+    ctx.cdm_address = address
+    token = body.get('token')
+    ctx.cdm_session = body.get('sessionId')
+    ctx.headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': 'Bearer %s' % token,
+    }
+    say('Connected to the CDM cluster through node %s' % address, 'green')
+
+
+def cdm_logout(ctx):
+    """Delete the CDM session. Never raises: a failed logout must not change the result of the run."""
+    if not ctx.cdm_session or not ctx.cdm_base:
+        return
+    try:
+        ctx.session.delete(cdm_url(ctx, '/v1/session/%s' % urllib.parse.quote(str(ctx.cdm_session), safe='')),
+                           headers=ctx.headers, timeout=(15, 60), verify=ctx.verify)
+        say('CDM session deleted.')
+    except Exception as exc:
+        say('Could not delete the CDM session: %s' % exc, 'yellow')
+    ctx.cdm_session = None
+
+
+def cdm_call(ctx, method, path, params=None, body=None, read_timeout=300):
+    """One CDM REST call. Raises RuntimeError with the HTTP status and the start of the reply on an error, and returns the
+    parsed JSON (or None for an empty reply). Gateway timeouts and read timeouts are raised as they are, so the callers can
+    word them as not confirmed."""
+    resp = ctx.session.request(method, cdm_url(ctx, path), params=params, json=body, headers=ctx.headers,
+                               timeout=(15, read_timeout), verify=ctx.verify)
+    if resp.status_code >= 400:
+        raise RuntimeError('CDM returned HTTP %d: %s' % (resp.status_code, resp.text[:500]))
+    if not resp.content:
+        return None
+    try:
+        return resp.json()
+    except ValueError:
+        return None
+
+
+def cdm_paged(ctx, path, params):
+    """Every entry of a CDM list call that returns {hasMore, data, total}, using limit and offset."""
+    out = []
+    offset = 0
+    while True:
+        query = dict(params)
+        query['limit'] = CDM_PAGE_SIZE
+        query['offset'] = offset
+        reply = cdm_call(ctx, 'GET', path, params=query) or {}
+        data = reply.get('data') or []
+        out.extend(data)
+        if not reply.get('hasMore') or not data:
+            break
+        offset += len(data)
+    return out
+
+
+def cdm_get_cluster(ctx):
+    """The CDM cluster id and a display name. The host list reports primaryClusterId, and 'local' in the query means this
+    cluster, so the id comes from the hosts. Returns (id or 'local', the address shown to the user)."""
+    return CDM_CLUSTER_ID, ctx.cdm_address
+
+
+def cdm_get_template(ctx):
+    """The fileset template on the CDM cluster, by --fileset-name (exact name) or --fileset-template-id. Returns (id, name)."""
+    args = ctx.args
+    if args.fileset_template_id:
+        say("Looking up fileset template '%s' on the CDM cluster" % args.fileset_template_id)
+        found = [t for t in cdm_paged(ctx, '/v1/fileset_template', {}) if ieq(t.get('id'), args.fileset_template_id)]
+        if not found:
+            raise Stop('No fileset template with ID %s on the CDM cluster. CDM ids look like FilesetTemplate:::<uuid>, not the RSC id.'
+                       % args.fileset_template_id)
+        return found[0]['id'], found[0]['name']
+    say("Looking up fileset template '%s' on the CDM cluster" % args.fileset_name)
+    found = [t for t in cdm_paged(ctx, '/v1/fileset_template', {'name': args.fileset_name}) if ieq(t.get('name'), args.fileset_name)]
+    os_wanted = 'Windows' if args.host_root == 'WINDOWS_HOST_ROOT' else 'Linux'
+    same_os = [t for t in found if not t.get('operatingSystemType') or ieq(t.get('operatingSystemType'), os_wanted)]
+    if not same_os:
+        hint = ''
+        if found:
+            hint = ' A template with that name exists for %s. Use --host-root to match.' % ', '.join(
+                unique_ordered(str(t.get('operatingSystemType')) for t in found))
+        raise Stop("No %s fileset template named '%s' on the CDM cluster.%s" % (os_wanted, args.fileset_name, hint))
+    if len(same_os) >= 2:
+        raise Stop("More than one %s fileset template is named '%s' on the CDM cluster. Use --fileset-template-id." % (
+            os_wanted, args.fileset_name))
+    return same_os[0]['id'], same_os[0]['name']
+
+
+def cdm_status_to_state(status):
+    """CDM reports Connected, Refreshing and so on. The RSC path says CONNECTED, so the CDM status is shown in upper case.
+    A host that is Refreshing is working its way to Connected, so classify_hosts does not queue it for another refresh
+    (see IN_PROGRESS_STATES) unless --force-rbs-update is given."""
+    return str(status or 'unknown').upper().replace(' ', '_')
+
+
+def cdm_inventory(ctx, template_id):
+    """The Windows (or Linux) hosts of the CDM cluster, each with its live filesets from the template, in the shape the RSC
+    path reads: id, name, osType, cluster, connectionStatus and physicalChildConnection. Relic filesets are left out, since a
+    deleted fileset must not count as one the host still has."""
+    os_type = 'Windows' if ctx.args.host_root == 'WINDOWS_HOST_ROOT' else 'Linux'
+    hosts = cdm_paged(ctx, '/v1/host', {'operating_system_type': os_type, 'primary_cluster_id': 'local',
+                                       'sort_by': 'hostname', 'sort_order': 'asc'})
+    filesets = []
+    if template_id:
+        filesets = [f for f in cdm_paged(ctx, '/v1/fileset', {'is_relic': 'false', 'name': ctx.args.cdm_fileset_filter or ''})
+                    if not f.get('isRelic')]
+    by_host = {}
+    for f in filesets:
+        by_host.setdefault(ikey(f.get('hostId')), []).append(f)
+    out = []
+    for h in hosts:
+        kids = [{'node': {'id': f.get('id'), 'filesetTemplate': {'id': f.get('templateId'), 'name': f.get('templateName')}}}
+                for f in by_host.get(ikey(h.get('id')), [])]
+        out.append({
+            'id': h.get('id'), 'name': h.get('hostname') or h.get('name'), 'osType': h.get('operatingSystemType'),
+            'cluster': {'id': CDM_CLUSTER_ID, 'name': ctx.cdm_address},
+            'connectionStatus': {'connectivity': cdm_status_to_state(h.get('statusEnum') or h.get('status')),
+                                 'timestampMillis': h.get('lastRefreshTimeStamp')},
+            'physicalChildConnection': {'edges': kids},
+        })
+    return out
+
+
+def cdm_register_hosts(ctx, rows, cluster_id):
+    """Register the hosts with POST /v1/host/bulk_background (asynchronous, one call per batch). The reply lists each host
+    that was accepted with its id and its status, usually Refreshing. A host the reply does not list is not confirmed."""
+    calls = chunks(rows, ctx.args.batch_size)
+    timeout = ctx.timeouts['register']
+    os_type = 'Windows' if ctx.args.host_root == 'WINDOWS_HOST_ROOT' else 'Linux'
+    say('  Registering through the CDM REST API: POST /v1/host/bulk_background (asynchronous, hosts finish registering in the background).')
+    say('  Each registration call waits up to %ds (%s) for the cluster to answer. To change it, rerun with --register-host-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
+        % (timeout, format_duration(timeout)))
+    for number, batch in enumerate(calls, 1):
+        started = pause_before_batch(ctx, number, len(calls), 'registration')
+        try:
+            reply = cdm_call(ctx, 'POST', '/v1/host/bulk_background', body=[{'hostname': r['host'], 'osType': os_type} for r in batch],
+                             read_timeout=timeout)
+            items = reply if isinstance(reply, list) else ((reply or {}).get('data') or [])
+            by_name = {ikey(i.get('hostname') or i.get('name')): i for i in items}
+            for r in batch:
+                item = by_name.get(ikey(r['host']))
+                if item and item.get('id'):
+                    r['hostId'] = item['id']
+                    r['hostAddStatus'] = 'Added'
+                    r['rbsState'] = cdm_status_to_state(item.get('statusEnum') or item.get('status'))
+                else:
+                    r['hostAddStatus'] = 'Add not confirmed'
+                    r['certUpdateStatus'] = 'Not updated (host add not confirmed)'
+                    r['filesetStatus'] = 'Not created (host add not confirmed)'
+                    r['detail'] = 'The CDM cluster accepted the call but did not list this host in its reply (it listed %d host(s))' % len(items)
+            say('  Register call %d/%d (CDM): %d host(s) sent, the cluster listed %d%s' % (number, len(calls), len(batch), len(items), took(started)))
+        except requests.exceptions.ReadTimeout:
+            for r in batch:
+                r['hostAddStatus'] = 'Add not confirmed (timed out)'
+                r['certUpdateStatus'] = 'Not updated (host add not confirmed)'
+                r['filesetStatus'] = 'Not created (host add not confirmed)'
+                r['detail'] = ('The CDM cluster did not answer the registration within %ds. It may still have registered the host: check '
+                               'finalHostState or the cluster, and rerun to continue.' % timeout)
+            say('  Register call %d/%d TIMED OUT after %ds for %d host(s). The cluster may still register them.%s'
+                % (number, len(calls), timeout, len(batch), took(started)), 'yellow')
+        except Exception as exc:
+            for r in batch:
+                r['hostAddStatus'] = 'Add failed'
+                r['certUpdateStatus'] = 'Not updated (host add failed)'
+                r['filesetStatus'] = 'Not created (host add failed)'
+                r['detail'] = str(exc)
+            say('  Register call %d/%d FAILED for %d host(s)%s: %s' % (number, len(calls), len(batch), took(started), exc), 'red')
+
+
+def cdm_refresh_hosts(ctx, rows):
+    """Refresh the certificate of each host with PUT /v1/host/certificate/<host id>. There is no bulk call, so this is one
+    call per host, with a pause between them (--cdm-pause-sec, 1 second by default). A failed host does not stop the others."""
+    timeout = ctx.timeouts['cert']
+    pause = ctx.args.cdm_pause_sec
+    say('  Refreshing through the CDM REST API: PUT /v1/host/certificate/<host id>, one host at a time, %ds between hosts (--cdm-pause-sec).' % pause)
+    say('  Each call waits up to %ds (%s) for the cluster to answer. To change it, rerun with --update-rbs-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
+        % (timeout, format_duration(timeout)))
+    total = len(rows)
+    for number, r in enumerate(rows, 1):
+        if number > 1 and pause > 0:
+            time.sleep(pause)
+        started = time.monotonic()
+        try:
+            reply = cdm_call(ctx, 'PUT', '/v1/host/certificate/%s' % urllib.parse.quote(str(r['hostId']), safe=''), read_timeout=timeout) or {}
+            r['certUpdateStatus'] = 'Update requested'
+            state = cdm_status_to_state(reply.get('statusEnum') or reply.get('status'))
+            say('  Refresh %d/%d %s: %s%s' % (number, total, r['host'], state if reply else 'accepted', took(started)))
+        except requests.exceptions.ReadTimeout:
+            r['certUpdateStatus'] = 'Update not confirmed (timed out)'
+            add_detail(r, 'refresh: the CDM cluster did not answer within %ds. It may still apply it: check finalRbsState, and rerun later.' % timeout)
+            say('  Refresh %d/%d %s TIMED OUT after %ds%s' % (number, total, r['host'], timeout, took(started)), 'yellow')
+        except Exception as exc:
+            r['certUpdateStatus'] = 'Update failed'
+            add_detail(r, 'refresh: %s' % exc)
+            say('  Refresh %d/%d %s FAILED%s: %s' % (number, total, r['host'], took(started), exc), 'red')
+
+
+def cdm_create_filesets(ctx, rows, template_id):
+    """Create the fileset on each host with POST /v1/fileset {templateId, hostId}. There is no bulk call, so this is one call
+    per host, with a pause between them (--cdm-pause-sec). A failed host does not stop the others."""
+    timeout = ctx.timeouts['fileset']
+    pause = ctx.args.cdm_pause_sec
+    say('  Creating filesets through the CDM REST API: POST /v1/fileset, one host at a time, %ds between hosts (--cdm-pause-sec).' % pause)
+    say('  Each call waits up to %ds (%s) for the cluster to answer. To change it, rerun with --create-fileset-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
+        % (timeout, format_duration(timeout)))
+    total = len(rows)
+    for number, r in enumerate(rows, 1):
+        if number > 1 and pause > 0:
+            time.sleep(pause)
+        started = time.monotonic()
+        try:
+            reply = cdm_call(ctx, 'POST', '/v1/fileset', body={'templateId': template_id, 'hostId': r['hostId']}, read_timeout=timeout) or {}
+            r['filesetStatus'] = 'Created'
+            r['filesetId'] = reply.get('id') or ''
+            if not reply.get('id'):
+                r['filesetStatus'] = 'Create not confirmed'
+                r['detail'] = 'The CDM cluster accepted the call but returned no fileset id: check the cluster, the final check shows if it exists.'
+            say('  Fileset %d/%d %s: %s%s' % (number, total, r['host'], r['filesetId'] or 'no id returned', took(started)))
+        except requests.exceptions.ReadTimeout:
+            r['filesetStatus'] = 'Create not confirmed (timed out)'
+            r['detail'] = ('The CDM cluster did not answer within %ds. It may still create it: check finalFileset, and rerun later.' % timeout)
+            say('  Fileset %d/%d %s TIMED OUT after %ds%s' % (number, total, r['host'], timeout, took(started)), 'yellow')
+        except Exception as exc:
+            r['filesetStatus'] = 'Create failed'
+            r['detail'] = str(exc)
+            say('  Fileset %d/%d %s FAILED%s: %s' % (number, total, r['host'], took(started), exc), 'red')
+
+
 ### PLAN ###
 
 
@@ -739,13 +1095,15 @@ def classify_hosts(inventory, names, cluster_id, cluster_name, template_id, temp
             detail = ''
             if not do_cert:
                 cert = 'n/a (not part of this run)'
-            elif force or state not in ('CONNECTED', 'unknown'):
+            elif force or state not in IN_PROGRESS_STATES:
                 cert = 'To be updated'
-                if force and state in ('CONNECTED', 'unknown'):
+                if force and state in IN_PROGRESS_STATES:
                     detail = 'Certificate update forced by --force-rbs-update, the host is %s' % (
-                        'CONNECTED' if state == 'CONNECTED' else 'in an unknown state')
+                        {'CONNECTED': 'CONNECTED', 'REFRESHING': 'REFRESHING'}.get(state, 'in an unknown state'))
             elif state == 'CONNECTED':
                 cert = 'Not updated (CONNECTED)'
+            elif state == 'REFRESHING':
+                cert = 'Not updated (REFRESHING, already in progress)'
             else:
                 cert = 'Not updated (state unknown)'
             if not do_fileset:
@@ -841,9 +1199,10 @@ def final_check(ctx, rows, cluster_id, cluster_name, template_id):
     finalHostState, finalRbsState and finalFileset columns. A snapshot right after the last call, not a wait. Never
     stops the run: if the read fails the columns say so."""
     say('')
-    say('Final check: reading a fresh inventory (a snapshot, a host that was just registered or updated may not show CONNECTED yet, rerun later to see it settled)', 'cyan')
+    say('Final check: reading a fresh inventory%s (a snapshot, a host that was just registered or updated may not show CONNECTED yet, rerun later to see it settled)'
+        % (' from the CDM cluster' if ctx.args.cdm_api else ''), 'cyan')
     try:
-        inventory = get_inventory(ctx)
+        inventory = cdm_inventory(ctx, template_id) if ctx.args.cdm_api else get_inventory(ctx)
     except Exception as exc:
         for r in rows:
             r['finalHostState'] = 'Final check failed'
@@ -1105,6 +1464,8 @@ def print_usage_summary():
     say('  inventory is read (a snapshot, not a wait) and the status CSV gets each host final RBS state and whether it has the fileset.')
     say('  --force-rbs-update updates the certificate of every listed host on the cluster, CONNECTED or not.')
     say('  --register-host-async registers in the background and returns quickly. Rerun later for the certificate and fileset steps.')
+    say('  --cdm-api (with --cluster-name, the node address is read from RSC) does the whole run through the CDM REST API instead of RSC:')
+    say('  bulk register, then refresh each host that is not Connected and create the fileset one host at a time (--cdm-pause-sec).')
     say('  One step only: --do-only-register-host, --do-only-update-rbs (no fileset name needed) or --do-only-create-fileset.')
     say('  The last two read the inventory first and act only on hosts already registered: a listed host that is not registered is')
     say('  flagged in the CSV and the exit code is 1, nothing is registered.')
@@ -1140,6 +1501,10 @@ def build_parser():
     parser.add_argument('--do-only-update-rbs', dest='do_only_cert', action='store_true', help='Only update the certificate of the listed hosts that are already on --cluster-name and are not CONNECTED, then stop (add --force-rbs-update for all of them). No registration and no fileset, so no fileset template is needed. The inventory is read first, and a listed host that is not registered yet is flagged (exit code 1), not registered. Cannot be combined with the other --do-only flags.')
     parser.add_argument('--do-only-create-fileset', dest='do_only_fileset', action='store_true', help='Only create the fileset on the listed hosts that are already on --cluster-name and lack it, then stop. Nothing is registered. The inventory is read first, and a listed host that is not registered yet is flagged (exit code 1), not registered. Needs --fileset-name or --fileset-template-id. Cannot be combined with the other --do-only flags.')
     parser.add_argument('--force-rbs-update', action='store_true', help='Send the certificate update to EVERY listed host on --cluster-name, CONNECTED or not, including hosts whose RBS state RSC did not return. Without it the update goes only to the hosts just registered and to listed hosts on the cluster whose state is not CONNECTED (a host in an unknown state is skipped). Applies to the full run and to --do-only-update-rbs, not to --do-only-register-host or --do-only-create-fileset. A host registered to a different cluster, or not registered, is never updated.')
+    parser.add_argument('--cdm-api', action='store_true', help='Use the CDM REST API of one cluster node instead of RSC for the whole run: read the Windows hosts and filesets, register hosts in bulk (POST /v1/host/bulk_background, asynchronous), refresh the certificate of hosts that are not Connected (PUT /v1/host/certificate/<id>, one host per call) and create the fileset (POST /v1/fileset, one host per call). The node is found from --cluster-name through RSC, or given with --cdm-cluster-address. Works with the full run and with every --do-only flag. The inventory covers only that cluster, so a host registered to a different cluster is not detected.')
+    parser.add_argument('--cdm-cluster-address', help='Optional, with --cdm-api: the IP address or host name of the CDM node to talk to (for example 172.24.37.14). Without it the node address is read from RSC for --cluster-name (the first node whose status is OK, then the others if the login fails), which needs the service account to be allowed in RSC. With it, RSC is not contacted at all and --cluster-name is not needed. Authentication to the node uses the same service account JSON (client_id and client_secret).')
+    parser.add_argument('--cdm-pause-sec', type=int, default=DEFAULT_CDM_PAUSE, help='With --cdm-api, seconds to pause between the one-host-at-a-time calls (the certificate refresh and the fileset creation). Default: 1. Registration is one bulk call per batch and uses --batch-delay-sec instead.')
+    parser.add_argument('--cdm-fileset-filter', default='', help='With --cdm-api, narrow the fileset list read from the cluster to filesets whose name matches this text (the CDM name filter). Default: no name filter, all live filesets are read and matched to the template by its id, so this is rarely needed, and it only speeds up a cluster with very many filesets.')
     parser.add_argument('--verify-ssl', action='store_true', help='Verify the TLS certificate. Off by default, so self-signed certificates work.')
     parser.add_argument('--dry-run', action='store_true', help='Show the plan and write the status CSV (it shows what WOULD be done), but send nothing to RSC. No final check is made.')
     parser.add_argument('--skip-confirm', action='store_true', help='Skip the confirmation prompt (y or yes).')
@@ -1153,7 +1518,14 @@ def run(ctx):
     args = ctx.args
     if not args.rsc_service_account_json:
         die('--rsc-service-account-json is required.')
-    if not args.cluster_name:
+    if args.cdm_api:
+        if not args.cdm_cluster_address and not args.cluster_name:
+            die('--cdm-api needs --cluster-name (the node address is then read from RSC) or --cdm-cluster-address (a node of the CDM cluster).')
+        if args.register_host_async:
+            die('--register-host-async is the RSC asynchronous call. With --cdm-api the registration is already asynchronous (POST /v1/host/bulk_background), so drop it.')
+        if args.cdm_pause_sec < 0:
+            die('--cdm-pause-sec must be 0 or greater.')
+    elif not args.cluster_name:
         die('--cluster-name is required. Every change is made on that one cluster.')
     if args.batch_size < 1:
         die('--batch-size must be 1 or greater.')
@@ -1209,17 +1581,42 @@ def run(ctx):
     ctx.out_path = '%shost_fileset_status-%s.csv' % (args.csv_output_prefix, datetime.now().strftime('%Y-%m-%d_%H%M%S'))
 
     configure_tls(ctx)
+    if args.cdm_api:
+        cdm_authenticate(ctx)
+        try:
+            return run_after_login(ctx, names, only, do_register, do_cert, do_fileset, steps)
+        finally:
+            cdm_logout(ctx)
     authenticate(ctx)
-    cluster_id, cluster_name = get_cluster(ctx, args.cluster_name)
-    say("Cluster '%s' (%s)" % (cluster_name, cluster_id))
+    return run_after_login(ctx, names, only, do_register, do_cert, do_fileset, steps)
+
+
+def run_after_login(ctx, names, only, do_register, do_cert, do_fileset, steps):
+    """Everything after the login: the cluster and template lookups, the inventory, the plan, the three steps and the final
+    check. With --cdm-api these go to the CDM REST API of one cluster node, otherwise to RSC."""
+    args = ctx.args
+    if args.cdm_api:
+        cluster_id, cluster_name = cdm_get_cluster(ctx)
+        say("CDM cluster '%s'" % cluster_name)
+    else:
+        cluster_id, cluster_name = get_cluster(ctx, args.cluster_name)
+        say("Cluster '%s' (%s)" % (cluster_name, cluster_id))
     template_id, template_name = None, ''
     if do_fileset:
-        template_id, template_name = get_template(ctx, cluster_id, cluster_name)
+        if args.cdm_api:
+            template_id, template_name = cdm_get_template(ctx)
+        else:
+            template_id, template_name = get_template(ctx, cluster_id, cluster_name)
         say("Fileset template '%s' (%s)" % (template_name, template_id))
 
-    say('Reading the host inventory for all clusters (host root %s)' % args.host_root)
-    inventory = get_inventory(ctx)
-    say('%d host(s) on %d cluster(s)' % (len(inventory), len(unique_ordered(dig(h, 'cluster', 'id') for h in inventory))))
+    if args.cdm_api:
+        say('Reading the %s hosts and filesets of the CDM cluster (this cluster only)' % ('Windows' if args.host_root == 'WINDOWS_HOST_ROOT' else 'Linux'))
+        inventory = cdm_inventory(ctx, template_id)
+        say('%d host(s) on the CDM cluster' % len(inventory))
+    else:
+        say('Reading the host inventory for all clusters (host root %s)' % args.host_root)
+        inventory = get_inventory(ctx)
+        say('%d host(s) on %d cluster(s)' % (len(inventory), len(unique_ordered(dig(h, 'cluster', 'id') for h in inventory))))
 
     rows, groups = classify_hosts(inventory, names, cluster_id, cluster_name, template_id, template_name, steps,
                                   args.force_rbs_update)
@@ -1231,7 +1628,7 @@ def run(ctx):
     # Plan
     say('')
     say('Plan', 'cyan')
-    say('  Cluster:                  %s' % cluster_name)
+    say('  Cluster:                  %s%s' % (cluster_name, ' (CDM REST API, --cdm-api)' if args.cdm_api else ''))
     say('  Steps:                    %s' % (' -> '.join(n for n, on in (('register hosts', do_register), ('update certificate', do_cert), ('create fileset', do_fileset)) if on)
                                                 + ('  (only this step: %s)' % only[0] if only else '')))
     if do_fileset:
@@ -1246,18 +1643,30 @@ def run(ctx):
             len(new_rows), (len(new_rows) + args.batch_size - 1) // args.batch_size, args.batch_size,
             ', asynchronous: submitted and registered in the background' if args.register_host_async else ''))
     if do_cert:
-        say('  Certificates to update:   %d (%d newly registered, %d already on the cluster%s), in %d call(s) of up to %d' % (
-            len(cert_rows), len(new_rows) if do_register else 0, len(groups['cert_existing']),
-            ' that are not CONNECTED' if not args.force_rbs_update else ', all of them forced',
-            (len(cert_rows) + args.batch_size - 1) // args.batch_size, args.batch_size))
+        if args.cdm_api:
+            say('  Certificates to refresh:  %d (%d newly registered, %d already on the cluster%s), one call per host, %ds apart' % (
+                len(cert_rows), len(new_rows) if do_register else 0, len(groups['cert_existing']),
+                ' that are not Connected' if not args.force_rbs_update else ', all of them forced', args.cdm_pause_sec))
+        else:
+            say('  Certificates to update:   %d (%d newly registered, %d already on the cluster%s), in %d call(s) of up to %d' % (
+                len(cert_rows), len(new_rows) if do_register else 0, len(groups['cert_existing']),
+                ' that are not CONNECTED' if not args.force_rbs_update else ', all of them forced',
+                (len(cert_rows) + args.batch_size - 1) // args.batch_size, args.batch_size))
     if do_fileset:
-        say('  Filesets to create:       %d (%d on new hosts, %d on hosts already on the cluster), in %d call(s) of up to %d' % (
-            len(fileset_rows), len(new_rows), len(groups['needs_fileset']),
-            (len(fileset_rows) + args.batch_size - 1) // args.batch_size, args.batch_size))
+        if args.cdm_api:
+            say('  Filesets to create:       %d (%d on new hosts, %d on hosts already on the cluster), one call per host, %ds apart' % (
+                len(fileset_rows), len(new_rows), len(groups['needs_fileset']), args.cdm_pause_sec))
+        else:
+            say('  Filesets to create:       %d (%d on new hosts, %d on hosts already on the cluster), in %d call(s) of up to %d' % (
+                len(fileset_rows), len(new_rows), len(groups['needs_fileset']),
+                (len(fileset_rows) + args.batch_size - 1) // args.batch_size, args.batch_size))
         say('  Already have the fileset: %d' % len(groups['has_fileset']))
     if groups['not_registered']:
         say('  Not registered, skipped:  %d (this run does not register hosts)' % len(groups['not_registered']))
-    say('  On a different cluster:   %d (not touched)' % len(groups['other']))
+    if args.cdm_api:
+        say('  Note:                     the CDM inventory covers only this cluster, so a host registered to another cluster is not detected.')
+    else:
+        say('  On a different cluster:   %d (not touched)' % len(groups['other']))
     say('')
     print_group('NOT REGISTERED, will be added to %s%s' % (cluster_name, ' and given the fileset' if do_fileset else ''), new_rows, 'yellow')
     print_group('Already on %s, certificate will be updated%s' % (
@@ -1267,7 +1676,7 @@ def run(ctx):
     if do_fileset:
         print_group('Already on %s and already have the fileset, fileset skipped' % cluster_name, groups['has_fileset'], None)
     print_group('Already on %s, nothing to do in this run%s' % (
-        cluster_name, ' (CONNECTED or unknown state, add --force-rbs-update to update them too)' if do_cert else ''),
+        cluster_name, ' (CONNECTED, REFRESHING or unknown state, add --force-rbs-update to update them too)' if do_cert else ''),
         groups['nothing'], None)
     print_group('NOT REGISTERED anywhere, FLAGGED and skipped (this run does not register hosts, exit code 1)', groups['not_registered'], 'red')
     if args.force_rbs_update and do_cert:
@@ -1282,7 +1691,7 @@ def run(ctx):
 
     if args.dry_run:
         print_summary(ctx, rows)
-        say('Dry run, nothing changed in RSC.')
+        say('Dry run, nothing changed in %s.' % ('the CDM cluster' if args.cdm_api else 'RSC'))
         return 0
 
     if to_change and not args.skip_confirm:
@@ -1300,7 +1709,7 @@ def run(ctx):
                     r['filesetStatus'] = 'Cancelled (not sent)'
             write_output(ctx, rows)
             print_summary(ctx, rows)
-            say('Cancelled, nothing changed in RSC.')
+            say('Cancelled, nothing changed in %s.' % ('the CDM cluster' if args.cdm_api else 'RSC'))
             return 0
     if not to_change:
         say('Nothing to do for this run.')
@@ -1308,20 +1717,29 @@ def run(ctx):
     try:
         if new_rows:
             say('Registering %d host(s) to %s' % (len(new_rows), cluster_name), 'cyan')
-            register_hosts(ctx, new_rows, cluster_id)
+            if args.cdm_api:
+                cdm_register_hosts(ctx, new_rows, cluster_id)
+            else:
+                register_hosts(ctx, new_rows, cluster_id)
             write_output(ctx, rows)
         if do_cert:
             cert_ready = [r for r in cert_rows if r['certUpdateStatus'] == 'To be updated' and r['hostId']
                           and r['hostAddStatus'] in ('Added', 'Already added')]
             if cert_ready:
                 say('Updating the certificate of %d host(s)' % len(cert_ready), 'cyan')
-                update_certs(ctx, cert_ready)
+                if args.cdm_api:
+                    cdm_refresh_hosts(ctx, cert_ready)
+                else:
+                    update_certs(ctx, cert_ready)
                 write_output(ctx, rows)
         if do_fileset:
             ready = [r for r in fileset_rows if r['filesetStatus'] == 'To be created' and r['hostId']]
             if ready:
                 say('Creating the fileset on %d host(s)' % len(ready), 'cyan')
-                create_filesets(ctx, ready, cluster_id, template_id)
+                if args.cdm_api:
+                    cdm_create_filesets(ctx, ready, template_id)
+                else:
+                    create_filesets(ctx, ready, cluster_id, template_id)
                 write_output(ctx, rows)
     except KeyboardInterrupt:
         for r in rows:
@@ -1333,7 +1751,7 @@ def run(ctx):
                 r['filesetStatus'] = 'Interrupted (not confirmed)'
         write_output(ctx, rows)
         say('')
-        say('Interrupted. Anything marked Interrupted (not confirmed) may or may not have been done in RSC, check it there.', 'yellow')
+        say('Interrupted. Anything marked Interrupted (not confirmed) may or may not have been done in %s, check it there.' % ('the CDM cluster' if args.cdm_api else 'RSC'), 'yellow')
         say('Status CSV: %s' % ctx.out_path, 'green')
         return 130
 
