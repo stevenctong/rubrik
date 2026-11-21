@@ -41,7 +41,8 @@ How it works
 5. Shows the plan, with the lists highlighted, and asks you to confirm with y or yes in any case (--dry-run shows the
    plan only, --skip-confirm skips the prompt).
 6. Runs three steps in this order, each one call per --batch-size hosts, and a failed call does not stop the others:
-     1. Register the hosts in the Not registered list (bulkRegisterHost). RSC returns each host's id.
+     1. Register the hosts in the Not registered list (bulkRegisterHost). RSC returns each host's id. With
+        --register-host-async the asynchronous call (bulkRegisterHostAsync) is used instead, see below.
      2. Update the certificate (bulkUpdateHost with isUpdateCertAndAgentIdEnabled) of: the hosts that were just
         registered (only those whose registration was confirmed), and the listed hosts already on --cluster-name whose
         RBS state is not CONNECTED. A host already on the cluster that is CONNECTED is left alone, and so is one whose
@@ -50,6 +51,13 @@ How it works
         call and the failure is recorded.
      3. Create the fileset on every host that needs it (bulkCreateFilesets): the newly registered hosts and the
         hosts already on the cluster that lack it. A host whose registration failed or was not confirmed is skipped.
+Asynchronous registration (--register-host-async): RSC accepts the request and registers the hosts in the background, so
+the call returns quickly. If the reply lists the hosts with ids, they are Added and the certificate and fileset steps run as
+normal. If it does not, the hosts are marked Add submitted (not yet confirmed), their certificate and fileset steps are
+Not done (rerun later), and the run exits 0 (nothing went wrong, it is only unfinished). Nothing is polled or retried: rerun
+the script later and the hosts that registered are then on the cluster and get their certificate update and fileset. A host
+that never appears usually has no Rubrik Backup Service running, or cannot be reached from the cluster. The reply shape of
+bulkRegisterHostAsync was not in any capture, so try it on one or two hosts first.
 One step only: --do-only-register-host, --do-only-update-rbs or --do-only-create-fileset run just that step, and they
 cannot be combined.
   --do-only-register-host   register the Not registered hosts and stop. No fileset template is needed.
@@ -108,7 +116,8 @@ end. If the run is interrupted (Ctrl+C) the file is finalized first, and anythin
   hostStatus       Not registered, On cluster, Different cluster, or Ambiguous on cluster
   rbsState         RBS connection state from the inventory read at the start (CONNECTED, DISCONNECTED ...), blank for
                    a host that was not registered yet. The state after the run is finalRbsState
-  hostAddStatus    Already added, To be added, Added, Add failed, Add not confirmed, Add not confirmed (timed out: RSC
+  hostAddStatus    Already added, To be added, Added, Add submitted (not yet confirmed) with --register-host-async, Add
+                   failed, Add not confirmed, Add not confirmed (timed out: RSC
                    did not answer in time and may still have registered the host, see finalHostState), Cancelled (not sent), Interrupted
                    (not confirmed), or Not added (different cluster / more than one host with this name / this run does
                    not register hosts, which is a host that is not registered in a --do-only-update-rbs or
@@ -152,6 +161,9 @@ Things to know
   before creating the filesets. The captured certificate updates were all on hosts that had just been registered, so
   re-issuing one on a host that is CONNECTED (--force-rbs-update) is untested: try it on one host first, for example
   --hosts host01 --do-only-update-rbs --force-rbs-update --dry-run.
+- Between the batches of one step the script waits --batch-delay-sec (60 seconds by default, 0 for none) before each batch
+  after the first, so RSC can finish one call before the next arrives. The first batch of a step never waits, and a step with
+  one batch never pauses. Each call's result line also shows how long it took.
 - How long each bulk call waits for RSC to answer: registration 1800 seconds (30 minutes), certificate update 900 (15
   minutes), fileset creation 900 (15 minutes). The plan shows them and the console repeats the one in use before each call.
   --timeout-sec <seconds> sets all three at once, and --register-host-timeout-sec, --update-rbs-timeout-sec and
@@ -198,6 +210,17 @@ Examples (add --dry-run to any of them to see the plan without sending anything)
   python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
     --hosts host01.example.com,host02.example.com --fileset-name Windows_Share
 
+  # Register with the asynchronous call: RSC registers the hosts in the background and the call returns quickly. Rerun
+  # later (this same command) to update their certificates and create the fileset once they are registered
+  python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
+    --host-csv-path ./hosts.csv --fileset-name Windows_Share --register-host-async
+
+  # No pause between batches (the default is 60 seconds), or a longer one for a struggling cluster
+  python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
+    --host-csv-path ./hosts.csv --fileset-name Windows_Share --batch-delay-sec 0
+  python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
+    --host-csv-path ./hosts.csv --fileset-name Windows_Share --batch-size 10 --batch-delay-sec 180
+
   # A slow cluster: wait up to 1 hour for RSC to answer each registration call
   python3 add_host_fileset.py --rsc-service-account-json ./rsc-sa.json --cluster-name cluster01 \\
     --host-csv-path ./hosts.csv --fileset-name Windows_Share --register-host-timeout-sec 3600
@@ -223,6 +246,7 @@ import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime
 
 import requests
@@ -237,6 +261,7 @@ OUT_COLUMNS = ['host', 'cluster', 'hostStatus', 'rbsState', 'hostAddStatus', 'ce
                'hostId', 'clusterId', 'detail']
 PLAN_LIST_LIMIT = 50
 DEFAULT_REGISTER_TIMEOUT = 1800   # seconds to wait for each bulkRegisterHost call
+DEFAULT_BATCH_DELAY = 60           # seconds to pause between the batches of one step
 DEFAULT_CALL_TIMEOUT = 900        # seconds to wait for each bulkUpdateHost and bulkCreateFilesets call
 
 ### GRAPHQL ###
@@ -331,6 +356,19 @@ M_REGISTER_HOSTS = '''mutation AddPhysicalHostMutation($clusterUuid: String!, $h
         hostSummary {
           id
           hostname
+        }
+      }
+    }
+  }'''
+
+M_REGISTER_HOSTS_ASYNC = '''mutation AddPhysicalHostAsyncMutation($clusterUuid: String!, $hosts: [HostRegisterInput!]!) {
+    bulkRegisterHostAsync(input: {clusterUuid: $clusterUuid, hosts: $hosts}) {
+      output {
+        items {
+          hostSummary {
+            id
+            hostname
+          }
         }
       }
     }
@@ -748,6 +786,7 @@ def needs_attention(row):
     add = row['hostAddStatus']
     fileset = row['filesetStatus']
     cert = row.get('certUpdateStatus') or ''
+    # 'Add submitted (not yet confirmed)' is an asynchronous registration still in progress: not an error, a rerun finishes it
     return (add in ('Add failed', 'Add not confirmed', 'Add not confirmed (timed out)', 'Interrupted (not confirmed)') or add.startswith('Not added')
             or cert in ('Update failed', 'Update not confirmed', 'Update not confirmed (timed out)', 'Interrupted (not confirmed)')
             or fileset in ('Create failed', 'Create not confirmed', 'Create not confirmed (timed out)', 'Interrupted (not confirmed)')
@@ -785,6 +824,9 @@ def print_summary(ctx, rows):
     say('Fileset', 'cyan')
     print_table([{'filesetStatus': k, 'Count': len(g)} for k, g in
                  sorted(group_by(rows, lambda r: r['filesetStatus']), key=lambda x: x[0].casefold())], ['filesetStatus', 'Count'])
+    waiting = [r for r in rows if r['hostAddStatus'] == 'Add submitted (not yet confirmed)']
+    if waiting:
+        say('%d host(s) were submitted for registration in the background and are not confirmed yet. Rerun later to give them their certificate update and fileset.' % len(waiting), 'yellow')
     problems = [r for r in rows if needs_attention(r)]
     if problems:
         say('%d host row(s) need attention (failed, not confirmed, or not touched). See the detail column.' % len(problems), 'yellow')
@@ -881,6 +923,21 @@ def format_duration(seconds):
     return ' '.join(parts)
 
 
+def pause_before_batch(ctx, number, total, step):
+    """Wait --batch-delay-sec before every batch after the first of a step, so RSC can finish one call before the next
+    arrives. Returns the time the batch started, for the elapsed time printed with its result."""
+    delay = ctx.args.batch_delay_sec
+    if number > 1 and delay > 0:
+        say('  Waiting %ds before %s call %d/%d (--batch-delay-sec, to give RSC time to finish the last one)' % (delay, step, number, total))
+        time.sleep(delay)
+    return time.monotonic()
+
+
+def took(start):
+    """' (took 12s)' for the time since start."""
+    return ' (took %ds)' % round(time.monotonic() - start)
+
+
 def chunks(items, size):
     return [items[i:i + size] for i in range(0, len(items), size)]
 
@@ -889,13 +946,17 @@ def register_hosts(ctx, rows, cluster_id):
     """Register the hosts in one bulkRegisterHost call per batch. A failed call does not stop the others."""
     calls = chunks(rows, ctx.args.batch_size)
     timeout = ctx.timeouts['register']
+    is_async = ctx.args.register_host_async
+    if is_async:
+        say('  Registering with the asynchronous call (--register-host-async): RSC accepts the request and registers the hosts in the background.')
     say('  Each registration call waits up to %ds (%s) for RSC to answer. To change it, rerun with --register-host-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
         % (timeout, format_duration(timeout)))
     for number, batch in enumerate(calls, 1):
+        started = pause_before_batch(ctx, number, len(calls), 'registration')
         try:
-            data = invoke_rsc(ctx, M_REGISTER_HOSTS, {'clusterUuid': cluster_id, 'hosts': [{'hostname': r['host']} for r in batch]},
-                              read_timeout=timeout)
-            items = dig(data, 'bulkRegisterHost', 'data') or []
+            data = invoke_rsc(ctx, M_REGISTER_HOSTS_ASYNC if is_async else M_REGISTER_HOSTS,
+                              {'clusterUuid': cluster_id, 'hosts': [{'hostname': r['host']} for r in batch]}, read_timeout=timeout)
+            items = (dig(data, 'bulkRegisterHostAsync', 'output', 'items') if is_async else dig(data, 'bulkRegisterHost', 'data')) or []
             by_name = {ikey(dig(i, 'hostSummary', 'hostname')): dig(i, 'hostSummary', 'id') for i in items}
             for r in batch:
                 host_id = by_name.get(ikey(r['host']))
@@ -903,12 +964,23 @@ def register_hosts(ctx, rows, cluster_id):
                     r['hostId'] = host_id
                     r['hostAddStatus'] = 'Added'
                     r['rbsState'] = 'unknown'
+                elif is_async:
+                    # The request was accepted and RSC registers the host in the background. Nothing more can be done until
+                    # the host shows up as registered, so its certificate and fileset steps wait for a rerun.
+                    r['hostAddStatus'] = 'Add submitted (not yet confirmed)'
+                    r['certUpdateStatus'] = 'Not done (registration still in the background, rerun later)'
+                    r['filesetStatus'] = 'Not done (registration still in the background, rerun later)'
+                    r['detail'] = ('Asynchronous registration submitted. The reply did not give this host id, so it is not confirmed. '
+                                   'Rerun later: once it is registered it is "on the cluster" and gets its certificate update and fileset. '
+                                   'If it never appears, check the Rubrik Backup Service on the host and its network path to the cluster.')
                 else:
                     r['hostAddStatus'] = 'Add not confirmed'
                     r['certUpdateStatus'] = 'Not updated (host add not confirmed)'
                     r['filesetStatus'] = 'Not created (host add not confirmed)'
                     r['detail'] = 'RSC accepted the call but did not list this host in its reply (it listed %d host(s))' % len(items)
-            say('  Register call %d/%d: %d host(s) sent, RSC listed %d' % (number, len(calls), len(batch), len(items)))
+            say('  Register call %d/%d%s: %d host(s) sent, RSC listed %d%s%s' % (
+                number, len(calls), ' (async)' if is_async else '', len(batch), len(items),
+                ', so the rest are submitted and will register in the background' if is_async and len(items) < len(batch) else '', took(started)))
         except requests.exceptions.ReadTimeout:
             # The request was sent and RSC did not answer in time. The hosts may well have been registered anyway.
             for r in batch:
@@ -918,15 +990,15 @@ def register_hosts(ctx, rows, cluster_id):
                 r['detail'] = ('RSC did not answer the registration within %ds. It may still have registered the host: check the '
                                'final inventory (finalHostState) or RSC, and rerun to continue. Use --register-host-timeout-sec or --timeout-sec to wait longer.'
                                % timeout)
-            say('  Register call %d/%d TIMED OUT after %ds for %d host(s). RSC may still register them, see the final check below.'
-                % (number, len(calls), timeout, len(batch)), 'yellow')
+            say('  Register call %d/%d TIMED OUT after %ds for %d host(s). RSC may still register them, see the final check below.%s'
+                % (number, len(calls), timeout, len(batch), took(started)), 'yellow')
         except Exception as exc:
             for r in batch:
                 r['hostAddStatus'] = 'Add failed'
                 r['certUpdateStatus'] = 'Not updated (host add failed)'
                 r['filesetStatus'] = 'Not created (host add failed)'
                 r['detail'] = str(exc)
-            say('  Register call %d/%d FAILED for %d host(s): %s' % (number, len(calls), len(batch), exc), 'red')
+            say('  Register call %d/%d FAILED for %d host(s)%s: %s' % (number, len(calls), len(batch), took(started), exc), 'red')
 
 
 def add_detail(row, text):
@@ -943,6 +1015,7 @@ def update_certs(ctx, rows):
     say('  Each certificate update call waits up to %ds (%s) for RSC to answer. To change it, rerun with --update-rbs-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
         % (timeout, format_duration(timeout)))
     for number, batch in enumerate(calls, 1):
+        started = pause_before_batch(ctx, number, len(calls), 'certificate update')
         variables = {'hostUpdateProperties': [
             {'hostId': r['hostId'], 'updateProperties': {'isUpdateCertAndAgentIdEnabled': True}} for r in batch]}
         try:
@@ -954,20 +1027,20 @@ def update_certs(ctx, rows):
                 else:
                     r['certUpdateStatus'] = 'Update not confirmed'
                     add_detail(r, 'certificate update: RSC accepted the call but did not list this host in its reply')
-            say('  Certificate call %d/%d: %d host(s) sent, RSC listed %d' % (number, len(calls), len(batch), len(listed)))
+            say('  Certificate call %d/%d: %d host(s) sent, RSC listed %d%s' % (number, len(calls), len(batch), len(listed), took(started)))
         except requests.exceptions.ReadTimeout:
             # The request was sent and RSC did not answer in time. It may still be applying the update.
             for r in batch:
                 r['certUpdateStatus'] = 'Update not confirmed (timed out)'
                 add_detail(r, 'certificate update: RSC did not answer within %ds. It may still apply it: check finalRbsState or RSC, '
                               'and rerun later. Use --update-rbs-timeout-sec or --timeout-sec to wait longer, or a smaller --batch-size.' % timeout)
-            say('  Certificate call %d/%d TIMED OUT after %ds for %d host(s). RSC may still apply it, see the final check below.'
-                % (number, len(calls), timeout, len(batch)), 'yellow')
+            say('  Certificate call %d/%d TIMED OUT after %ds for %d host(s). RSC may still apply it, see the final check below.%s'
+                % (number, len(calls), timeout, len(batch), took(started)), 'yellow')
         except Exception as exc:
             for r in batch:
                 r['certUpdateStatus'] = 'Update failed'
                 add_detail(r, 'certificate update: %s' % exc)
-            say('  Certificate call %d/%d FAILED for %d host(s): %s' % (number, len(calls), len(batch), exc), 'red')
+            say('  Certificate call %d/%d FAILED for %d host(s)%s: %s' % (number, len(calls), len(batch), took(started), exc), 'red')
 
 
 def create_filesets(ctx, rows, cluster_id, template_id):
@@ -978,6 +1051,7 @@ def create_filesets(ctx, rows, cluster_id, template_id):
     say('  Each fileset call waits up to %ds (%s) for RSC to answer. To change it, rerun with --create-fileset-timeout-sec <seconds>, or --timeout-sec <seconds> for every step.'
         % (timeout, format_duration(timeout)))
     for number, batch in enumerate(calls, 1):
+        started = pause_before_batch(ctx, number, len(calls), 'fileset')
         definitions = [{
             'hostId': r['hostId'], 'templateId': template_id, 'isPassthrough': False,
             'enableSymlinkResolution': False, 'enableHardlinkSupport': False,
@@ -994,20 +1068,20 @@ def create_filesets(ctx, rows, cluster_id, template_id):
                 for r in batch:
                     r['filesetStatus'] = 'Create not confirmed'
                     r['detail'] = 'RSC returned %d fileset id(s) for %d host(s), so they cannot be matched to hosts' % (len(ids), len(batch))
-            say('  Fileset call %d/%d: %d host(s) sent, RSC returned %d fileset id(s)' % (number, len(calls), len(batch), len(ids)))
+            say('  Fileset call %d/%d: %d host(s) sent, RSC returned %d fileset id(s)%s' % (number, len(calls), len(batch), len(ids), took(started)))
         except requests.exceptions.ReadTimeout:
             # The request was sent and RSC did not answer in time. It may still create the filesets.
             for r in batch:
                 r['filesetStatus'] = 'Create not confirmed (timed out)'
                 r['detail'] = ('RSC did not answer the fileset creation within %ds. It may still create it: check finalFileset or RSC, '
                                'and rerun later. Use --create-fileset-timeout-sec or --timeout-sec to wait longer, or a smaller --batch-size.' % timeout)
-            say('  Fileset call %d/%d TIMED OUT after %ds for %d host(s). RSC may still create it, see the final check below.'
-                % (number, len(calls), timeout, len(batch)), 'yellow')
+            say('  Fileset call %d/%d TIMED OUT after %ds for %d host(s). RSC may still create it, see the final check below.%s'
+                % (number, len(calls), timeout, len(batch), took(started)), 'yellow')
         except Exception as exc:
             for r in batch:
                 r['filesetStatus'] = 'Create failed'
                 r['detail'] = str(exc)
-            say('  Fileset call %d/%d FAILED for %d host(s): %s' % (number, len(calls), len(batch), exc), 'red')
+            say('  Fileset call %d/%d FAILED for %d host(s)%s: %s' % (number, len(calls), len(batch), took(started), exc), 'red')
 
 
 ### ARGUMENTS ###
@@ -1030,6 +1104,7 @@ def print_usage_summary():
     say('  The steps run in this order: register hosts, update certificates, create the fileset. After the last change a fresh')
     say('  inventory is read (a snapshot, not a wait) and the status CSV gets each host final RBS state and whether it has the fileset.')
     say('  --force-rbs-update updates the certificate of every listed host on the cluster, CONNECTED or not.')
+    say('  --register-host-async registers in the background and returns quickly. Rerun later for the certificate and fileset steps.')
     say('  One step only: --do-only-register-host, --do-only-update-rbs (no fileset name needed) or --do-only-create-fileset.')
     say('  The last two read the inventory first and act only on hosts already registered: a listed host that is not registered is')
     say('  flagged in the CSV and the exit code is 1, nothing is registered.')
@@ -1054,7 +1129,9 @@ def build_parser():
     parser.add_argument('--fileset-template-id', help='ID of the existing fileset template, instead of --fileset-name.')
     parser.add_argument('--host-root', choices=['WINDOWS_HOST_ROOT', 'LINUX_HOST_ROOT'], default='WINDOWS_HOST_ROOT', help='Host type to read the inventory and the template for. Default: WINDOWS_HOST_ROOT')
     parser.add_argument('--batch-size', type=int, default=50, help='Hosts per bulk call, used for each of the three steps. A failed call does not stop the others. Default: 50')
+    parser.add_argument('--batch-delay-sec', type=int, default=DEFAULT_BATCH_DELAY, help='Seconds to wait before each batch after the first, within each step (register, certificate update, fileset creation), so RSC can finish one call before the next arrives. Default: 60. Use 0 for no pause. The first batch of a step never waits, and a step with only one batch never pauses.')
     parser.add_argument('--timeout-sec', type=int, default=None, help='How many seconds to wait for RSC to answer each bulk call, for all three steps (register, update certificate, create fileset). The default is 1800 for the registration and 900 for the other two. A step flag below (--register-host-timeout-sec, --update-rbs-timeout-sec, --create-fileset-timeout-sec) overrides this for that step. A timeout does not mean the call failed, RSC may still do it, so check the final state and rerun.')
+    parser.add_argument('--register-host-async', action='store_true', help='Register the hosts with the asynchronous call (bulkRegisterHostAsync) instead of the default synchronous one. RSC accepts the request and completes the registration in the background, so the call returns quickly. If the reply lists the hosts with their ids they are treated as added and the certificate and fileset steps run. If it does not, the hosts are marked Add submitted (not yet confirmed) and their certificate and fileset steps are left for a rerun, once the hosts show up as registered. Nothing is polled or retried. Registration still needs the Rubrik Backup Service installed and reachable on each host.')
     parser.add_argument('--register-host-timeout-sec', type=int, default=None, help='How many seconds to wait for RSC to answer each host registration call (bulkRegisterHost). Default: 1800 (30 minutes), or --timeout-sec if given. A timeout does not mean the registration failed, RSC may still register the hosts, so check the final inventory or the status CSV.')
     parser.add_argument('--update-rbs-timeout-sec', type=int, default=None, help='How many seconds to wait for RSC to answer each certificate update call (bulkUpdateHost). Default: 900 (15 minutes), or --timeout-sec if given. A timeout does not mean the update failed, RSC may still apply it.')
     parser.add_argument('--create-fileset-timeout-sec', type=int, default=None, help='How many seconds to wait for RSC to answer each fileset creation call (bulkCreateFilesets). Default: 900 (15 minutes), or --timeout-sec if given. A timeout does not mean the creation failed, RSC may still create it.')
@@ -1080,6 +1157,8 @@ def run(ctx):
         die('--cluster-name is required. Every change is made on that one cluster.')
     if args.batch_size < 1:
         die('--batch-size must be 1 or greater.')
+    if args.batch_delay_sec < 0:
+        die('--batch-delay-sec must be 0 or greater.')
     for flag, value in (('--timeout-sec', args.timeout_sec), ('--register-host-timeout-sec', args.register_host_timeout_sec),
                         ('--update-rbs-timeout-sec', args.update_rbs_timeout_sec),
                         ('--create-fileset-timeout-sec', args.create_fileset_timeout_sec)):
@@ -1158,12 +1237,14 @@ def run(ctx):
     if do_fileset:
         say('  Fileset template:         %s' % template_name)
     say('  Hosts listed:             %d' % len(names))
+    say('  Pause between batches:    %s' % (('%ds before each batch after the first in a step (--batch-delay-sec)' % args.batch_delay_sec) if args.batch_delay_sec else 'none (--batch-delay-sec 0)'))
     say('  Wait per call:            %s (change with --timeout-sec, or a step flag, see --help)' % ', '.join(
         '%s %s' % (label, format_duration(ctx.timeouts[key])) for label, key, on in (
             ('register', 'register', do_register), ('certificate', 'cert', do_cert), ('fileset', 'fileset', do_fileset)) if on))
     if do_register:
-        say('  Hosts to register:        %d (in %d call(s) of up to %d)' % (
-            len(new_rows), (len(new_rows) + args.batch_size - 1) // args.batch_size, args.batch_size))
+        say('  Hosts to register:        %d (in %d call(s) of up to %d)%s' % (
+            len(new_rows), (len(new_rows) + args.batch_size - 1) // args.batch_size, args.batch_size,
+            ', asynchronous: submitted and registered in the background' if args.register_host_async else ''))
     if do_cert:
         say('  Certificates to update:   %d (%d newly registered, %d already on the cluster%s), in %d call(s) of up to %d' % (
             len(cert_rows), len(new_rows) if do_register else 0, len(groups['cert_existing']),
