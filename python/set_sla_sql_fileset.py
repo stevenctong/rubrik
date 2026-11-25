@@ -2067,6 +2067,44 @@ def run(ctx):
     return exit_code
 
 
+def print_plan_counts(ctx, host_objs, need_template_hosts, skipped_hosts, apply_objects, todo_objects, on_target_count, pending_count):
+    """The counts of the plan, as a reconciliation from the hosts submitted down to what will be assigned. The hosts that are
+    skipped are listed by name under the plan, with the reason for each. The lines that count objects (SQL instances or
+    filesets, not hosts) say so, since a host can have more than one."""
+    fileset = ctx.workload == 'Fileset'
+    skipped = len(skipped_hosts)
+    remaining = len(host_objs) + len(need_template_hosts)
+    # Hosts listed by the user. With an inventory CSV and no host list every host of the inventory is used, so there is no
+    # list to count and the hosts found (usable plus skipped) are shown instead.
+    if ctx.host_names:
+        submitted = len(ctx.host_names)
+        submitted_label = 'Total hosts submitted'
+    else:
+        submitted = remaining + skipped
+        submitted_label = 'Total hosts (inventory)'
+    if skipped:
+        by_reason = ', '.join('%s %d' % (SKIP_HOST_LABELS.get(st, st), len(g)) for st, g in group_by(skipped_hosts, lambda x: x['status']))
+        skipped_text = '%d (%s), listed below' % (skipped, by_reason)
+    else:
+        skipped_text = '0'
+    # What will be assigned: the existing objects that need it, and, for filesets, the one new fileset per host that still
+    # needs the template applied (it gets the SLA right after it is created)
+    to_assign = len(todo_objects) + len(need_template_hosts)
+    say('  %-25s %d' % (submitted_label + ':', submitted))
+    say('  %-25s %s' % ('Skipped hosts:', skipped_text), 'yellow' if skipped else None)
+    say('  %-25s %d' % ('Remaining hosts:', remaining))
+    if fileset and need_template_hosts:
+        cluster_count = len(unique_ordered(h['clusterId'] for h in need_template_hosts))
+        say('  %-25s %d already have the fileset template applied, %d need it applied first (%d bulkCreateFilesets call(s))' % (
+            '  of which:', len(host_objs), len(need_template_hosts), cluster_count))
+    obj = 'filesets' if fileset else 'instances'
+    say('  %-25s %d %s' % ('Already on the SLA:', on_target_count, obj + ' (effective SLA is already the target)'))
+    say('  %-25s %d %s' % ('SLA already pending:', pending_count, obj + (' (skipped, an assignment is already in flight)' if pending_count else '')),
+        'yellow' if pending_count else None)
+    say('  %-25s %d %s' % ('To assign the SLA to:', to_assign, obj + (' (%d existing, %d new from the template)' % (len(todo_objects), len(need_template_hosts))
+                                                                         if fileset and need_template_hosts else '')))
+
+
 def dry_run_refresh_rbs(ctx, rbs_by_host):
     """A dry run or a cancelled run changes no SLA, but it did read each host's RBS state, so the host CSV's
     rbsState column is refreshed. The executed columns are not touched."""
@@ -2151,19 +2189,9 @@ def run_pass(ctx, workload, target_spec):
     else:
         say('  Apply mode:               Single (one call per host)')
     say('  Poll for completion:      %s' % (not args.skip_polling))
-    if skipped_hosts:
-        say('  Skipped hosts:            %d host(s) will get no SLA, listed below' % len(skipped_hosts), 'yellow')
     if ctx.workload == 'Fileset':
         say('  Fileset template:         %s' % ctx.fileset_name)
-        say('  Hosts:                    %d already have it, %d need it applied' % (len(host_objs), len(need_template_hosts)))
-    else:
-        say('  Hosts:                    %d' % len(host_objs))
-    say('  Objects:                  %d existing, %d to assign, %d already on target, %d skipped (SLA pending)' % (
-        len(apply_objects), len(todo_objects), on_target_count, pending_count))
-    if need_template_hosts:
-        cluster_count = len(unique_ordered(h['clusterId'] for h in need_template_hosts))
-        say('  Template applications:    %d host(s) in %d bulkCreateFilesets call(s), then the SLA goes on those new filesets too'
-            % (len(need_template_hosts), cluster_count))
+    print_plan_counts(ctx, host_objs, need_template_hosts, skipped_hosts, apply_objects, todo_objects, on_target_count, pending_count)
     skipped_pending_objs = [o for o in apply_objects if decision_by_id[ikey(o['instanceId'])] == 'SkippedPending']
     if skipped_hosts or skipped_pending_objs:
         say('  Skipped, no SLA will be assigned:', 'yellow')
